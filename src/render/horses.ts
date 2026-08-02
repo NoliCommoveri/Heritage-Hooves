@@ -20,7 +20,7 @@ export function displayNameFor(horse: HorseRow): string {
  * rather than folded into the card markup. */
 function barnThumbnail(horse: HorseRow): SafeHtml {
   if (horse.image_url) {
-    return html`<img class="horse-thumb" src="${horse.image_url}" width="96" height="72" loading="lazy" alt="">`;
+    return html`<img class="horse-thumb" src="${horse.image_url}" width="96" loading="lazy" alt="">`;
   }
   return html`<span class="horse-thumb horse-thumb--placeholder" aria-hidden="true"></span>`;
 }

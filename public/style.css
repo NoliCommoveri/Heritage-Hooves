@@ -479,14 +479,16 @@ details.row-actions button {
 .horse-thumb {
   flex: none;
   width: 96px;
-  height: 72px;
+  height: auto;
+  max-height: 96px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
-  object-fit: cover;
   background: var(--color-surface-alt);
 }
 
 .horse-thumb--placeholder {
   display: block;
+  height: 72px;
   border: 1px dashed var(--color-border);
 }
 
