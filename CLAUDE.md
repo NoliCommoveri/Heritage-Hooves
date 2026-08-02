@@ -193,11 +193,11 @@ This is flagged as an open question in the design documents. It is written here 
 
 ## 10. Current state
 
-*Nothing is built yet. Update this section as slices land.*
+*Update this section as slices land.*
 
 | Stage | Status | Notes |
 |---|---|---|
-| Foundation | not started | |
+| Foundation | built (2026-08-02) | Repo deploys via Workers Builds + D1 + Cron. Accounts, stables, the world clock, config, and the stable picker all work. No horses yet — see slice 0001. |
 | Genetics core | not started | |
 | Founding stock generator | not started | |
 | Image slot | not started | |
@@ -218,6 +218,20 @@ This is flagged as an open question in the design documents. It is written here 
 ## 11. Conventions established during the build
 
 *Append here as sessions establish things. Date each entry. Keep it short — this is a reference, not a changelog.*
+
+**2026-08-02 — No JavaScript anywhere in this codebase, until a slice names a specific case.** Every page is server-rendered HTML from the Worker (`src/render/`, built with the `html` tagged-template helper in `src/lib/html.ts`). Interactivity that would normally reach for `onclick`/`confirm()` or similar is done with plain HTML instead — e.g. the manual tick-advance control (`src/render/admin.ts`) uses a `required` checkbox the operator must tick, not a JS confirm dialog, and the server re-checks that checkbox's value before acting. If a future slice genuinely needs client-side JS (a live-updating widget, a richer form), add it deliberately and say so in that slice's summary and here — don't let it creep in one `onclick` at a time.
+
+**2026-08-02 — `src/lib/rng.ts`: seeded randomness.** `makeRng(seed): Rng` gives `{ next(), int(maxExclusive), pick(items), shuffle(items), normal(mean, sd) }`. `deriveSeed(parentSeed, label)` makes a deterministic sub-seed — call this, never `makeRng` twice from the same stored seed. `randomSeed()` is the *only* place `crypto.getRandomValues` may be called, and only to mint a brand-new seed to store on a new row (horses, pregnancies, shows, …) — never to make a random decision directly. There is a golden-value test in `test/rng.test.ts` asserting exact output for `makeRng(12345)` and `deriveSeed(12345, "genotype")`. If you ever have a reason to touch the RNG algorithm itself, that test will fail — treat that failure as the whole game's stored history becoming unreproducible, not as a test to update.
+
+**2026-08-02 — `src/lib/time.ts`: the wall clock.** `localParts(utcSeconds, timeZone)` returns `{ year, month, day, hour, minute, dateKey, minutesOfDay }` via `Intl.DateTimeFormat`. `formatLocal` for display, `parseSlot("HH:MM")` for minutes-since-midnight, `nowUtcSeconds()` for the current instant. Never compute offsets by hand. `src/tick/slot.ts`'s `decideNextSlot` is the pure function that decides which tick slot (if any) is due — it takes `SlotState` + `CurrentLocal` and returns a decision; it does not touch the database, which is what makes `test/tick-slots.test.ts` possible without one.
+
+**2026-08-02 — `src/lib/html.ts`: the templating helper.** `` html`...` `` escapes every interpolated value by default; wrap already-safe HTML in `raw(...)` to inline it unescaped (used for nesting one `html` result inside another, and only for that). Every route in `src/render/` builds its page through `pageShell()` in `src/render/layout.ts`, which renders the game-day header, the nav, and the paused banner.
+
+**2026-08-02 — signed-cookie sessions (`src/lib/session.ts`, `src/lib/cookies.ts`).** No sessions table, per §13. `hh_session` is `<accountId>.<issuedAt>.<hmac>`, HMAC-SHA256 over `env.SESSION_SECRET`, `HttpOnly; Secure; SameSite=Lax`, re-issued once it's a day old. `hh_stable` is the same pattern holding the selected stable id — it is a UI convenience only; every stable-scoped route (`src/routes/stables.ts`) re-reads the stable from the account_id on the row and 404s if it isn't owned by the logged-in account, never trusting the cookie alone.
+
+**2026-08-02 — the prefix registry (`stable_prefix_history`).** Every prefix ever claimed, current or retired, is a row here, with the unique index living on `prefix`, not `stable_id`. Creating a stable and renaming one both write to this table and `stables.prefix` atomically via a single `env.DB.batch([...])` (D1 batches are one implicit transaction — any statement failing rolls the whole thing back). Creation uses SQLite's `last_insert_rowid()` inside the batch to link the new `stable_prefix_history` row to the just-inserted `stables` row, which is why `stable_id` could stay `NOT NULL` as the schema in the slice document specifies, rather than the insert-history-row-first-with-a-null-stable_id flow the document narrates — same guarantee (a taken prefix, live or retired, rejects the whole operation), true atomicity, no relaxed constraint. See `src/db/stables.ts`.
+
+**2026-08-02 — PBKDF2 iteration count: 100,000, not yet measured on a live deploy.** `src/lib/password.ts` uses 100,000 PBKDF2-HMAC-SHA256 iterations, per the slice document's starting point. This session built and tested the app locally (`wrangler dev` / Miniflare) but has no live Cloudflare account to deploy to, so the CPU-time measurement the slice document asks for (§6.1: log in on the deployed Worker, check the CPU time in the dashboard) has **not** been done. Whoever does the first real deploy: log in once, check the Worker's CPU time in the dashboard, and if it's close to or over the free tier's 10ms ceiling, drop `ITERATIONS` in `src/lib/password.ts` to 50,000 — then update this line with what you measured and what you did.
 
 ---
 
