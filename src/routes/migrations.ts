@@ -3,7 +3,8 @@
 // session cookie, and treats "the accounts table doesn't exist yet" the same way /setup treats
 // "no accounts exist yet": open to whoever gets there first, because nobody could possibly be
 // logged in either way. Once a first account exists, this locks down to admins only, same as
-// every other /admin route.
+// every other /admin route - redirecting a logged-out visitor to /login rather than just
+// 403ing them, since "log in first" is the actionable thing to tell them.
 import type { Env } from '../types';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderMigrationsPage } from '../render/migrations';
@@ -20,17 +21,25 @@ async function isPreSetup(env: Env): Promise<boolean> {
   }
 }
 
-async function isAuthorizedAdmin(request: Request, env: Env): Promise<boolean> {
+type AdminCheck = 'admin' | 'logged_out' | 'not_admin';
+
+async function checkAdmin(request: Request, env: Env): Promise<AdminCheck> {
   const session = await readSession(request, env.SESSION_SECRET);
-  if (!session) return false;
+  if (!session) return 'logged_out';
   const account = await getAccountById(env, session.accountId);
-  return !!account && account.active === 1 && account.is_admin === 1;
+  if (account && account.active === 1 && account.is_admin === 1) return 'admin';
+  return 'not_admin';
 }
 
 export async function migrationsRoute(request: Request, env: Env, method: string): Promise<Response> {
   const preSetup = await isPreSetup(env);
-  if (!preSetup && !(await isAuthorizedAdmin(request, env))) {
-    return new Response('Forbidden', { status: 403 });
+  if (!preSetup) {
+    const check = await checkAdmin(request, env);
+    // No session at all reads as "not logged in yet", same as every normal page - send them to
+    // log in instead of a bare Forbidden. A session that resolves to a real, non-admin account is
+    // still a flat 403, matching every other /admin route.
+    if (check === 'logged_out') return redirect('/login');
+    if (check === 'not_admin') return new Response('Forbidden', { status: 403 });
   }
 
   if (method === 'GET') {
