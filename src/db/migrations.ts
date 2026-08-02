@@ -47,6 +47,9 @@ import m0043 from '../../migrations/0043_stables_upkeep.sql';
 import m0044 from '../../migrations/0044_ledger_opening_backfill.sql';
 import m0045 from '../../migrations/0045_show_classes_prizes.sql';
 import m0046 from '../../migrations/0046_config_economy.sql';
+import m0047 from '../../migrations/0047_accounts_actions.sql';
+import m0048 from '../../migrations/0048_events.sql';
+import m0049 from '../../migrations/0049_config_turns_events.sql';
 
 export interface MigrationFile {
   name: string;
@@ -110,6 +113,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0044_ledger_opening_backfill.sql', sql: m0044 },
   { name: '0045_show_classes_prizes.sql', sql: m0045 },
   { name: '0046_config_economy.sql', sql: m0046 },
+  { name: '0047_accounts_actions.sql', sql: m0047 },
+  { name: '0048_events.sql', sql: m0048 },
+  { name: '0049_config_turns_events.sql', sql: m0049 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

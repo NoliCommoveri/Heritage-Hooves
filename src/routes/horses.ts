@@ -1,5 +1,8 @@
 import type { RequestContext } from '../lib/context';
+import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
+import { ACTION_COSTS } from '../lib/actions';
+import { spendAction } from '../db/accounts';
 import { renderBarnList, renderBreedPage, renderHorsePage, renderImagePickerPage, displayNameFor, type BreedPreview, type EnterShowInfo } from '../render/horses';
 import { eligibilityMessage, placingText } from '../render/shows';
 import {
@@ -104,7 +107,9 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   );
 
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
-  return htmlResponse(renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer, horses: rows }));
+  return htmlResponse(
+    renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses: rows })
+  );
 }
 
 function coiWarning(coi: number, threshold: number): string | undefined {
@@ -178,6 +183,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
   const isAdmin = ctx.account!.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear);
 
@@ -187,7 +193,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET') {
-    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, mares, stallions, describe }));
+    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, mares, stallions, describe }));
   }
   if (method !== 'POST') return notFound();
 
@@ -199,7 +205,17 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
 
   if (!mare || !stallion) {
     return htmlResponse(
-      renderBreedPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, mares, stallions, describe, error: 'Choose a mare and a stallion from this stable.' })
+      renderBreedPage({
+        world: ctx.world,
+        isAdmin,
+        actionsLeft,
+        stable,
+        hasFoundingOffer,
+        mares,
+        stallions,
+        describe,
+        error: 'Choose a mare and a stallion from this stable.',
+      })
     );
   }
 
@@ -224,6 +240,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       renderBreedPage({
         world: ctx.world,
         isAdmin,
+        actionsLeft,
         stable,
         hasFoundingOffer,
         mares,
@@ -243,6 +260,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         renderBreedPage({
           world: ctx.world,
           isAdmin,
+          actionsLeft,
           stable,
           hasFoundingOffer,
           mares,
@@ -254,6 +272,29 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         })
       );
     }
+
+    // Slice 0009 Part B §5.3: check, act, then spend - read the budget and refuse up front if it
+    // looks empty, do the game action, then spend. If the spend below loses a race (two forms
+    // submitted at the same instant), it's let through free rather than charged for nothing - a
+    // child charged for something that did not happen has no way to find out why or get it back.
+    if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_covering) {
+      return htmlResponse(
+        renderBreedPage({
+          world: ctx.world,
+          isAdmin,
+          actionsLeft,
+          stable,
+          hasFoundingOffer,
+          mares,
+          stallions,
+          describe,
+          selectedMareId: mare.id,
+          selectedStallionId: stallion.id,
+          error: turnsRefusalMessage(ctx),
+        })
+      );
+    }
+
     await bookCovering(ctx.env, {
       stableId,
       mareId: mare.id,
@@ -261,6 +302,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       gameDay: ctx.world.game_day,
       tickSeq: ctx.world.tick_seq,
     });
+    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.book_covering);
     return redirect(`/horses/${String(mare.id)}`);
   }
 
@@ -324,6 +366,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
     renderHorsePage({
       world: ctx.world,
       isAdmin,
+      actionsLeft: actionsLeftFor(ctx),
       owner,
       ownerStable,
       hasFoundingOffer,
@@ -454,6 +497,13 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
   const classId = Number(form.class_id);
   if (!Number.isInteger(classId)) return redirect(`/horses/${String(horseId)}`);
 
+  // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
+  // stableBreedRoute above.
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.enter_show) {
+    return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(turnsRefusalMessage(ctx))}`);
+  }
+
   const result = await enterHorseInClass(ctx.env, {
     classId,
     horseId,
@@ -471,6 +521,7 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
     return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(message)}`);
   }
 
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.enter_show);
   return redirect(`/horses/${String(horseId)}?entered_show=1`);
 }
 
@@ -516,6 +567,7 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
     renderImagePickerPage({
       world: ctx.world,
       isAdmin,
+      actionsLeft: actionsLeftFor(ctx),
       ownerStable,
       hasFoundingOffer,
       horse,

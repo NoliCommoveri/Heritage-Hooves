@@ -87,6 +87,7 @@ export interface ShowsIndexRecentClass {
 export function renderShowsIndexPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   nextShow: { show: ShowRow; classes: ShowsIndexNextClass[] } | null;
   recentShows: { show: ShowRow; classes: ShowsIndexRecentClass[] }[];
 }): SafeHtml {
@@ -128,7 +129,7 @@ export function renderShowsIndexPage(params: {
     <h2>Recent results</h2>
     ${recentBlock}
   `;
-  return pageShell({ title: 'Shows', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({ title: 'Shows', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
 }
 
 export interface ShowPageEntryRow extends ClassEntryDisplayRow {
@@ -151,6 +152,7 @@ export interface ShowPageClassView {
 export function renderShowPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   show: ShowRow;
   classes: ShowPageClassView[];
   error?: string;
@@ -209,12 +211,13 @@ export function renderShowPage(params: {
     ${classBlocks}
     <p><a href="/shows">Back to shows</a></p>
   `;
-  return pageShell({ title: s.name, world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({ title: s.name, world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
 }
 
 export function renderEntryResultPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   show: ShowRow;
   cls: ShowClassRow;
   horseName: string;
@@ -255,5 +258,12 @@ export function renderEntryResultPage(params: {
     </div>
     <p><a href="/shows/${String(params.show.id)}">Back to ${params.show.name}</a></p>
   `;
-  return pageShell({ title: `${params.horseName} at ${params.show.name}`, world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({
+    title: `${params.horseName} at ${params.show.name}`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    body,
+  });
 }

@@ -87,6 +87,12 @@ export interface ConfigValues {
   /** Slice 0009 §4.4. JSON array, index 0 = first place. Snapshotted onto show_classes at creation
    * (CLAUDE.md §5.5) - changing this only affects classes created afterwards. */
   show_prize_schedule: number[];
+  /** Slice 0009 Part B §5.5. Live - independent of world.tick_times_local on purpose (CLAUDE.md
+   * §6a): changing the tick schedule must never silently change how much play a day contains. */
+  actions_per_tick: number;
+  /** Slice 0009 Part B §6.4. One number for both read and unread events - a notice board, not an
+   * archive. Live - read fresh by the tick's event-retention stage every time it runs. */
+  events_retention_game_days: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

@@ -144,7 +144,7 @@ Cheap, and it means an old prefix appearing on a twelve-year-old horse can still
 - `last_active_stable_id` — convenience for the picker
 - `last_login_real_ts`
 
-Unused actions do not bank: at tick time, set `actions_remaining` to the config value rather than adding to it. §6c.
+Unused actions do not bank: at tick time, set `actions_remaining` to the config value rather than adding to it. §6c. **Built in slice 0009 Part B, and built differently from this section's literal wording:** the tick never touches `accounts` at all. The budget is derived at read time instead (`src/lib/actions.ts`'s `actionsRemaining`) — an account whose `actions_reset_tick_seq` is behind the current `world.tick_seq` reads as full, one whose `actions_reset_tick_seq` matches it reads its stored `actions_remaining`. This is idempotent by construction (no reset to double-apply), never banks (a new tick discards whatever was left), and refills during a pause (`tick_seq` increments on a paused tick too — `CLAUDE.md` §5.3). Spending is one atomic conditional `UPDATE` (`src/db/accounts.ts`'s `spendAction`), never a separate check-then-write.
 
 **Recommendation: actions and tokens live on the account, not the stable.** This is the load-bearing consequence of multi-stable ownership. If actions were per-stable, a child would triple their turns by founding two more stables and §6c would stop binding at all. Money, capacity and stock stay per-stable, which is what "independent" actually means in practice — separate books, shared attention.
 
@@ -591,11 +591,11 @@ The single most important thing in this document to keep adjustable, because §1
 
 ### 10.1 `events`
 
-- `id`, `stable_id`, `game_day`, `kind`, `subject_horse_id` (nullable), `payload` (JSON), `read_at` (nullable)
+- `id`, `stable_id`, `game_day`, `kind`, `subject_horse_id` (nullable), `payload` (JSON), `read_at_real_ts` (nullable) — built as `read_at_real_ts`, not `read_at` as sketched above: `CLAUDE.md` §7 requires a wall-clock column to carry the `_real_ts` suffix so a reader can tell which clock it belongs to.
 
-Foalings, show results, condition onsets, deaths, sales, service completions. With a tick advancing the world while nobody is watching, this is how a child finds out what happened — and it is where the drafted `event_text` from `conditions` gets rendered.
+Foalings, show results, condition onsets, deaths, sales, service completions. With a tick advancing the world while nobody is watching, this is how a child finds out what happened — and it is where the drafted `event_text` from `conditions` gets rendered. **Built in slice 0009 Part B** for four kinds only (`foaled`, `covering_conceived`, `covering_missed`, `show_result`); later kinds (condition onset, death, a sale, a service call) attach with no migration, since `kind` is free text with no `CHECK`.
 
-**Worth noting:** this table grows faster than any other. A retention rule — drop read events older than N game-days — is worth deciding early rather than discovering when a query gets slow.
+**Worth noting:** this table grows faster than any other. **Decided in slice 0009 Part B:** one tick stage deletes every event — read or not — older than `events_retention_game_days` (config, default 720 game days). A single threshold rather than separate read/unread rules, because a child who hasn't logged in for weeks has lost the moment either way, and every durable record (the horse, its pedigree, its show results, the ledger) survives regardless.
 
 ### 10.2 Imports and founding stock
 

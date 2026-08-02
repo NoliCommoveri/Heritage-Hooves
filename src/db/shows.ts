@@ -16,11 +16,13 @@ import { conformationValues, noiseFor, type RealizationConfig } from '../engines
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
-import { getHorse, listStableHorses, type HorseRow } from './horses';
+import { getHorse, horseDisplayName, listStableHorses, type HorseRow } from './horses';
 import { getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getShowBarnStable } from './npc';
+import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
+import { buildEventStatement } from './events';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -687,6 +689,38 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     });
   }
   statements.push(...buildLedgerStatements(env, ledgerEntries));
+
+  // Slice 0009 Part B §6.2: one show_result event per entry, win or not - the events feed is about
+  // what happened to a stable's horses, not only what it earned (prize is 0 for an unpaid
+  // placing). Skipped for the show barn's own entries and any stable with no account (§6.1),
+  // via buildEventStatement's own accountId === null guard.
+  const stableAccountById = new Map<number, number | null>();
+  for (const stableId of new Set(stableIdByHorseId.values())) {
+    const stableRow = await getStableById(env, stableId);
+    stableAccountById.set(stableId, stableRow?.account_id ?? null);
+  }
+  for (const horseId of allHorseIds) {
+    const placing = placingByHorseId.get(horseId);
+    const stableId = stableIdByHorseId.get(horseId);
+    const horse = horseById.get(horseId);
+    if (placing === undefined || stableId === undefined || !horse) continue;
+    statements.push(
+      ...buildEventStatement(env, {
+        stableId,
+        accountId: stableAccountById.get(stableId) ?? null,
+        gameDay,
+        kind: 'show_result',
+        subjectHorseId: horseId,
+        payload: {
+          horse_name: horseDisplayName(horse),
+          show_name: show?.name ?? 'the show',
+          class_name: cls.name,
+          placing,
+          prize: prizeSchedule[placing - 1] ?? 0,
+        },
+      })
+    );
+  }
 
   statements.push(
     env.DB.prepare(`UPDATE show_classes SET status = 'judged', judged_game_day = ? WHERE id = ? AND status = 'scheduled'`).bind(gameDay, cls.id)

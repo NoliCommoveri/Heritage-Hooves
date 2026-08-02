@@ -3,7 +3,7 @@ import { pageShell, errorBox, noticeBox } from './layout';
 import { stableSubnav } from './stables';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
-import type { HorseRow } from '../db/horses';
+import { horseDisplayName, type HorseRow } from '../db/horses';
 import type { BreedRow, LocusRow } from '../db/breeds';
 import type { Genotype } from '../engines/genetics/genotype';
 import { LOCI } from '../engines/genetics/loci';
@@ -12,11 +12,7 @@ import type { ConformationDisplayRow } from '../engines/conformation/model';
 import type { HorseShowSummaryRow } from '../db/shows';
 import { placingText } from './shows';
 
-export function displayNameFor(horse: HorseRow): string {
-  if (horse.registered_name) return horse.registered_name;
-  if (horse.barn_name) return horse.barn_name;
-  return horse.sex === 'mare' ? 'Unnamed filly' : 'Unnamed colt';
-}
+export const displayNameFor = horseDisplayName;
 
 /** A small thumbnail beside a barn-list row, or a neutral tile - slice 0007 §6.3. First thing to
  * drop if a heavy barn list ever becomes a problem (§4.3), which is why it's its own function
@@ -31,6 +27,7 @@ function barnThumbnail(horse: HorseRow): SafeHtml {
 export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   stable: StableRow;
   hasFoundingOffer: boolean;
   horses: { horse: HorseRow; description: string; inSeason: boolean; conformation: ConformationDisplayRow[]; showSummary: HorseShowSummaryRow | null }[];
@@ -59,6 +56,7 @@ export function renderBarnList(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(params.stable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -87,6 +85,7 @@ function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe
 export function renderBreedPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   stable: StableRow;
   hasFoundingOffer: boolean;
   mares: HorseRow[];
@@ -144,6 +143,7 @@ export function renderBreedPage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(params.stable.id, 'breed', params.hasFoundingOffer),
     body,
   });
@@ -246,6 +246,7 @@ function showRecordCard(params: {
 export function renderHorsePage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   owner: boolean;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
@@ -406,6 +407,7 @@ export function renderHorsePage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: params.owner ? stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer) : undefined,
     body,
   });
@@ -432,6 +434,7 @@ function imageOptionTile(option: ImageOption, checked: boolean, usedByName: stri
 export function renderImagePickerPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
   horse: HorseRow;
@@ -479,6 +482,7 @@ export function renderImagePickerPage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -549,5 +553,5 @@ export function renderAdminHorseNewPage(params: {
       <button type="submit">Create horse</button>
     </form>
   `;
-  return pageShell({ title: 'Create a founding horse', world: params.world, loggedIn: true, isAdmin: true, section: 'admin', body });
+  return pageShell({ title: 'Create a founding horse', world: params.world, loggedIn: true, isAdmin: true, actionsLeft: null, section: 'admin', body });
 }

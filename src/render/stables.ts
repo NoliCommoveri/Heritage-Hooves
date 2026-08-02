@@ -2,8 +2,74 @@ import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell, errorBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
+import type { EventRow } from '../db/events';
+import { placingText } from './shows';
 
 export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix' | 'founding' | 'money';
+
+export interface AwayEvent {
+  id: number;
+  gameDay: number;
+  sentence: string;
+  horseId: number | null;
+}
+
+/** Turns one event row's payload into the one sentence the "While you were away" panel (§6.3) and
+ * a stable's own home-page feed both show. A missing payload key is legal (§6.2's "v" convention -
+ * the same discipline horses.genotype's missing-locus rule follows) and renders defensively rather
+ * than throwing. */
+export function eventSentence(row: EventRow): AwayEvent {
+  const payload = JSON.parse(row.payload) as Record<string, unknown>;
+  const str = (key: string, fallback: string): string => (typeof payload[key] === 'string' ? (payload[key] as string) : fallback);
+
+  let sentence: string;
+  switch (row.kind) {
+    case 'foaled': {
+      const sex = str('sex', 'foal');
+      sentence = `${str('foal_name', `A new ${sex}`)} was born to ${str('dam_name', 'a mare')} and ${str('sire_name', 'a stallion')}.`;
+      break;
+    }
+    case 'covering_conceived': {
+      const due = typeof payload.due_game_day === 'number' ? payload.due_game_day : null;
+      sentence = `${str('mare_name', 'A mare')}'s covering to ${str('stallion_name', 'a stallion')} took${due !== null ? ` - due around game day ${String(due)}` : ''}.`;
+      break;
+    }
+    case 'covering_missed':
+      sentence = `${str('mare_name', 'A mare')}'s covering to ${str('stallion_name', 'a stallion')} didn't take this time.`;
+      break;
+    case 'show_result': {
+      const placing = typeof payload.placing === 'number' ? payload.placing : null;
+      const prize = typeof payload.prize === 'number' ? payload.prize : 0;
+      const prizeSentence = prize > 0 ? ` - paid ${String(prize)}` : '';
+      sentence = `${str('horse_name', 'A horse')} placed ${placing !== null ? placingText(placing) : 'unranked'} at ${str('show_name', 'a show')}${prizeSentence}.`;
+      break;
+    }
+    default:
+      sentence = row.kind;
+  }
+
+  return { id: row.id, gameDay: row.game_day, sentence, horseId: row.subject_horse_id };
+}
+
+/** The "While you were away" panel (§6.3): the account's unread events across every stable it
+ * owns, newest first. A `POST` "Mark all read" button, never a side effect of the GET that shows
+ * this panel. Empty and silent when there is nothing new, rather than an empty box. */
+function awayPanel(events: AwayEvent[]): SafeHtml {
+  if (events.length === 0) return raw('');
+  const rows = events.map(
+    (e) => html`<li>${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
+  );
+  return html`
+    <div class="card">
+      <h2>While you were away</h2>
+      <ul>${rows}</ul>
+      <form method="post" action="/stables">
+        <input type="hidden" name="action" value="mark_read">
+        <button type="submit" class="secondary">Mark all read</button>
+      </form>
+    </div>
+  `;
+}
 
 /** hasFoundingOffer (slice 0005 §11): "New horses" only appears while there is something waiting -
  * a pending breed choice or an open batch to claim - not once it's been claimed. */
@@ -24,9 +90,11 @@ export function stableSubnav(stableId: number, active: StableSubnavPage, hasFoun
 export function renderStablesPicker(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   stables: StableRow[];
   canCreateMore: boolean;
   maxStables: number;
+  awayEvents: AwayEvent[];
 }): SafeHtml {
   const list = params.stables.length
     ? html`${params.stables.map(
@@ -47,15 +115,17 @@ export function renderStablesPicker(params: {
 
   const body = html`
     <h1>Your stables</h1>
+    ${awayPanel(params.awayEvents)}
     ${list}
     ${createLink}
   `;
-  return pageShell({ title: 'Your stables', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({ title: 'Your stables', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
 }
 
 export function renderNewStablePage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   error?: string;
   name?: string;
   prefix?: string;
@@ -74,16 +144,33 @@ export function renderNewStablePage(params: {
       <button type="submit">Create stable</button>
     </form>
   `;
-  return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
+}
+
+/** The stable home page's own feed (§6.3): read and unread together, most recent 20 - a compact
+ * list, not the "While you were away" panel's own unread-only, mark-as-read treatment. */
+function stableFeed(events: AwayEvent[]): SafeHtml {
+  if (events.length === 0) return raw('');
+  const rows = events.map(
+    (e) => html`<li>${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
+  );
+  return html`
+    <div class="card">
+      <h2>Recent happenings</h2>
+      <ul>${rows}</ul>
+    </div>
+  `;
 }
 
 export function renderStableHomePage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   stable: StableRow;
   hasFoundingOffer: boolean;
   aliveHorseCount: number;
   upkeepPerHorsePerGameDay: number;
+  recentEvents: AwayEvent[];
 }): SafeHtml {
   const s = params.stable;
   const foundingCallout = params.hasFoundingOffer
@@ -111,6 +198,7 @@ export function renderStableHomePage(params: {
     </div>
     <p><a class="button-link" href="/stables/${String(s.id)}/horses">Horses</a></p>
     <p><a class="button-link" href="/stables/${String(s.id)}/breed">Breed</a></p>
+    ${stableFeed(params.recentEvents)}
     <p><a href="/stables">Back to your stables</a></p>
   `;
   return pageShell({
@@ -118,12 +206,20 @@ export function renderStableHomePage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(s.id, 'overview', params.hasFoundingOffer),
     body,
   });
 }
 
-export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; hasFoundingOffer: boolean; error?: string }): SafeHtml {
+export function renderPrefixPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  stable: StableRow;
+  hasFoundingOffer: boolean;
+  error?: string;
+}): SafeHtml {
   const s = params.stable;
   const body = s.prefix_locked
     ? html`
@@ -147,6 +243,7 @@ export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; st
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(s.id, 'prefix', params.hasFoundingOffer),
     body,
   });

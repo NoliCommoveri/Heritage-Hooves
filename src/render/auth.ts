@@ -23,7 +23,7 @@ export function renderSetupPage(params: { world: WorldRow; error?: string }): Sa
       <button type="submit">Create admin account</button>
     </form>
   `;
-  return pageShell({ title: 'Set up', world: params.world, loggedIn: false, isAdmin: false, body });
+  return pageShell({ title: 'Set up', world: params.world, loggedIn: false, isAdmin: false, actionsLeft: null, body });
 }
 
 export function renderLoginPage(params: { world: WorldRow; error?: string }): SafeHtml {
@@ -40,12 +40,13 @@ export function renderLoginPage(params: { world: WorldRow; error?: string }): Sa
       <button type="submit">Log in</button>
     </form>
   `;
-  return pageShell({ title: 'Log in', world: params.world, loggedIn: false, isAdmin: false, body });
+  return pageShell({ title: 'Log in', world: params.world, loggedIn: false, isAdmin: false, actionsLeft: null, body });
 }
 
 export function renderPasswordChangePage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   forced: boolean;
   error?: string;
 }): SafeHtml {
@@ -66,5 +67,5 @@ export function renderPasswordChangePage(params: {
       <button type="submit">Change password</button>
     </form>
   `;
-  return pageShell({ title: 'Change password', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({ title: 'Change password', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
 }

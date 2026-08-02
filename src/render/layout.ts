@@ -21,6 +21,12 @@ export interface ShellParams {
   section?: 'player' | 'admin';
   /** A row of section-local links rendered as a menu bar under the header, e.g. the admin subpages. */
   subnav?: NavLink[];
+  /**
+   * Slice 0009 Part B §5.4: how many turns the logged-in account has left, shown next to the game
+   * day on every player page. Null when logged out. Not shown on admin pages - admin actions never
+   * spend a turn (CLAUDE.md §11's admin-mode entry: admin is a visibly separate place already).
+   */
+  actionsLeft: number | null;
   body: SafeHtml;
 }
 
@@ -51,10 +57,15 @@ export function pageShell(params: ShellParams): SafeHtml {
         </nav>`
     : raw('');
 
+  const turnsLabel =
+    section === 'player' && params.actionsLeft !== null
+      ? html` <span class="muted turns-left">&middot; ${String(params.actionsLeft)} turn${params.actionsLeft === 1 ? '' : 's'} left</span>`
+      : raw('');
+
   const headerLabel =
     section === 'admin'
       ? html`<div class="game-day">Admin panel <span class="muted">&middot; game day ${params.world.game_day}</span></div>`
-      : html`<div class="game-day">Game day <strong>${params.world.game_day}</strong></div>`;
+      : html`<div class="game-day">Game day <strong>${params.world.game_day}</strong>${turnsLabel}</div>`;
 
   return html`<!doctype html>
 <html lang="en">
