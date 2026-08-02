@@ -204,7 +204,7 @@ Indexes follow the queries the real screens make. Don't guess a full index list 
 | Market | not started | |
 | Professions | not started | |
 | Registries | not started | |
-| The other seven breeds | not started | The non-colour half of breed identity for every breed but the Quarter Horse: ideal vectors, eligible class types and aptitudes, height and weight ranges, disease panels. Data entry against machinery already tuned on one breed — which is why it waits. |
+| The other seven breeds | not started, **ideal vectors now drafted** | The non-colour half of breed identity for every breed but the Quarter Horse: ideal vectors, eligible class types and aptitudes, height and weight ranges, disease panels. Data entry against machinery already tuned on one breed — which is why it waits. **All eight conformation ideal vectors are written down in `docs/breed-ideal-vectors.md` (2026-08-02)** — the Quarter Horse's is live in `migrations/0035`, the other seven are a data record only and `breeds.ideal_vector` is still `NULL` for them. Seeding them is blocked on the NPC show barn, which is hardcoded Quarter Horse; see that document's §6. |
 
 ---
 
