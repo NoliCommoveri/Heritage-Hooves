@@ -365,6 +365,8 @@ The reason the prefix is snapshotted rather than joined to the breeder's live re
 
 **Recommendation: care lives on the horse rather than in a separate 1:1 table.** It is read on every horse page and written every tick; splitting it buys nothing.
 
+**The "lives on the horse" half of that is adopted; the JSON blob and the cache are not.** `docs/slices/0013-care-and-condition.md` §2.1 specifies two plain integer columns (`last_farrier_game_day`, `last_vet_game_day`) plus `stables.feed_level`, and **no `care_modifier` column at all** — the modifier is a pure function of three stored values and `game_day`, computed on read by `src/engines/care/`, which is the same argument this section already makes for `phenotype_cache` two paragraphs up. Where the modifier *is* stored is `show_entries.care_modifier_applied`, at scoring time, because that is the one place a stale copy is the point. A future session should not build `horses.care` or `horses.care_modifier` in good faith without reading that slice's §2.1 and §5.6 first.
+
 **Breeding and status**
 - `is_retired`, `fertility_state`, `last_foaled_game_day`
 - `notes` — free text, cleared on transfer
@@ -738,7 +740,8 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Turns and tick | `ledger`, `events` |
 | Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases` — over the PIN and attempt log already in place |
 | Health, first pass | `conditions`, `horse_conditions`, `horse_knowledge`, `services`, `service_calls`; the Quarter Horse's panel only |
-| Care and tack | `tack_types`, `tack_items`, `horses.care` |
+| Care | `horses.last_farrier_game_day`, `horses.last_vet_game_day`, `horses.care_notice_game_day`, `stables.feed_level`; Part B adds `horse_conditions.management_state` and `conditions.management_options`. **Not `horses.care` and not `horses.care_modifier`** — `docs/slices/0013-care-and-condition.md` §2.1 replaces the JSON blob with plain columns and drops the cache, for the reasons §4.1 above already gives about `phenotype_cache`. **Not `service_calls` either** — §5.6 of that slice defers it to the professions stage, where there is a provider to be null instead of |
+| Tack (now its own stage, after the market) | `tack_types`, `tack_items` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` |
 | Market | `listings`, `buy_offers`, `stud_listings`, `stud_bookings` |
