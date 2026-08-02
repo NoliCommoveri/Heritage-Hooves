@@ -1,7 +1,9 @@
-# 0010 - Barn name as the primary display name
+# Barn name as the primary display name
 
-Not a new stage - a display-convention fix within stages already built (genetics core,
-founding stock, one show class). No new row needed in CLAUDE.md §10.
+Not a new stage, and not numbered like a slice - it's a small, standalone
+display-convention fix within stages already built (genetics core, founding stock, one
+show class), unrelated to build order. Pick it up whenever; no new row needed in
+CLAUDE.md §10.
 
 ## The problem
 
