@@ -20,6 +20,7 @@ import {
   adminBreedingRoute,
   adminFoundingRoute,
   adminBreedsRoute,
+  adminResetRoute,
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding)?$/;
@@ -98,6 +99,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/breeding') return withReissuedCookie(ctx, await adminBreedingRoute(ctx, method));
     if (path === '/admin/founding') return withReissuedCookie(ctx, await adminFoundingRoute(ctx, method));
     if (path === '/admin/breeds') return withReissuedCookie(ctx, await adminBreedsRoute(ctx, method));
+    if (path === '/admin/reset') return withReissuedCookie(ctx, await adminResetRoute(ctx, method));
     return notFound();
   }
 

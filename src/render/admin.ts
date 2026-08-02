@@ -7,10 +7,11 @@ import type { BreedRow } from '../db/breeds';
 import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import type { ImportOfferRow } from '../db/founding';
+import type { TableCount } from '../db/reset';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'migrations';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'migrations' | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -22,6 +23,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
     { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
+    { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
 }
 
@@ -54,6 +56,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/founding">Founding stock</a></p>
     <p><a class="button-link" href="/admin/breeds">Breeds</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
+    <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;
   return shell(w, body, 'Admin', 'home');
@@ -405,4 +408,78 @@ export function renderBreedsAdminPage(params: { world: WorldRow; breeds: BreedRo
     </form>
   `;
   return shell(params.world, body, 'Breeds', 'breeds');
+}
+
+/**
+ * Emptying the world so it can be played from the beginning again. Two guards rather than the
+ * single `required` checkbox the world-clock page uses, because this one cannot be undone: the
+ * checkbox, and the word "reset" typed by hand. Both are re-checked on the server (there is no
+ * JavaScript in this codebase - see CLAUDE.md §11's 2026-08-02 entry).
+ */
+export function renderResetPage(params: {
+  world: WorldRow;
+  counts: TableCount[];
+  accountCount: number;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const rows = params.counts.map(
+    (c) => html`
+    <tr>
+      <td>${c.label}</td>
+      <td>${String(c.rows)}</td>
+      <td class="muted">${c.inHorsesScope ? 'both' : 'full reset only'}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Start over</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+
+    <div class="card">
+      <h2>What is in the game right now</h2>
+      <table>
+        <thead><tr><th>Thing</th><th>How many</th><th>Cleared by</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="muted">Logins are never cleared: ${String(params.accountCount)} accounts will still be there afterwards, with the same usernames and passwords.</p>
+    </div>
+
+    <div class="card">
+      <h2>What is always kept</h2>
+      <p>Everyone's login, the settings on the Config page, the config change history, and the breed, gene and trait lists the game is built from. Pictures in the library are files, not data, so they are untouched too.</p>
+      <p>The pause switch is also left exactly as you have it. If the world is paused now, it will still be paused after a reset.</p>
+    </div>
+
+    <div class="card">
+      <h2>Clear the game</h2>
+      <form method="post" action="/admin/reset">
+        <input type="hidden" name="action" value="reset">
+
+        <label class="confirm-checkbox">
+          <input type="radio" name="scope" value="horses" checked>
+          <strong>Horses only.</strong> Deletes every horse, pedigree, covering, pregnancy and founding-stock batch. Stables keep their name, prefix, money and space, and the calendar keeps running from today.
+        </label>
+
+        <label class="confirm-checkbox">
+          <input type="radio" name="scope" value="world">
+          <strong>The whole world.</strong> All of the above, plus every stable and every claimed prefix, and the calendar goes back to day 0. Everyone starts by making a new stable, and old prefixes are free to use again.
+        </label>
+
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, I understand this cannot be undone.
+        </label>
+
+        <label>Type the word <code>reset</code> to confirm
+          <input type="text" name="confirm_word" required autocapitalize="off" autocomplete="off">
+        </label>
+
+        <button type="submit">Clear the game</button>
+      </form>
+      <p class="confirm-note">There is no backup and no undo. Anything deleted here is gone for good, including horses the children bred themselves.</p>
+    </div>
+  `;
+  return shell(params.world, body, 'Start over', 'reset');
 }

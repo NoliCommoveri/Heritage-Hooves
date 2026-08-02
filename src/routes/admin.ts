@@ -9,9 +9,12 @@ import {
   renderBreedingAdminPage,
   renderFoundingAdminPage,
   renderBreedsAdminPage,
+  renderResetPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
+import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
+import { expireStableCookie } from '../lib/session';
 import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
 import { createFoundingHorse } from '../db/horses';
@@ -359,4 +362,41 @@ export async function adminBreedsRoute(ctx: RequestContext, method: string): Pro
 
   await updateBreedImageCounts(ctx.env, counts);
   return redirect('/admin/breeds?saved=1');
+}
+
+/**
+ * Clear the world so it can be played from the start again. Guarded by the `required` checkbox
+ * pattern the world-clock page uses plus a typed confirmation word, both re-checked here rather
+ * than trusted from the form. Accounts, config and the reference tables are never touched - see
+ * src/db/reset.ts for the full list and why.
+ */
+export async function adminResetRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [counts, accounts] = await Promise.all([countResetRows(ctx.env), listAccounts(ctx.env)]);
+    return htmlResponse(renderResetPage({ world: ctx.world, counts, accountCount: accounts.length, error, notice }));
+  }
+
+  if (method === 'GET') {
+    const done = new URL(ctx.request.url).searchParams.get('cleared');
+    let notice: string | undefined;
+    if (done === 'horses') notice = 'Every horse, pedigree, covering, pregnancy and founding batch is gone. Stables are untouched and the calendar is still running.';
+    else if (done === 'world') notice = 'The world is empty and the calendar is back at day 0. Everyone starts by making a new stable.';
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action !== 'reset') return notFound();
+
+  const scope: ResetScope | null = form.scope === 'world' ? 'world' : form.scope === 'horses' ? 'horses' : null;
+  if (!scope) return page('Choose how much to clear.');
+  if (form.confirm !== 'yes') return page('Tick the box to confirm before clearing.');
+  if ((form.confirm_word ?? '').trim().toLowerCase() !== 'reset') return page('Type the word reset in the box to confirm.');
+
+  await resetWorld(ctx.env, scope);
+
+  // A full reset deletes the stable this browser last had selected, so drop that cookie too.
+  const response = redirect(`/admin/reset?cleared=${scope}`);
+  if (scope === 'world') response.headers.append('Set-Cookie', expireStableCookie());
+  return response;
 }
