@@ -314,6 +314,9 @@ The central table. Everything else hangs off it.
 - `born_game_day`, `ended_game_day` (nullable)
 - `status` — alive / dead / removed
 - `end_reason` — old_age / condition / sold_away / retired_away
+- `natural_death_game_day` (nullable), `frailty_notice_game_day` (nullable) — **built in slice 0011**, see §4.2 below
+
+**Built in slice 0011.** `natural_death_game_day` is the day old age takes this horse — rolled once at birth from `rng_seed` (`deriveSeed(rng_seed, 'lifespan')`) via a clamped normal draw and snapshotted, never a hazard rolled every tick (CLAUDE.md §5.4/§5.5). Null until the tick's backfill stage assigns one to a living horse that lacks it — every horse alive before this slice deployed starts there. **Never rendered to a player, in any form, ever.** `frailty_notice_game_day` is null until the "failing" event has fired for this horse — its own idempotency marker, also never rendered. A partial index on `(natural_death_game_day) WHERE status = 'alive'` backs both of the tick's ageing queries.
 
 **Recommendation: two names, one permanent and one not.** `registered_name` is built once at birth from `breeder_prefix` plus the name the breeder chooses, and never changes hands or wording again. `barn_name` is whatever the current owner calls the horse day to day, editable freely and cleared on transfer along with `notes`.
 
@@ -361,6 +364,13 @@ The reason the prefix is snapshotted rather than joined to the breeder's live re
 On death or removal: clear `care`, `phenotype_cache`, `notes`, `image_url`; delete the horse's rows in `horse_training`, `horse_tack`, `service_calls`, `show_entries`. Keep identity, sex, breed, dates, parents, `genotype`, `coi`, `composition`. §7a's list, plus genotype, which is small and worth tracing for carrier status in the ancestry.
 
 **The registry settles the question I raised earlier about show records.** §7a says results go on death, which is defensible on storage grounds — but a hall of fame whose members' achievements have been deleted is not a hall of fame. **Recommendation: keep a `horse_show_summary` row per horse** — starts, wins, placings, best result, total earnings — maintained incrementally as results land, retained permanently, and never deleted. Individual `show_entries` rows can still be pruned on death. One small row per horse, and it is what the registry, the market and the pedigree page all actually want to display anyway.
+
+**This section's pruning recommendation was not carried out in slice 0011, and a future session should not implement it in good faith without re-reading that slice's §5.5 first.** Of the columns and tables listed above: `care`, `phenotype_cache` and `notes` do not exist as columns on `horses` (no care system has been built), and `horse_training`, `horse_tack` and `service_calls` do not exist as tables (no training, tack or service system has been built) — nothing was added just to clear it. Of the two that do exist:
+
+- **`image_url` is kept, not cleared.** It is a short root-relative path into the static image library, a few dozen bytes. The storage argument for clearing it does not survive contact with a column this small, and what it would cost is the picture of a child's horse the week it died.
+- **`show_entries` are kept, not pruned.** Deleting a dead horse's entries would retroactively falsify every show it competed in — a class judged eight-strong would render six-strong, placings would gap, and the show's own results page would 404 for a result that genuinely happened. `horse_show_summary` (above) is retained regardless and is still the right home for a future hall of fame; this section's argument for it stands unchanged. What slice 0011 establishes is that pruning `show_entries` is not needed yet at this game's scale, and should be a deliberate, discussed retention job when it is, rather than a side effect of a horse dying.
+
+Both `pregnancies` and `coverings` gained `cancelled_game_day`/`cancelled_reason` columns in the same slice (an additive pair, not a widened `status` — SQLite cannot cheaply `ALTER` a `CHECK` constraint) so that a horse's death or voluntary removal ends its own in-progress pregnancy and booked covering without rewriting either table's `status` values. See §5.1/§5.2 below.
 
 ### 4.3 `horse_ancestors` — materialised pedigree
 
@@ -442,12 +452,16 @@ Decay is a later config flag reading `last_trained_game_day`, which already exis
 
 **Recommendation: the `horses` row is created at foaling, not at conception.** An unborn horse in the horses table shows up in capacity counts, pedigree walks and market queries unless every one of them remembers to exclude it, and one of them eventually will not.
 
+**Built in slice 0011:** `cancelled_game_day` (nullable), `cancelled_reason` (nullable, e.g. `dam_died`/`sire_died`/`dam_removed`/`sire_removed`). A pregnancy is "live" when `status = 'in_progress'` **and** `cancelled_game_day IS NULL` — both halves, every time, at every call site. Written by the shared exit path both a horse's natural death and its voluntary removal go through, so a mare's in-progress pregnancy ends the moment she (or the sire) does, rather than foaling weeks later against a mother who is gone.
+
 ### 5.2 `stud_bookings`
 
 - `id`, `stallion_id`, `mare_id`, `stallion_stable_id`, `mare_stable_id`
 - `season_index`, `fee`, `booked_game_day`, `status`
 
 The stallion book cap (§6d) is a count of active bookings for a stallion within a `season_index`.
+
+**Built in slice 0003 as `coverings`** (the mating event, separate from `pregnancies` since one covering can produce zero, one or two rows — twins), not under this name or exactly this shape; see that slice's own document. **Slice 0011 adds the same `cancelled_game_day`/`cancelled_reason` pair** described above for `pregnancies`, with the same two-part liveness rule (`status = 'booked' AND cancelled_game_day IS NULL`) — a still-booked covering is cancelled the moment either horse involved dies or is retired away.
 
 ---
 
@@ -693,7 +707,7 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases` — over the PIN and attempt log already in place |
 | Health, first pass | `conditions`, `horse_conditions`, `horse_knowledge`, `services`, `service_calls`; the Quarter Horse's panel only |
 | Care and tack | `tack_types`, `tack_items`, `horses.care` |
-| Ageing and death | no new tables — `status` and `ended_game_day` already exist |
+| Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` |
 | Market | `listings`, `buy_offers`, `stud_listings`, `stud_bookings` |
 | Professions | `provider_state`, `provider_inventory` |

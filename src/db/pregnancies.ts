@@ -30,12 +30,28 @@ export interface PregnancyRow {
   foal_id: number | null;
   last_processed_tick_seq: number | null;
   created_real_ts: number;
+  /** Slice 0011 §5.2. Null means live. A row is only ever live when BOTH status says so AND this
+   * is null - see the comment on foalDuePregnancies' query below. */
+  cancelled_game_day: number | null;
+  cancelled_reason: string | null;
 }
 
 export async function getActivePregnancyForMare(env: Env, mareId: number): Promise<PregnancyRow | null> {
   return env.DB.prepare(`SELECT * FROM pregnancies WHERE dam_id = ? AND status = 'in_progress' ORDER BY id DESC LIMIT 1`)
     .bind(mareId)
     .first<PregnancyRow>();
+}
+
+/** Slice 0011 §6.2: every still-live pregnancy this horse appears in, on either side - a mare has
+ * at most one, a stallion can have several (each with a different mare). Used by the retire-away
+ * confirmation page to name what retiring cancels. */
+export async function listActivePregnanciesInvolvingHorse(env: Env, horseId: number): Promise<PregnancyRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM pregnancies WHERE (dam_id = ? OR sire_id = ?) AND status = 'in_progress' AND cancelled_game_day IS NULL`
+  )
+    .bind(horseId, horseId)
+    .all<PregnancyRow>();
+  return result.results ?? [];
 }
 
 export interface BuildPregnancyInsertInput {
@@ -103,7 +119,10 @@ export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyIns
  * `status = 'in_progress'` on the final update, so a double-fired tick cannot foal it twice.
  */
 export async function foalDuePregnancies(env: Env, gameDay: number, tickSeq: number): Promise<void> {
-  const due = await env.DB.prepare(`SELECT * FROM pregnancies WHERE status = 'in_progress' AND due_game_day <= ?`)
+  // Slice 0011 §5.2: a row is live when status says so AND cancelled_game_day IS NULL - both
+  // halves, every time. Without the second half, a dead or retired-away mare's pregnancy would
+  // still foal weeks after she is gone.
+  const due = await env.DB.prepare(`SELECT * FROM pregnancies WHERE status = 'in_progress' AND due_game_day <= ? AND cancelled_game_day IS NULL`)
     .bind(gameDay)
     .all<PregnancyRow>();
 
@@ -160,6 +179,7 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
       conditions,
       lethalFoalDeathGameDays: config.values.lethal_foal_death_game_days,
       accountId: ownerStable.account_id,
+      lifespanConfig: config.values,
     }),
     // Foal heat (slice 0003 §10.2): resetting to tickSeq + 1 also desynchronises mares whose cycles
     // happened to have lined up.

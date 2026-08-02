@@ -100,6 +100,20 @@ export interface ConfigValues {
   /** Slice 0010 §2.2/§5.4. Read once, at birth, and snapshotted onto horse_conditions.terminal_game_day
    * (CLAUDE.md §5.5) - retuning this never moves the death date of a foal already born. */
   lethal_foal_death_game_days: number;
+  /** Slice 0011 §4.2/§5.3. Read once, at creation, and snapshotted onto horses.natural_death_game_day
+   * (CLAUDE.md §5.5) - retuning any of these four never moves the death date of a horse already alive. */
+  lifespan_mean_game_days: number;
+  lifespan_sd_game_days: number;
+  lifespan_min_game_days: number;
+  lifespan_max_game_days: number;
+  /** Slice 0011 §4.3/§4.4. Live - read fresh on every page view (ageState). Changing this only
+   * changes who currently reads as failing and when the notice next fires; it moves no death date. */
+  frailty_window_game_days: number;
+  /** Slice 0011 §4.3/§4.4. Live - a plain fact about a horse's age, not a prediction. */
+  veteran_age_game_days: number;
+  /** Slice 0011 §8.1. Live - how long a dead or removed horse stays in the barn list before
+   * dropping to /stables/:id/past only. */
+  barn_shows_ended_game_days: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

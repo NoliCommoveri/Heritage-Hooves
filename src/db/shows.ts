@@ -189,6 +189,25 @@ export async function getEntryByClassAndHorse(env: Env, classId: number, horseId
   return env.DB.prepare('SELECT * FROM show_entries WHERE class_id = ? AND horse_id = ?').bind(classId, horseId).first<ShowEntryRow>();
 }
 
+export interface OpenEntryForHorse {
+  classId: number;
+  className: string;
+}
+
+/** Slice 0011 §6.2/§7.4: this horse's entries in classes that have not been judged yet, identified
+ * by the class's own status column rather than a date comparison - what the retire-away
+ * confirmation page names, and exactly the set buildEndHorseParticipationStatements withdraws. */
+export async function listOpenEntriesForHorse(env: Env, horseId: number): Promise<OpenEntryForHorse[]> {
+  const result = await env.DB.prepare(
+    `SELECT sc.id AS class_id, sc.name AS class_name FROM show_entries se
+     JOIN show_classes sc ON sc.id = se.class_id
+     WHERE se.horse_id = ? AND sc.status = 'scheduled'`
+  )
+    .bind(horseId)
+    .all<{ class_id: number; class_name: string }>();
+  return (result.results ?? []).map((r) => ({ classId: r.class_id, className: r.class_name }));
+}
+
 export async function countStableEntriesInClass(env: Env, classId: number, stableId: number): Promise<number> {
   const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM show_entries WHERE class_id = ? AND entered_by_stable_id = ?')
     .bind(classId, stableId)

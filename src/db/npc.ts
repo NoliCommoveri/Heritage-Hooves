@@ -106,6 +106,10 @@ export async function stockShowBarn(
         // buildConditionSignsEventStatement's own guard writes nothing, which is correct: its
         // horses foal nothing a child reads (this file's header comment).
         accountId: null,
+        // Slice 0011 §2.3/§7.1: the show barn's horses age and die on the same code path as
+        // everyone else's (CLAUDE.md §13) - a lifespan is rolled for them here exactly like anyone
+        // else's founding stock.
+        lifespanConfig: params.config.values,
       })
     );
   }

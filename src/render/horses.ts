@@ -12,6 +12,7 @@ import type { ConformationDisplayRow } from '../engines/conformation/model';
 import type { HorseShowSummaryRow } from '../db/shows';
 import { placingText } from './shows';
 import type { ConditionRow } from '../db/health';
+import type { AgeState } from '../engines/ageing/lifespan';
 
 export const displayNameFor = horseDisplayName;
 
@@ -25,14 +26,24 @@ function barnThumbnail(horse: HorseRow): SafeHtml {
   return html`<span class="horse-thumb horse-thumb--placeholder" aria-hidden="true"></span>`;
 }
 
-/** Slice 0010 §8: a small marker for a horse that is visibly affected (a signs_visible condition
- * its genotype reads as affected by, with no test needed - §2.4) or dead. Kept to one glanceable
- * badge, the same discipline this file's own comments already apply to the compact conformation
- * line and the show-record badge - the barn list is already dense. */
+/** Slice 0010 §8/slice 0011 §8.1: a small marker for a horse that is visibly affected (a
+ * signs_visible condition its genotype reads as affected by, with no test needed - §2.4), dead, or
+ * retired away. Kept to one glanceable badge, the same discipline this file's own comments already
+ * apply to the compact conformation line and the show-record badge - the barn list is already dense. */
 function healthBarnBadge(horse: HorseRow, visibleConditions: ConditionRow[]): SafeHtml {
   if (horse.status === 'dead') return html`<span class="badge badge-danger">Died</span>`;
+  if (horse.status === 'removed') return html`<span class="badge">Retired away</span>`;
   if (visibleConditions.length === 0) return raw('');
   return html`<span class="badge badge-warning">${visibleConditions.map((c) => c.name).join(', ')}</span>`;
+}
+
+/** Slice 0011 §4.3/§8.1: the barn list's one-word Veteran/Failing marker - only ever shown for a
+ * living horse's own two states, since an ended horse already gets healthBarnBadge's Died/Retired
+ * away badge instead. */
+function ageStateBarnBadge(state: AgeState): SafeHtml {
+  if (state === 'veteran') return html`<span class="badge">Veteran</span>`;
+  if (state === 'failing') return html`<span class="badge badge-warning">Failing</span>`;
+  return raw('');
 }
 
 export function renderBarnList(params: {
@@ -48,15 +59,16 @@ export function renderBarnList(params: {
     conformation: ConformationDisplayRow[];
     showSummary: HorseShowSummaryRow | null;
     visibleConditions: ConditionRow[];
+    ageState: AgeState;
   }[];
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -68,6 +80,7 @@ export function renderBarnList(params: {
     <h1>${params.stable.name}'s horses</h1>
     ${rows}
     <p><a href="/stables/${String(params.stable.id)}/breed">Breed two horses</a></p>
+    <p><a href="/stables/${String(params.stable.id)}/past">Past horses</a></p>
   `;
   return pageShell({
     title: `${params.stable.name} · Horses`,
@@ -245,7 +258,7 @@ function healthStatusBadge(row: HealthConditionDisplay): SafeHtml {
  * the card shows nothing but the condition names (§1 step 5) - no results, no Test button, even
  * for a condition that would otherwise be visible without a test. That is a deliberate scope limit
  * for this slice's one non-owner viewer, not a rule about what visible-without-a-test means. */
-function healthCard(params: { owner: boolean; rows: HealthConditionDisplay[]; horseId: number }): SafeHtml {
+function healthCard(params: { owner: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number }): SafeHtml {
   if (params.rows.length === 0) return raw('');
   const rows = params.owner
     ? params.rows.map(
@@ -261,7 +274,7 @@ function healthCard(params: { owner: boolean; rows: HealthConditionDisplay[]; ho
     <div class="card">
       <h2>Health</h2>
       ${rows}
-      ${params.owner ? html`<p><a class="button-link" href="/horses/${String(params.horseId)}/test">Test</a></p>` : raw('')}
+      ${params.canTest ? html`<p><a class="button-link" href="/horses/${String(params.horseId)}/test">Test</a></p>` : raw('')}
     </div>`;
 }
 
@@ -355,6 +368,13 @@ export function renderHorsePage(params: {
   enterShowNotice?: string;
   /** Slice 0010 §8: the Health card's rows, already resolved to what this viewer is entitled to see. */
   health: HealthConditionDisplay[];
+  /** Slice 0011 §4.3/§8.1: this living horse's own Veteran/Failing/young/adult state - never
+   * consulted for an ended horse (the status badge below covers that case instead). */
+  ageState: AgeState;
+  /** Slice 0011 §8.1: owner AND alive - the one flag that gates every action a dead or removed
+   * horse's page must hide (Enter in a show, Test, Choose/Change picture, Retire away). Reading
+   * content (pedigree, conformation, health, show record, picture) is never gated by this. */
+  canManage: boolean;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -419,11 +439,35 @@ export function renderHorsePage(params: {
     : html`
       <div class="horse-portrait horse-portrait--placeholder">
         <p>${displayNameFor(h)} is ${params.visibleColour}.</p>
-        ${params.owner ? html`<a class="button-link" href="/horses/${String(h.id)}/image">Choose a picture</a>` : raw('')}
+        ${params.canManage ? html`<a class="button-link" href="/horses/${String(h.id)}/image">Choose a picture</a>` : raw('')}
       </div>`;
 
-  const pictureLink = params.owner && h.image_url
+  const pictureLink = params.canManage && h.image_url
     ? html`<p><a href="/horses/${String(h.id)}/image">Change picture</a></p>`
+    : raw('');
+
+  // Slice 0011 §4.3/§8.1: Died/Retired away for an ended horse (with the game day it ended, per
+  // §8.1), or Veteran/Failing for a living one - never both, never neither's opposite state.
+  const statusMarker =
+    h.status === 'dead'
+      ? html`<span class="badge badge-danger">Died${h.ended_game_day !== null ? html`, game day ${String(h.ended_game_day)}` : raw('')}</span>`
+      : h.status === 'removed'
+        ? html`<span class="badge">Retired away${h.ended_game_day !== null ? html`, game day ${String(h.ended_game_day)}` : raw('')}</span>`
+        : params.ageState === 'veteran'
+          ? html`<span class="badge">Veteran</span>`
+          : params.ageState === 'failing'
+            ? html`<span class="badge badge-warning">Failing</span>`
+            : raw('');
+
+  // Slice 0011 §2.1/§8.1: the failing paragraph, worded for a page rather than the events feed -
+  // same content, same deliberate vagueness (never a number of days, never a date).
+  const failingParagraph =
+    params.ageState === 'failing'
+      ? html`<p class="notice">${displayNameFor(h)} is getting on in years now, and ${possessive === 'her' ? 'she' : 'he'} is starting to slow down. ${possessive === 'her' ? 'She' : 'He'} can still be shown and still be bred, and there is nothing that needs treating - this is just what getting old looks like.</p>`
+      : raw('');
+
+  const retireLink = params.canManage
+    ? html`<p><a href="/horses/${String(h.id)}/retire">Retire ${displayNameFor(h)} away</a></p>`
     : raw('');
 
   const genotypeBlock =
@@ -449,7 +493,8 @@ export function renderHorsePage(params: {
       ${portraitBlock}
       ${pictureLink}
       <p>${params.description}</p>
-      <p><strong>Sex:</strong> ${h.sex} &middot; <strong>Age:</strong> ${params.ageYears < 1 ? 'under a year' : `${Math.floor(params.ageYears)} years`}</p>
+      <p><strong>Sex:</strong> ${h.sex} &middot; <strong>Age:</strong> ${params.ageYears < 1 ? 'under a year' : `${Math.floor(params.ageYears)} years`} ${statusMarker}</p>
+      ${failingParagraph}
       <p><strong>Breed:</strong> ${params.breed ? params.breed.name : h.is_cross ? 'Cross' : 'Unknown'} ${params.gaited ? html`<span class="badge badge-success">gaited</span>` : raw('')}</p>
       <p><strong>Bred by:</strong> ${bredByLine}</p>
       ${params.unregistrableFriesianChestnut
@@ -462,7 +507,7 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
-    ${healthCard({ owner: params.owner, rows: params.health, horseId: h.id })}
+    ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id })}
     ${showRecordCard({
       summary: params.showSummary,
       recentResults: params.recentShowResults,
@@ -475,6 +520,7 @@ export function renderHorsePage(params: {
     ${pedigreeTable}
     ${nameForm}
     ${params.owner ? barnNameForm : raw('')}
+    ${retireLink}
     ${genotypeBlock}
     <p><a href="/stables/${String(params.ownerStable.id)}/horses">Back to horses</a></p>
   `;
@@ -644,6 +690,112 @@ export function renderImagePickerPage(params: {
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
     subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
+    body,
+  });
+}
+
+/**
+ * Slice 0011 §6.2: the retire-away confirmation page - not a JavaScript dialogue, a page with
+ * everything §6.2 asks for in order: who this is, "this cannot be undone", what survives, then any
+ * warnings naming a pregnancy, booking or unjudged entry that retiring cancels, then the button.
+ */
+export function renderRetireConfirmPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  ownerStable: StableRow;
+  hasFoundingOffer: boolean;
+  horse: HorseRow;
+  ageYears: number;
+  warnings: string[];
+  error?: string;
+}): SafeHtml {
+  const h = params.horse;
+  const possessive = h.sex === 'mare' ? 'her' : 'his';
+  const ageText = params.ageYears < 1 ? 'under a year old' : `${String(Math.floor(params.ageYears))} years old`;
+
+  const portrait = h.image_url ? html`<img class="horse-portrait" src="${h.image_url}" width="240" alt="">` : raw('');
+
+  const body = html`
+    <h1>Retire ${displayNameFor(h)} away</h1>
+    ${errorBox(params.error)}
+    <div class="card">
+      ${portrait}
+      <p><strong>${displayNameFor(h)}</strong>, ${ageText}.</p>
+      <p><strong>This cannot be undone.</strong></p>
+      <p>${possessive === 'her' ? 'Her' : 'His'} pedigree stays. Any foals ${possessive === 'her' ? 'she has had' : 'he has had'} keep their family tree, and ${possessive} show record stays on ${possessive} page.</p>
+      ${params.warnings.map((w) => html`<p class="notice">${w}</p>`)}
+      <form method="post" action="/horses/${String(h.id)}/retire">
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, I understand this cannot be undone.
+        </label>
+        <button type="submit">Retire ${displayNameFor(h)} away</button>
+      </form>
+      <p><a href="/horses/${String(h.id)}">Cancel</a></p>
+    </div>
+  `;
+  return pageShell({
+    title: `Retire ${displayNameFor(h)} away`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
+    body,
+  });
+}
+
+/** Slice 0011 §8.1: how a past horse ended, in plain words - kept deliberately generic rather than
+ * naming a specific condition (§3.5: no special layout, no tribute card - the horse's own page
+ * already carries that detail for a condition death). */
+function endedDescription(h: HorseRow): string {
+  if (h.status === 'removed') return 'Retired away';
+  if (h.end_reason === 'old_age') return 'Died of old age';
+  return 'Died';
+}
+
+/**
+ * /stables/:id/past (slice 0011 §8.1): every horse this stable ever owned that has since ended,
+ * newest-ended first - a plain list, not a memorial page (§3.5). Linked from the barn list.
+ */
+export function renderPastHorsesPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  stable: StableRow;
+  hasFoundingOffer: boolean;
+  horses: HorseRow[];
+}): SafeHtml {
+  const rows = params.horses.map(
+    (h) => html`
+    <tr>
+      <td><a href="/horses/${String(h.id)}">${displayNameFor(h)}</a></td>
+      <td>${h.sex}</td>
+      <td>${String(h.born_game_day)}</td>
+      <td>${h.ended_game_day !== null ? String(h.ended_game_day) : ''}</td>
+      <td>${endedDescription(h)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>${params.stable.name}'s past horses</h1>
+    ${params.horses.length
+      ? html`
+        <table>
+          <thead><tr><th>Name</th><th>Sex</th><th>Born (game day)</th><th>Ended (game day)</th><th>How</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+      : html`<p>No horses here have ended yet.</p>`}
+    <p><a href="/stables/${String(params.stable.id)}/horses">Back to horses</a></p>
+  `;
+  return pageShell({
+    title: `${params.stable.name} · Past horses`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    subnav: stableSubnav(params.stable.id, 'horses', params.hasFoundingOffer),
     body,
   });
 }

@@ -29,12 +29,28 @@ export interface CoveringRow {
   resolved_game_day: number | null;
   resolved_tick_seq: number | null;
   created_real_ts: number;
+  /** Slice 0011 §5.2. Null means live. A row is only ever live when BOTH status says so AND this
+   * is null - see the comment on resolveDueCoverings' query below. */
+  cancelled_game_day: number | null;
+  cancelled_reason: string | null;
 }
 
 export async function getBookedCoveringForMare(env: Env, mareId: number): Promise<CoveringRow | null> {
   return env.DB.prepare(`SELECT * FROM coverings WHERE mare_id = ? AND status = 'booked' ORDER BY id DESC LIMIT 1`)
     .bind(mareId)
     .first<CoveringRow>();
+}
+
+/** Slice 0011 §6.2: every still-live booking this horse appears in, on either side - a mare has at
+ * most one (validateBooking already prevents a second), a stallion can have several. Used by the
+ * retire-away confirmation page to name what retiring cancels. */
+export async function listBookedCoveringsInvolvingHorse(env: Env, horseId: number): Promise<CoveringRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM coverings WHERE (mare_id = ? OR stallion_id = ?) AND status = 'booked' AND cancelled_game_day IS NULL`
+  )
+    .bind(horseId, horseId)
+    .all<CoveringRow>();
+  return result.results ?? [];
 }
 
 export interface BookCoveringParams {
@@ -92,10 +108,14 @@ export function estimateConceptionChance(
  * rolled (slice 0003 §3.9).
  */
 export async function resolveDueCoverings(env: Env, gameDay: number, tickSeq: number, config: Config): Promise<void> {
+  // Slice 0011 §5.2: a row is live when status says so AND cancelled_game_day IS NULL - both
+  // halves, every time. Without the second half, a dead mare's booked covering would still resolve
+  // on her next in-season tick.
   const due = await env.DB.prepare(
     `SELECT c.* FROM coverings c
      JOIN horses m ON m.id = c.mare_id
      WHERE c.status = 'booked'
+       AND c.cancelled_game_day IS NULL
        AND m.cycle_anchor_tick_seq IS NOT NULL
        AND ((? - m.cycle_anchor_tick_seq) % ?) < ?`
   )

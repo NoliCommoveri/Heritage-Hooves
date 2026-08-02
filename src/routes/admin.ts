@@ -13,6 +13,7 @@ import {
   renderShowsAdminPage,
   renderMoneyAdminPage,
   renderHealthAdminPage,
+  renderAgeingAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
@@ -20,7 +21,8 @@ import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
 import { expireStableCookie } from '../lib/session';
 import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
-import { createFoundingHorse, countAliveHorses } from '../db/horses';
+import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName } from '../db/horses';
+import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
@@ -38,6 +40,7 @@ import { generateFounderPolygenic } from '../engines/genetics/polygenic';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { parseImageCount } from '../lib/images';
 import { getEnabledConditions, conditionCensus } from '../db/health';
+import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward } from '../db/ageing';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -120,6 +123,13 @@ const NUMERIC_CONFIG_KEYS = [
   'genotype_test_cost',
   'genotype_panel_cost',
   'lethal_foal_death_game_days',
+  'lifespan_mean_game_days',
+  'lifespan_sd_game_days',
+  'lifespan_min_game_days',
+  'lifespan_max_game_days',
+  'frailty_window_game_days',
+  'veteran_age_game_days',
+  'barn_shows_ended_game_days',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -240,6 +250,7 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     conditions,
     lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
     accountId: stable.account_id,
+    lifespanConfig: ctx.config.values,
   });
 
   if (!result.ok) {
@@ -441,11 +452,21 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
     const barn = await getShowBarnStable(ctx.env);
     const barnCount = barn ? await countAliveHorses(ctx.env, barn.id) : 0;
     const recentShows = await listShowsForAdmin(ctx.env, 20);
+    // Slice 0011 §2.3/§8.2: the show barn ages and dies on the same code path as everyone else's
+    // horses (CLAUDE.md §13), so it will thin out on its own over months of play - this has to be
+    // visible or it is a mystery. listStableHorses already sorts oldest-first, so its top five are
+    // the barn's oldest without a second query.
+    const barnHorses = barn ? await listStableHorses(ctx.env, barn.id) : [];
+    const oldestBarnHorses = barnHorses.slice(0, 5).map((h) => ({
+      name: horseDisplayName(h),
+      ageState: ageState({ bornGameDay: h.born_game_day, naturalDeathGameDay: h.natural_death_game_day, status: h.status }, ctx.world.game_day, ctx.config.values),
+    }));
     return htmlResponse(
       renderShowsAdminPage({
         world: ctx.world,
         barnCount,
         barnTarget: ctx.config.values.npc_show_barn_size,
+        oldestBarnHorses,
         qualityBands: ctx.config.values.quality_bands,
         defaultBand: ctx.config.values.npc_show_barn_quality_band,
         recentShows,
@@ -543,4 +564,46 @@ export async function adminMoneyRoute(ctx: RequestContext, method: string): Prom
 export async function adminHealthRoute(ctx: RequestContext): Promise<Response> {
   const census = await conditionCensus(ctx.env);
   return htmlResponse(renderHealthAdminPage({ world: ctx.world, census }));
+}
+
+// Slice 0011 §8.4: roughly one game year - long enough to see a rate, short enough to stay a
+// window rather than a full history (horse_show_summary/the ledger are where full history lives).
+const RECENT_DEATHS_WINDOW_GAME_DAYS = 360;
+
+/** /admin/ageing (slice 0011 §8.4). GET is read-only except for one control - see the comment on
+ * bringHorseDeathForward in src/db/ageing.ts for why this shape does not cross overview §6b's
+ * warning about advancing an individual horse. */
+export async function adminAgeingRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [livingHorses, recentDeaths] = await Promise.all([
+      listLivingHorsesForAdmin(ctx.env, ctx.world.game_day, ctx.config),
+      listRecentDeaths(ctx.env, ctx.world.game_day, RECENT_DEATHS_WINDOW_GAME_DAYS),
+    ]);
+    return htmlResponse(
+      renderAgeingAdminPage({
+        world: ctx.world,
+        livingHorses,
+        recentDeaths,
+        recentDeathsWindowGameDays: RECENT_DEATHS_WINDOW_GAME_DAYS,
+        error,
+        notice,
+      })
+    );
+  }
+
+  if (method === 'GET') {
+    const notice = new URL(ctx.request.url).searchParams.get('forced') ? "That horse's end has been brought forward to today." : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action !== 'force_death') return notFound();
+  if (form.confirm !== 'yes') return page("Tick the box to confirm before bringing a horse's end forward.");
+
+  const horseId = Number(form.horse_id);
+  if (!Number.isInteger(horseId)) return page('Choose a horse.');
+
+  await bringHorseDeathForward(ctx.env, horseId, ctx.world.game_day);
+  return redirect('/admin/ageing?forced=1');
 }
