@@ -295,6 +295,12 @@ a.button-link:hover {
   font-size: 0.9rem;
 }
 
+/* A multi-paragraph event sentence (slice 0010's horse_died notice) - preserves the blank lines in
+   the stored text instead of the browser default of collapsing them to one run-on line. */
+.event-long {
+  white-space: pre-line;
+}
+
 /* ---------- Tables ---------- */
 
 table {

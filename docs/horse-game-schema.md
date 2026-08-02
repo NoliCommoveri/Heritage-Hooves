@@ -268,16 +268,21 @@ Every Mendelian locus — colour, gait, and single-gene disease. One engine, one
 
 ### 3.3 `conditions`
 
-- `id`, `code`, `name`, `category` — single_gene / colour_linked / polygenic
+**Built in slice 0010**, four rows (HYPP, PSSM1, HERDA, GBED — the real Quarter Horse five-panel test minus malignant hyperthermia, which has no surface in a game with no surgery). Columns actually built:
+
+- `id`, `code`, `name`, `category` — single_gene / colour_linked / polygenic (all four seeded rows are single_gene)
 - `locus_code` (nullable) — single-gene and colour-linked conditions point at a locus; polygenic ones do not
-- `trigger` — JSON describing the genotype that causes it (`Fr/Fr`, `Z/Z`, heterozygous-affected for the dominants)
+- `trigger` — JSON describing the genotype that causes it, e.g. `{"v":1,"locus":"GBED","mutant":"Gb","mode":"recessive"}` — read by `src/engines/health/status.ts`'s `conditionStatus`. Deliberately generic enough that a colour-linked condition (Frame Overo, Silver, Grey, white patterning) needs only a new row when its locus exists, no new engine — proving out §3a's "zero new machinery" claim.
 - `severity_class` — lethal / manageable / degenerative / latent (§3d)
-- `onset_model` — JSON: age curve, workload and weight modifiers, base probability
-- `management_options` — JSON: what diet or workload change does, and what it costs
-- `breed_associations` — JSON
+- `signs_visible` — 0/1, **not in the original sketch** — added because §2c's "genotype vs phenotype" needed a sharper rule than the sketch implied: an *affected* horse (HYPP, PSSM1, HERDA) is visible on its own page with no test, worded as an observation; a *carrier* is never visible without one, for any condition. GBED's `signs_visible` is 0 — a neonatal lethal has no window of visible signs before the death.
+- `bars_showing` — 0/1, also not in the original sketch — 1 only for HERDA (degenerative) in this slice; HYPP and PSSM1 affected horses still compete, per §3d.
+- `breed_associations` — JSON array of breed codes, display only
+- `test_cost_key` — nullable, the config key naming this condition's individual test price (all four point at `genotype_test_cost` today)
 - `enabled` — 0/1, per-condition toggle (§12.2)
 - `teaching_text`
-- `event_text` — **the drafted wording** for what players see when this fires. §14 flags that the lethal notifications are worth writing before one happens rather than at the point of failure; this column is where that draft lives, so it is written calmly and edited without a deploy.
+- `event_text` — **the drafted wording** for what players see when this fires. §14 flags that the lethal notifications are worth writing before one happens rather than at the point of failure; this column is where that draft lives, so it is written calmly and edited without a deploy. The GBED wording is reproduced in full in `docs/slices/0010-health-first-pass.md` §5.6.
+
+**Deliberately not built**, per slice 0010 §3.2/§3.3: `onset_model` (no management system exists yet — HYPP/PSSM1 are "diagnosed", not "managed", until the care and tack stage) and `management_options` (same reason). Neither is a nullable column nothing writes — that would be a promise to a future session nobody has kept. Both arrive with the care and tack stage.
 
 ### 3.4 `quantitative_traits`
 
@@ -375,26 +380,35 @@ Also decided there: the primary key is `(descendant_id, ancestor_id, depth)` rat
 
 **Decided in session:** knowledge is per-player, and transfers to the buyer on sale.
 
+**Built in slice 0010**, per-stable rather than per-player (CLAUDE.md §12's account-versus-stable rule — knowledge belongs to the business that paid for it), which is the important structural decision and is unchanged from the sketch below:
+
 - `id`, `stable_id`, `horse_id`
-- `kind` — genotype / screening
+- `kind` — genotype / screening. **Only `'genotype'` is written by slice 0010** — the screening kind, and the going-stale behaviour that makes it distinct, arrive with the polygenic predispositions (§3a's third category).
 - `subject_code` — a locus code or a condition code
 - `result` — clear / carrier / affected, or a screening observation
-- `tested_game_day`, `expires_game_day` (nullable), `cost_paid`, `service_call_id`
+- `tested_game_day`, `expires_game_day` (nullable — always NULL for a genotype row, since permanence is the point), `cost_paid`
 
 Genotype rows are permanent and have no expiry. Screening rows carry an observation date and go stale, per §3c — which is the whole educational point of keeping the two kinds distinct.
 
-**What this buys, and what it costs.** It makes "tested clear" a genuine premium rather than a public fact, it makes §3e's market price signal real, and it means a horse's history of being tested travels with it. It also means a child can sell a carrier without disclosing, which will eventually produce an argument. That is arguably the lesson, but it is worth being ready for rather than surprised by. A per-stable "disclosed" flag on listings, or an admin view showing all knowledge, are both available mitigations that do not change the schema.
+**Not built**: `service_call_id`. There is no vet profession yet, so a test is a direct purchase (`/horses/:id/test`) with instant results, not a service call with a turnaround time. Arrives with that profession, the same reasoning as `conditions.onset_model`/`management_options` above.
 
-**On transfer:** copy the seller's knowledge rows to the buyer rather than reassigning them. The seller remembers what they knew about a horse they no longer own, which is both realistic and useful for their own breeding records.
+**What this buys, and what it costs.** It makes "tested clear" a genuine premium rather than a public fact, it makes §3e's market price signal real, and it means a horse's history of being tested travels with it. It also means a child can sell a carrier without disclosing, which will eventually produce an argument. That is arguably the lesson, but it is worth being ready for rather than surprised by. A per-stable "disclosed" flag on listings, or an admin view showing all knowledge, are both available mitigations that do not change the schema. **Nothing about disclosure is built in slice 0010** — there is no market yet to disclose on (§3.7 of that slice's own document).
+
+**On transfer:** copy the seller's knowledge rows to the buyer rather than reassigning them. The seller remembers what they knew about a horse they no longer own, which is both realistic and useful for their own breeding records. **Not built** — there is no market yet, so nothing transfers. The table is per-stable from its first row, which is the part that matters; retrofitting that structural decision later would be a rewrite, so it was not deferred even though transfer itself was.
 
 ### 4.5 `horse_conditions` — what is actually true
 
 Distinct from knowledge. This is the horse's real state.
 
+**Built in slice 0010.** A row is written only when a horse's genotype makes it read as *affected* for a single-gene condition — never for carriers, never for clear horses (carriers are a fact about a genotype, not a condition a horse has). What a player sees on screen is always computed fresh from the genotype directly, never read from this table — this table exists for the tick (an indexed set of affected foals, rather than a full scan parsing every living horse's genotype JSON) and for a later stage's `management_state`, not for display. Columns actually built:
+
 - `id`, `horse_id`, `condition_code`
-- `state` — at_risk / onset / managed / resolved / terminal
-- `risk_score` (polygenic conditions), `onset_game_day`, `severity`
-- `management_state` — JSON, what the owner is currently doing about it
+- `state` — **`onset`** for manageable/degenerative (HYPP, PSSM1, HERDA) or **`terminal`** for lethal (GBED), in this slice. The `at_risk`/`managed`/`resolved` values below arrive with the polygenic and care stages.
+- `onset_game_day` — the horse's `born_game_day`, since every condition in this slice is single-gene and present from conception, with no onset model built yet
+- `terminal_game_day` (nullable) — set only on lethal rows, to `born_game_day + lethal_foal_death_game_days` **as that config value stood at the moment of birth** (CLAUDE.md §5.5's snapshotting rule) — retuning the window later never moves a foal's death date once it has one
+- `last_evaluated_game_day`
+
+**Not built**: `risk_score` and `severity` (no polygenic conditions exist yet — §3.4 above) and `management_state` (no management system exists yet — same reasoning as `conditions.onset_model`). All three arrive together with the polygenic predispositions and the care/tack stage respectively.
 - `last_evaluated_game_day`
 
 Polygenic predispositions get a row at birth with `state = at_risk` and a heritable risk score. Single-gene conditions get a row only when the genotype triggers them.

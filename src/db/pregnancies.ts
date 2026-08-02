@@ -12,6 +12,7 @@ import { parseGenotype, serializeGenotype, type Genotype } from '../engines/gene
 import { buildAncestorRows } from '../engines/genetics/pedigree';
 import { foalComposition } from '../engines/genetics/composition';
 import { buildFoaledEventStatement } from './events';
+import { getEnabledConditions } from './health';
 
 export interface PregnancyRow {
   id: number;
@@ -112,7 +113,12 @@ export async function foalDuePregnancies(env: Env, gameDay: number, tickSeq: num
 }
 
 async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: number, tickSeq: number): Promise<void> {
-  const [sire, dam, config] = await Promise.all([getHorse(env, pregnancy.sire_id), getHorse(env, pregnancy.dam_id), getConfig(env)]);
+  const [sire, dam, config, conditions] = await Promise.all([
+    getHorse(env, pregnancy.sire_id),
+    getHorse(env, pregnancy.dam_id),
+    getConfig(env),
+    getEnabledConditions(env),
+  ]);
   if (!sire || !dam) throw new Error(`foalDuePregnancies: sire or dam missing for pregnancy ${String(pregnancy.id)}`);
   const ownerStable = await getStableById(env, dam.owner_stable_id);
   if (!ownerStable) throw new Error(`foalDuePregnancies: owner stable missing for pregnancy ${String(pregnancy.id)}`);
@@ -151,6 +157,9 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
       ancestorRows,
       cycleAnchorTickSeq,
       conformationNoiseSd: config.values.conformation_noise_sd,
+      conditions,
+      lethalFoalDeathGameDays: config.values.lethal_foal_death_game_days,
+      accountId: ownerStable.account_id,
     }),
     // Foal heat (slice 0003 §10.2): resetting to tickSeq + 1 also desynchronises mares whose cycles
     // happened to have lined up.

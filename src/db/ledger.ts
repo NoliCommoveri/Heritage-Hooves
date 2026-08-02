@@ -8,7 +8,10 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 
-export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment';
+// 'vet' added by slice 0010 §5.5/§7.1 - genotype test purchases. The ledger table's own CHECK
+// constraint was widened in the same migration (0057_ledger_add_vet_kind.sql); this union must
+// keep matching it exactly, the same way the schema's CHECK and this type always have.
+export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet';
 
 export interface LedgerEntry {
   stableId: number;

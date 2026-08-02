@@ -10,10 +10,11 @@ import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import type { StableRow } from './stables';
 import { getBreeds } from './breeds';
-import { buildFoundingHorseInsertStatement, countAliveHorses } from './horses';
+import { buildFoundingHorseInsertStatements, countAliveHorses } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
+import { getEnabledConditions, getLethalTriggers } from './health';
 
 /** One documented magic string, matching migrations/0040_npc_show_barn.sql - replaced by a proper
  * npc_policy row when the NPC stage lands (CLAUDE.md §11's founding-stock entry uses the same
@@ -69,6 +70,8 @@ export async function stockShowBarn(
   const polygenicOneChance = params.config.values.quality_bands[params.band];
   if (polygenicOneChance === undefined) throw new Error(`stockShowBarn: unknown quality band "${params.band}"`);
 
+  const [conditions, lethalTriggers] = await Promise.all([getEnabledConditions(env), getLethalTriggers(env)]);
+
   const statements = [];
   for (let i = 0; i < shortfall; i++) {
     const seed = randomSeed();
@@ -78,12 +81,13 @@ export async function stockShowBarn(
       ageMinGameDays: params.config.values.founding_age_min_game_days,
       ageMaxGameDays: params.config.values.founding_age_max_game_days,
       seed,
+      lethalTriggers,
     });
     const sex = makeRng(deriveSeed(seed, 'sex')).pick(['mare', 'stallion'] as const);
     const { registeredName, originPrefix } = await resolveUniqueBarnName(env, seed);
 
     statements.push(
-      buildFoundingHorseInsertStatement(env, {
+      ...buildFoundingHorseInsertStatements(env, {
         stableId: stable.id,
         sex,
         breedId: qh.id,
@@ -96,6 +100,12 @@ export async function stockShowBarn(
         worldTickSeq: params.worldTickSeq,
         estrousCycleTicks: params.config.values.estrous_cycle_ticks,
         conformationNoiseSd: params.config.values.conformation_noise_sd,
+        conditions,
+        lethalFoalDeathGameDays: params.config.values.lethal_foal_death_game_days,
+        // The NPC show barn has no account (SHOW_BARN_PREFIX's own file comment) - null here means
+        // buildConditionSignsEventStatement's own guard writes nothing, which is correct: its
+        // horses foal nothing a child reads (this file's header comment).
+        accountId: null,
       })
     );
   }

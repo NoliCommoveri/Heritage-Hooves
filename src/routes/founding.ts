@@ -127,6 +127,8 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       worldTickSeq: ctx.world.tick_seq,
       estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
       conformationNoiseSd: ctx.config.values.conformation_noise_sd,
+      accountId: stable.account_id,
+      lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
     });
 
     if (!result.ok) {

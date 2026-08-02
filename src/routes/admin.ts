@@ -12,6 +12,7 @@ import {
   renderResetPage,
   renderShowsAdminPage,
   renderMoneyAdminPage,
+  renderHealthAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
@@ -36,6 +37,7 @@ import { sortAllelePair, GENOTYPE_VERSION, type AllelePair, type Genotype } from
 import { generateFounderPolygenic } from '../engines/genetics/polygenic';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { parseImageCount } from '../lib/images';
+import { getEnabledConditions, conditionCensus } from '../db/health';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -115,6 +117,9 @@ const NUMERIC_CONFIG_KEYS = [
   'upkeep_per_horse_per_game_day',
   'actions_per_tick',
   'events_retention_game_days',
+  'genotype_test_cost',
+  'genotype_panel_cost',
+  'lethal_foal_death_game_days',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -219,6 +224,7 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
   const polygenicRng = makeRng(deriveSeed(seed, 'founder_polygenic'));
   const genotype: Genotype = { v: GENOTYPE_VERSION, mendelian, polygenic: generateFounderPolygenic(polygenicRng) };
 
+  const conditions = await getEnabledConditions(ctx.env);
   const result = await createFoundingHorse(ctx.env, {
     stableId,
     sex,
@@ -231,6 +237,9 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     worldTickSeq: ctx.world.tick_seq,
     estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
     conformationNoiseSd: ctx.config.values.conformation_noise_sd,
+    conditions,
+    lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
+    accountId: stable.account_id,
   });
 
   if (!result.ok) {
@@ -528,4 +537,10 @@ export async function adminMoneyRoute(ctx: RequestContext, method: string): Prom
   );
 
   return redirect('/admin/money?applied=1');
+}
+
+/** /admin/health (slice 0010 §8) - read-only, no editing form. */
+export async function adminHealthRoute(ctx: RequestContext): Promise<Response> {
+  const census = await conditionCensus(ctx.env);
+  return htmlResponse(renderHealthAdminPage({ world: ctx.world, census }));
 }

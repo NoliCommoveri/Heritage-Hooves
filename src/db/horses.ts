@@ -4,6 +4,7 @@ import { deriveSeed, makeRng } from '../lib/rng';
 import { serializeGenotype, type Genotype } from '../engines/genetics/genotype';
 import { coefficientOfInbreeding, type AncestorEdge, type PedigreeHorse } from '../engines/genetics/pedigree';
 import { rollEnvironmentalNoise, serializeNoise } from '../engines/conformation/model';
+import { buildHorseConditionStatements, type ConditionRow } from './health';
 
 export interface HorseRow {
   id: number;
@@ -48,6 +49,19 @@ function isUniqueConstraintError(err: unknown): boolean {
 export async function listStableHorses(env: Env, stableId: number): Promise<HorseRow[]> {
   const result = await env.DB.prepare(
     `SELECT * FROM horses WHERE owner_stable_id = ? AND status = 'alive' ORDER BY born_game_day ASC, id ASC`
+  )
+    .bind(stableId)
+    .all<HorseRow>();
+  return result.results ?? [];
+}
+
+/** The barn list only (slice 0010 §1 step 9): alive and dead horses both, so a horse killed by a
+ * lethal condition stays visible, marked Died, rather than vanishing from view the moment it dies.
+ * Every other caller of listStableHorses (breeding, the NPC show barn's field, the image picker's
+ * "also used by" check) wants alive-only, unchanged - do not swap those to this function. */
+export async function listStableHorsesWithDead(env: Env, stableId: number): Promise<HorseRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM horses WHERE owner_stable_id = ? AND status IN ('alive', 'dead') ORDER BY born_game_day ASC, id ASC`
   )
     .bind(stableId)
     .all<HorseRow>();
@@ -132,15 +146,28 @@ export interface FoundingHorseInsertInput {
   estrousCycleTicks: number;
   /** Slice 0006 §4.2: rolls this horse's environmental noise, once, from its own seed. */
   conformationNoiseSd: number;
+  /** Slice 0010 §6.3: the enabled conditions rows, and what a lethal foal's death window is right
+   * now - both threaded from the caller rather than read here, since this file does no config
+   * reads of its own. Null accountId (the NPC show barn) means no condition_signs event is ever
+   * written, per buildConditionSignsEventStatement's own guard. */
+  conditions: ConditionRow[];
+  lethalFoalDeathGameDays: number;
+  accountId: number | null;
 }
 
 /**
- * Builds (but does not run) the statement that inserts a founding horse's row - the admin founder
- * form (slice 0002 §6.1) and claimed founding stock (slice 0005 §6.6) both go through this rather
- * than a second insert path. generation = 0, coi = 0, no breeder_stable_id (nobody in this game
- * bred it) and no horse_ancestors rows - unlike a foal, a founding horse has no pedigree to record.
+ * Builds (but does not run) the statements that insert a founding horse's row, plus any
+ * horse_conditions rows its genotype reads as affected - the admin founder form (slice 0002 §6.1)
+ * and claimed founding stock (slice 0005 §6.6) both go through this rather than a second insert
+ * path. generation = 0, coi = 0, no breeder_stable_id (nobody in this game bred it) and no
+ * horse_ancestors rows - unlike a foal, a founding horse has no pedigree to record.
+ *
+ * Callers must run these in one env.DB.batch(), with the horse insert (statement 0) landing before
+ * anything else touches `horses` - the same "(SELECT id FROM horses ORDER BY id DESC LIMIT 1)"
+ * pattern buildFoalInsertStatements' ancestor rows use, so the conditions rows below land against
+ * the right horse.
  */
-export function buildFoundingHorseInsertStatement(env: Env, input: FoundingHorseInsertInput): D1PreparedStatement {
+export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHorseInsertInput): D1PreparedStatement[] {
   const composition = JSON.stringify({ [input.breedCode]: 1 });
   const nowSeconds = nowUtcSeconds();
   // Slice 0003 §3.2: rolled once from the horse's own seed, not the shared world seed, so it's
@@ -149,27 +176,38 @@ export function buildFoundingHorseInsertStatement(env: Env, input: FoundingHorse
     input.sex === 'mare' ? input.worldTickSeq + makeRng(deriveSeed(input.rngSeed, 'cycle_slot')).int(input.estrousCycleTicks) : null;
   const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
 
-  return env.DB.prepare(
-    `INSERT INTO horses (
-       sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
-       sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
-       born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
-       environmental_noise
-     ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?)`
-  ).bind(
-    input.sex,
-    input.registeredName,
-    input.breederPrefix,
-    input.breedId,
-    composition,
-    input.stableId,
-    input.bornGameDay,
-    nowSeconds,
-    serializeGenotype(input.genotype),
-    input.rngSeed,
-    cycleAnchorTickSeq,
-    environmentalNoise
-  );
+  return [
+    env.DB.prepare(
+      `INSERT INTO horses (
+         sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
+         sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
+         born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
+         environmental_noise
+       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?)`
+    ).bind(
+      input.sex,
+      input.registeredName,
+      input.breederPrefix,
+      input.breedId,
+      composition,
+      input.stableId,
+      input.bornGameDay,
+      nowSeconds,
+      serializeGenotype(input.genotype),
+      input.rngSeed,
+      cycleAnchorTickSeq,
+      environmentalNoise
+    ),
+    ...buildHorseConditionStatements(env, {
+      genotype: input.genotype,
+      bornGameDay: input.bornGameDay,
+      lethalFoalDeathGameDays: input.lethalFoalDeathGameDays,
+      stableId: input.stableId,
+      accountId: input.accountId,
+      horseName: input.registeredName,
+      conditions: input.conditions,
+    }),
+  ];
 }
 
 export interface CreateFoundingHorseInput {
@@ -189,14 +227,20 @@ export interface CreateFoundingHorseInput {
   worldTickSeq: number;
   estrousCycleTicks: number;
   conformationNoiseSd: number;
+  conditions: ConditionRow[];
+  lethalFoalDeathGameDays: number;
+  /** The stable's own account, so a condition_signs event can be written - null for the NPC show
+   * barn (slice 0010 §6.3). */
+  accountId: number | null;
 }
 
 export type CreateFoundingHorseResult = { ok: true; horseId: number } | { ok: false; error: 'name_taken' };
 
-/** The admin founder form's insert path - thin wrapper around buildFoundingHorseInsertStatement
- * that runs it as a single statement (not batched) and translates a name collision. */
+/** The admin founder form's insert path - thin wrapper around buildFoundingHorseInsertStatements
+ * that runs its statements in one batch (now more than one, since slice 0010 - the horse insert
+ * plus any condition rows its genotype triggers) and translates a name collision. */
 export async function createFoundingHorse(env: Env, input: CreateFoundingHorseInput): Promise<CreateFoundingHorseResult> {
-  const statement = buildFoundingHorseInsertStatement(env, {
+  const statements = buildFoundingHorseInsertStatements(env, {
     stableId: input.stableId,
     sex: input.sex,
     breedId: input.breedId,
@@ -209,11 +253,14 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
     worldTickSeq: input.worldTickSeq,
     estrousCycleTicks: input.estrousCycleTicks,
     conformationNoiseSd: input.conformationNoiseSd,
+    conditions: input.conditions,
+    lethalFoalDeathGameDays: input.lethalFoalDeathGameDays,
+    accountId: input.accountId,
   });
 
   try {
-    const result = await statement.run();
-    return { ok: true, horseId: result.meta.last_row_id };
+    const results = await env.DB.batch(statements);
+    return { ok: true, horseId: results[0].meta.last_row_id };
   } catch (err) {
     if (isUniqueConstraintError(err)) return { ok: false, error: 'name_taken' };
     throw err;
@@ -241,6 +288,10 @@ export interface FoalInsertInput {
   /** Slice 0006 §4.2: rolls this foal's environmental noise, once, from its own (already-minted at
    * conception) rngSeed. */
   conformationNoiseSd: number;
+  /** Slice 0010 §6.3, same as FoundingHorseInsertInput's own fields. */
+  conditions: ConditionRow[];
+  lethalFoalDeathGameDays: number;
+  accountId: number | null;
 }
 
 /**
@@ -298,6 +349,20 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
          VALUES ((SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, ?, ?)`
       ).bind(row.ancestorId, row.depth, row.pathCount)
     ),
+    // Slice 0010 §6.3: same subquery pattern as the ancestor rows above, and safe for the same
+    // reason - nothing else inserts into `horses` between the insert above and these landing. Must
+    // stay before buildFoaledEventStatement in the caller's own batch array (it already is,
+    // pregnancies.ts spreads this function's result first) - that statement also relies on being
+    // the last thing in the batch to still find the foal via the same "highest id" subquery.
+    ...buildHorseConditionStatements(env, {
+      genotype: input.genotype,
+      bornGameDay: input.bornGameDay,
+      lethalFoalDeathGameDays: input.lethalFoalDeathGameDays,
+      stableId: input.ownerStableId,
+      accountId: input.accountId,
+      horseName: horseDisplayName({ registered_name: null, barn_name: null, sex: input.sex }),
+      conditions: input.conditions,
+    }),
   ];
 }
 

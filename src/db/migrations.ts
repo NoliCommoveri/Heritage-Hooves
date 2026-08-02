@@ -50,6 +50,14 @@ import m0046 from '../../migrations/0046_config_economy.sql';
 import m0047 from '../../migrations/0047_accounts_actions.sql';
 import m0048 from '../../migrations/0048_events.sql';
 import m0049 from '../../migrations/0049_config_turns_events.sql';
+import m0050 from '../../migrations/0050_seed_disease_loci.sql';
+import m0051 from '../../migrations/0051_breed_pools_disease_loci.sql';
+import m0052 from '../../migrations/0052_conditions.sql';
+import m0053 from '../../migrations/0053_seed_conditions.sql';
+import m0054 from '../../migrations/0054_horse_conditions.sql';
+import m0055 from '../../migrations/0055_horse_knowledge.sql';
+import m0056 from '../../migrations/0056_config_health.sql';
+import m0057 from '../../migrations/0057_ledger_add_vet_kind.sql';
 
 export interface MigrationFile {
   name: string;
@@ -116,6 +124,14 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0047_accounts_actions.sql', sql: m0047 },
   { name: '0048_events.sql', sql: m0048 },
   { name: '0049_config_turns_events.sql', sql: m0049 },
+  { name: '0050_seed_disease_loci.sql', sql: m0050 },
+  { name: '0051_breed_pools_disease_loci.sql', sql: m0051 },
+  { name: '0052_conditions.sql', sql: m0052 },
+  { name: '0053_seed_conditions.sql', sql: m0053 },
+  { name: '0054_horse_conditions.sql', sql: m0054 },
+  { name: '0055_horse_knowledge.sql', sql: m0055 },
+  { name: '0056_config_health.sql', sql: m0056 },
+  { name: '0057_ledger_add_vet_kind.sql', sql: m0057 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

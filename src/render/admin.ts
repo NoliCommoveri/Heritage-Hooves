@@ -10,10 +10,11 @@ import type { ImportOfferRow } from '../db/founding';
 import type { TableCount } from '../db/reset';
 import type { AdminShowSummary } from '../db/shows';
 import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
+import type { ConditionCensusRow } from '../db/health';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'migrations' | 'reset';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'health' | 'migrations' | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -26,6 +27,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
     { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
     { label: 'Money', href: '/admin/money', active: active === 'money' },
+    { label: 'Health', href: '/admin/health', active: active === 'health' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -64,6 +66,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/breeds">Breeds</a></p>
     <p><a class="button-link" href="/admin/shows">Shows</a></p>
     <p><a class="button-link" href="/admin/money">Money</a></p>
+    <p><a class="button-link" href="/admin/health">Health (horses)</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -212,11 +215,23 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
       <label>Turns per tick
         <input type="text" inputmode="numeric" name="actions_per_tick" value="${String(v.actions_per_tick)}">
       </label>
-      <p class="muted">Kept separate from the tick schedule (world.tick_times_local) on purpose - changing how often the tick fires should never silently change how much play a day contains. Only booking a covering, entering a show and claiming a founding batch spend a turn; browsing, renaming and reading are always free.</p>
+      <p class="muted">Kept separate from the tick schedule (world.tick_times_local) on purpose - changing how often the tick fires should never silently change how much play a day contains. Booking a covering, entering a show, claiming a founding batch and buying a genotype test each spend a turn (a panel is one turn, not four); browsing, renaming and reading are always free.</p>
       <label>Events kept for (game days)
         <input type="text" inputmode="numeric" name="events_retention_game_days" value="${String(v.events_retention_game_days)}">
       </label>
       <p class="muted">The "While you were away" feed is a notice board, not an archive - every event older than this, read or not, is deleted on the tick. The horse, its pedigree, its show results and the ledger all survive regardless.</p>
+      <h2>Health</h2>
+      <label>Genotype test cost, one condition
+        <input type="text" inputmode="numeric" name="genotype_test_cost" value="${String(v.genotype_test_cost)}">
+      </label>
+      <label>Genotype panel cost, all conditions at once
+        <input type="text" inputmode="numeric" name="genotype_panel_cost" value="${String(v.genotype_panel_cost)}">
+      </label>
+      <p class="muted">Both read live, at the moment a test is bought - a price change affects the next purchase, never re-prices a receipt already written. Too cheap and everyone tests everything; too expensive and children breed blind. Tune by watching /admin/health.</p>
+      <label>Lethal foal death window (game days)
+        <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
+      </label>
+      <p class="muted">Only affects foals born after this changes - a foal already carrying a lethal condition has its death day snapshotted at birth, so retuning this never moves it.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
@@ -668,4 +683,37 @@ export function renderMoneyAdminPage(params: {
     </div>
   `;
   return shell(params.world, body, 'Money', 'money');
+}
+
+/**
+ * /admin/health (slice 0010 §8) - read-only, no editing form (CLAUDE.md §13's "no polished admin
+ * UI" rule). Per condition: name, severity, whether enabled, and counts of clear/carrier/affected
+ * across every living horse in the game - the number the founding-pool frequencies (§4.3) get tuned
+ * against, and the answer to "is the panel doing too much or too little" (§3f/§14).
+ */
+export function renderHealthAdminPage(params: { world: WorldRow; census: ConditionCensusRow[] }): SafeHtml {
+  const rows = params.census.map(
+    ({ condition, clear, carrier, affected }) => html`
+    <tr>
+      <td>${condition.name} (${condition.code})</td>
+      <td>${condition.severity_class}</td>
+      <td>${condition.enabled ? 'yes' : 'no'}</td>
+      <td>${String(clear)}</td>
+      <td>${String(carrier)}</td>
+      <td>${String(affected)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Health</h1>
+    <p class="muted">Counts across every living horse in the game, read straight from genotypes - this is the truth, not what any one player knows.</p>
+    <div class="card">
+      <table>
+        <thead><tr><th>Condition</th><th>Severity</th><th>Enabled</th><th>Clear</th><th>Carrier</th><th>Affected</th></tr></thead>
+        <tbody>${rows.length ? rows : html`<tr><td colspan="6" class="muted">No conditions seeded yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <p class="muted">If a condition is firing too often or almost never, the lever is the breed's founding_allele_pool frequency, not this page - see CLAUDE.md's slice 0010 entry.</p>
+  `;
+  return shell(params.world, body, 'Health', 'health');
 }

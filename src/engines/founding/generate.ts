@@ -29,6 +29,14 @@ function drawAllele(locus: Locus, freqs: Record<string, number>, rng: Rng): stri
   throw new Error(`no alleles with nonzero frequency at locus ${locus.code}`);
 }
 
+/** One lethal condition's (locus, mutant allele) pair - slice 0010 §4.3's clamp. This function is
+ * pure and must not know what GBED is: the caller derives this list from the conditions table's
+ * severity_class = 'lethal' rows. */
+export interface LethalTrigger {
+  locus: string;
+  mutant: string;
+}
+
 export interface GenerateCandidateInput {
   pool: AllelePool;
   /** The quality band's number - the chance any given polygenic allele is a '1'. Slice 0005 §4. */
@@ -37,6 +45,12 @@ export interface GenerateCandidateInput {
   ageMaxGameDays: number;
   /** The candidate's own rng_seed (import_candidates.rng_seed), minted by the caller. */
   seed: number;
+  /** Slice 0010 §4.3: a founding or import candidate must never be generated homozygous-affected
+   * for a lethal condition, since such a horse would have died as a foal and cannot exist as an
+   * adult in a batch. Defaults to none, for callers that predate this (there are none left, but the
+   * signature stays optional so a future non-founding caller of this same function isn't forced to
+   * supply an empty array). */
+  lethalTriggers?: LethalTrigger[];
 }
 
 export interface GeneratedCandidate {
@@ -59,6 +73,19 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
     const a1 = drawAllele(locus, freqs, mendelianRng);
     const a2 = drawAllele(locus, freqs, mendelianRng);
     mendelian[locus.code] = sortAllelePair(locus.code, a1, a2);
+  }
+
+  // The lethal clamp (slice 0010 §4.3): after drawing, replace one mutant allele with the wild
+  // type wherever a lethal condition would otherwise read homozygous-affected. Deterministic - it
+  // reads only the pair just drawn above - draws no extra RNG, and does not perturb any downstream
+  // stream (a re-draw would have, since it would make the number of draws depend on their outcome).
+  // Biases carrier frequency upward by a small amount; that is the trade this makes on purpose.
+  for (const lethal of input.lethalTriggers ?? []) {
+    const pair = mendelian[lethal.locus];
+    if (!pair || pair[0] !== lethal.mutant || pair[1] !== lethal.mutant) continue;
+    const locus = LOCI.find((l) => l.code === lethal.locus);
+    if (!locus) throw new Error(`generateCandidate: unknown lethal locus ${lethal.locus}`);
+    mendelian[lethal.locus] = sortAllelePair(lethal.locus, locus.wildType, lethal.mutant);
   }
 
   // pool_polygenic is deliberately not founder_polygenic (slice 0005 §8) - that label belongs to

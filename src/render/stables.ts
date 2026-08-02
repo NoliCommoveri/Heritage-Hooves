@@ -44,6 +44,21 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = `${str('horse_name', 'A horse')} placed ${placing !== null ? placingText(placing) : 'unranked'} at ${str('show_name', 'a show')}${prizeSentence}.`;
       break;
     }
+    // Slice 0010 §6.4/§6.3: written the moment a newborn or founding horse's genotype already
+    // reads as affected by a condition with signs_visible = 1 - "signs" here means "identifiable
+    // from birth", since no onset model exists yet (that slice's §3.2).
+    case 'condition_signs':
+      sentence = `${str('horse_name', 'A horse')} shows signs of ${str('condition_name', 'a condition')}.`;
+      break;
+    // Slice 0010 §6.4/§5.6: the one place conditions.event_text is shown in full rather than
+    // summarised - it is drafted, calm, multi-paragraph prose, and the feed gives it room. The
+    // heading names whoever is easiest to identify the loss by, which for an unnamed foal is
+    // usually its dam, not the foal's own "Unnamed filly/colt".
+    case 'horse_died': {
+      const eventText = str('event_text', `${str('horse_name', 'A foal')} has died from ${str('condition_name', 'a condition')}.`);
+      sentence = `${str('dam_name', 'A mare')}'s foal has died.\n\n${eventText}`;
+      break;
+    }
     default:
       sentence = row.kind;
   }
@@ -57,7 +72,8 @@ export function eventSentence(row: EventRow): AwayEvent {
 function awayPanel(events: AwayEvent[]): SafeHtml {
   if (events.length === 0) return raw('');
   const rows = events.map(
-    (e) => html`<li>${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
+    (e) =>
+      html`<li class="${e.sentence.includes('\n') ? 'event-long' : ''}">${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
   );
   return html`
     <div class="card">
@@ -152,7 +168,8 @@ export function renderNewStablePage(params: {
 function stableFeed(events: AwayEvent[]): SafeHtml {
   if (events.length === 0) return raw('');
   const rows = events.map(
-    (e) => html`<li>${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
+    (e) =>
+      html`<li class="${e.sentence.includes('\n') ? 'event-long' : ''}">${e.horseId !== null ? html`<a href="/horses/${String(e.horseId)}">${e.sentence}</a>` : html`${e.sentence}`} <span class="muted">(game day ${String(e.gameDay)})</span></li>`
   );
   return html`
     <div class="card">

@@ -18,6 +18,8 @@ const REFERENCES: Record<ResetTable, string[]> = {
   coverings: ['stables', 'horses'],
   events: ['stables', 'horses'],
   horse_ancestors: ['horses'],
+  horse_knowledge: ['stables', 'horses'],
+  horse_conditions: ['horses', 'conditions'],
   horses: ['breeds', 'horses', 'stables'],
   stable_prefix_history: ['stables'],
   ledger: ['stables'],

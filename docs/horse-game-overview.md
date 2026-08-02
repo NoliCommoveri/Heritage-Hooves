@@ -739,7 +739,7 @@ Both are fully specified, neither is built, and neither blocks or is blocked by 
 ## 14. Open questions
 
 - **How many conditions, and how frequent?** Twenty-ish is the suggested starting scope (§3f), with carrier frequencies low. Both are observation-tuned rather than reasoned out in advance.
-- **Test pricing**, which decides whether hidden information stays hidden (§3c).
+- **Test pricing**, which decides whether hidden information stays hidden (§3c). **Starting figures set 2 Aug 2026, in `docs/slices/0010-health-first-pass.md` §5.4:** 250 for a single condition, 700 for the four-condition panel, both live tunables (`genotype_test_cost`/`genotype_panel_cost`). Reasoned against a founding stable's starting economy (10,000 balance, 3 horses at 60/tick upkeep, a show win paying 600) so a full panel costs roughly one win and panelling all three founding horses (2,100) is a real decision that does not end the stable. The question stays open in the sense that matters — these are a starting point to watch and retune via `/admin/health`'s counts, not a settled answer.
 - **Frame lethal and the other lethal recessives** — implemented and explained; the wording of those notifications is worth drafting before one fires.
 - **Does death arrive announced?** Visible decline lets a child plan a last season; an unannounced end is more abrupt and arguably truer.
 - **Does hired training route around the action budget** acceptably, or should trainers wait (§8c)?

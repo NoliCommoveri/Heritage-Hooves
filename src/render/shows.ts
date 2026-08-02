@@ -30,6 +30,8 @@ export function eligibilityMessage(reason: EligibilityReason | 'class_closed' | 
       return "can't enter - this stable already has as many horses in this class as it's allowed.";
     case 'already_entered':
       return 'is already entered in this class.';
+    case 'barred_by_condition':
+      return "can't be shown - a condition bars it from the ring.";
     case 'class_closed':
       return "can't enter - this class isn't open for entries anymore.";
     case 'not_found':

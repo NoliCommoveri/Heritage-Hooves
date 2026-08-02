@@ -6,7 +6,16 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 
-export type EventKind = 'foaled' | 'covering_conceived' | 'covering_missed' | 'show_result';
+// Slice 0010 §6.4 adds two kinds. events.kind has no CHECK (0048's own comment), so no migration
+// is needed for either:
+//   condition_signs -> {"v":1,"horse_name":"...","condition_name":"...","condition_code":"HERDA"}
+//   horse_died       -> {"v":1,"horse_name":"...","condition_name":"...","condition_code":"GBED",
+//                        "age_game_days":30,"dam_name":"...","sire_name":"...","event_text":"..."}
+// event_text is the condition's own conditions.event_text, copied into the payload at the moment
+// the event is written rather than looked up fresh when rendered - an append-only event should
+// read the same in a year even if the reference text is edited on /admin/config-adjacent tables
+// later. src/render/stables.ts's eventSentence renders both.
+export type EventKind = 'foaled' | 'covering_conceived' | 'covering_missed' | 'show_result' | 'condition_signs' | 'horse_died';
 
 export interface EventRow {
   id: number;
@@ -61,6 +70,26 @@ export function buildFoaledEventStatement(
     env.DB.prepare(
       `INSERT INTO events (stable_id, game_day, kind, subject_horse_id, payload, read_at_real_ts, created_real_ts)
        VALUES (?, ?, 'foaled', (SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, NULL, ?)`
+    ).bind(input.stableId, input.gameDay, JSON.stringify({ v: 1, ...input.payload }), nowUtcSeconds()),
+  ];
+}
+
+/**
+ * Same job as buildFoaledEventStatement, for the other point a horse's id is not yet known in JS:
+ * a newly-affected foal or founding horse, condition rows inserted immediately before this in the
+ * same batch by src/db/health.ts's buildHorseConditionStatements (slice 0010 §6.3). Same safety
+ * argument as buildFoaledEventStatement - nothing else inserts into `horses` between that insert
+ * and this one landing.
+ */
+export function buildConditionSignsEventStatement(
+  env: Env,
+  input: { stableId: number; accountId: number | null; gameDay: number; payload: Record<string, unknown> }
+): D1PreparedStatement[] {
+  if (input.accountId === null) return [];
+  return [
+    env.DB.prepare(
+      `INSERT INTO events (stable_id, game_day, kind, subject_horse_id, payload, read_at_real_ts, created_real_ts)
+       VALUES (?, ?, 'condition_signs', (SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, NULL, ?)`
     ).bind(input.stableId, input.gameDay, JSON.stringify({ v: 1, ...input.payload }), nowUtcSeconds()),
   ];
 }

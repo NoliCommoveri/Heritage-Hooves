@@ -17,14 +17,17 @@ export function actionsRemaining(account: AccountActionState, tickSeq: number, a
 }
 
 /** The list of what costs a turn lives in one place, so the next slice adds to it rather than
- * hunting for the pattern. Future entries: 'genotype_test', 'buy_horse', 'list_horse',
- * 'start_training' - decided in conversation, 2 Aug 2026. */
-export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding';
+ * hunting for the pattern. Future entries: 'buy_horse', 'list_horse', 'start_training' - decided in
+ * conversation, 2 Aug 2026. genotype_test added by slice 0010 - a panel is one action, not four
+ * (see /horses/:id/test's route, which spends this once regardless of how many conditions were
+ * bought together). */
+export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test';
 
 export const ACTION_COSTS: Record<ActionKind, number> = {
   book_covering: 1,
   enter_show: 1,
   claim_founding: 1,
+  genotype_test: 1,
 };
 
 /** The next tick slot's time of day, for the "more arrive at..." refusal message (§5.4). Purely

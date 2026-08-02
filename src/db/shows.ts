@@ -23,6 +23,7 @@ import { getShowBarnStable } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
+import { isBarredFromShowing } from './health';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -308,9 +309,18 @@ export async function checkHorseEligibilityForClass(
   const genotype = parseGenotype(horse.genotype);
   const ageGameDays = gameDay - horse.born_game_day;
   const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear);
+  const barredByCondition = await isBarredFromShowing(env, genotype);
 
   return checkEligibility(
-    { breedId: horse.breed_id, isCross: horse.is_cross === 1, ageGameDays, sex: horse.sex, gaited: phenotype.gaited, alreadyEntered: existing !== null },
+    {
+      breedId: horse.breed_id,
+      isCross: horse.is_cross === 1,
+      ageGameDays,
+      sex: horse.sex,
+      gaited: phenotype.gaited,
+      alreadyEntered: existing !== null,
+      barredByCondition,
+    },
     {
       breedId: cls.breed_id,
       minAgeGameDays: cls.min_age_game_days,

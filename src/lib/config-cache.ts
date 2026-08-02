@@ -93,6 +93,13 @@ export interface ConfigValues {
   /** Slice 0009 Part B §6.4. One number for both read and unread events - a notice board, not an
    * archive. Live - read fresh by the tick's event-retention stage every time it runs. */
   events_retention_game_days: number;
+  /** Slice 0010 §5.4. Live - read fresh at the point of purchase; a price change affects the next
+   * test, never re-prices a receipt already written. */
+  genotype_test_cost: number;
+  genotype_panel_cost: number;
+  /** Slice 0010 §2.2/§5.4. Read once, at birth, and snapshotted onto horse_conditions.terminal_game_day
+   * (CLAUDE.md §5.5) - retuning this never moves the death date of a foal already born. */
+  lethal_foal_death_game_days: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;
