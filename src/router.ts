@@ -16,7 +16,16 @@ import {
   stablePrefixRoute,
   stableMoneyRoute,
 } from './routes/stables';
-import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute, horseImageRoute, horseEnterShowRoute } from './routes/horses';
+import {
+  stableHorsesRoute,
+  stableBreedRoute,
+  horsePageRoute,
+  horseNameRoute,
+  horseBarnNameRoute,
+  horseImageRoute,
+  horseEnterShowRoute,
+  horseTestRoute,
+} from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
 import {
@@ -32,10 +41,11 @@ import {
   adminResetRoute,
   adminShowsRoute,
   adminMoneyRoute,
+  adminHealthRoute,
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -100,6 +110,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (sub === '/barn-name' && method === 'POST') return withReissuedCookie(ctx, await horseBarnNameRoute(ctx, horseId));
     if (sub === '/image') return withReissuedCookie(ctx, await horseImageRoute(ctx, method, horseId));
     if (sub === '/enter-show' && method === 'POST') return withReissuedCookie(ctx, await horseEnterShowRoute(ctx, horseId));
+    if (sub === '/test') return withReissuedCookie(ctx, await horseTestRoute(ctx, method, horseId));
     return notFound();
   }
 
@@ -128,6 +139,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/reset') return withReissuedCookie(ctx, await adminResetRoute(ctx, method));
     if (path === '/admin/shows') return withReissuedCookie(ctx, await adminShowsRoute(ctx, method));
     if (path === '/admin/money') return withReissuedCookie(ctx, await adminMoneyRoute(ctx, method));
+    if (path === '/admin/health' && method === 'GET') return withReissuedCookie(ctx, await adminHealthRoute(ctx));
     return notFound();
   }
 

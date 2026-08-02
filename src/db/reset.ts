@@ -36,6 +36,9 @@ export type ResetScope = 'horses' | 'world';
  *
  * `horses` referencing itself (sire_id/dam_id) needs no special handling: SQLite checks an
  * immediate foreign key at the *end* of the statement, and by then the table is empty.
+ *
+ * Slice 0010 adds `horse_knowledge` and `horse_conditions`, both before `horses` - both have real
+ * foreign keys into it (horse_id), same reasoning as `horse_ancestors` above.
  */
 const HORSE_TABLES = [
   'import_candidates',
@@ -48,6 +51,8 @@ const HORSE_TABLES = [
   'coverings',
   'events',
   'horse_ancestors',
+  'horse_knowledge',
+  'horse_conditions',
   'horses',
 ] as const;
 
@@ -76,6 +81,8 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   coverings: 'Coverings (booked matings)',
   events: 'While-you-were-away notices',
   horse_ancestors: 'Pedigree links',
+  horse_knowledge: 'What stables have paid to learn about horses',
+  horse_conditions: 'Recorded health conditions',
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',
   ledger: 'Money history',

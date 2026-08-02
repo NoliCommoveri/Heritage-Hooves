@@ -11,6 +11,7 @@ import { NO_PICTURE_VALUE, type ImageOption } from '../lib/images';
 import type { ConformationDisplayRow } from '../engines/conformation/model';
 import type { HorseShowSummaryRow } from '../db/shows';
 import { placingText } from './shows';
+import type { ConditionRow } from '../db/health';
 
 export const displayNameFor = horseDisplayName;
 
@@ -24,21 +25,38 @@ function barnThumbnail(horse: HorseRow): SafeHtml {
   return html`<span class="horse-thumb horse-thumb--placeholder" aria-hidden="true"></span>`;
 }
 
+/** Slice 0010 §8: a small marker for a horse that is visibly affected (a signs_visible condition
+ * its genotype reads as affected by, with no test needed - §2.4) or dead. Kept to one glanceable
+ * badge, the same discipline this file's own comments already apply to the compact conformation
+ * line and the show-record badge - the barn list is already dense. */
+function healthBarnBadge(horse: HorseRow, visibleConditions: ConditionRow[]): SafeHtml {
+  if (horse.status === 'dead') return html`<span class="badge badge-danger">Died</span>`;
+  if (visibleConditions.length === 0) return raw('');
+  return html`<span class="badge badge-warning">${visibleConditions.map((c) => c.name).join(', ')}</span>`;
+}
+
 export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
   stable: StableRow;
   hasFoundingOffer: boolean;
-  horses: { horse: HorseRow; description: string; inSeason: boolean; conformation: ConformationDisplayRow[]; showSummary: HorseShowSummaryRow | null }[];
+  horses: {
+    horse: HorseRow;
+    description: string;
+    inSeason: boolean;
+    conformation: ConformationDisplayRow[];
+    showSummary: HorseShowSummaryRow | null;
+    visibleConditions: ConditionRow[];
+  }[];
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -73,6 +91,11 @@ export interface BreedPreview {
   warning?: string;
   conceptionPercent: string;
   conceptionReasons: string[];
+  /** Slice 0010 §7.3 - one sentence per recessive condition this booking stable's own knowledge of
+   * both horses implies is worth flagging. Empty when it knows nothing, or knows only clear
+   * results - never computed from a genotype directly (see the route for where that boundary is
+   * enforced). */
+  healthWarnings: string[];
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -110,6 +133,7 @@ export function renderBreedPage(params: {
         <p><strong>Stallion:</strong> ${preview.stallionDescription}</p>
         <p><strong>Inbreeding coefficient of a foal from this pairing:</strong> ${preview.coiPercent}</p>
         ${preview.warning ? html`<p class="notice">${preview.warning}</p>` : raw('')}
+        ${preview.healthWarnings.map((w) => html`<p class="notice">${w}</p>`)}
         <p><strong>Estimated chance this covering takes:</strong> ${preview.conceptionPercent}</p>
         ${conceptionReasonsBlock}
         <form method="post" action="/stables/${String(params.stable.id)}/breed">
@@ -190,6 +214,55 @@ function conformationCard(params: { conformation: ConformationDisplayRow[]; ageY
  * trait's name (Neck, Shoulder, Back, Hock) so two horses can be compared without opening either. */
 function conformationCompactLine(conformation: ConformationDisplayRow[]): SafeHtml {
   return html`${conformation.map((row) => `${row.name.split(' ')[0]} ${String(row.expressed)}`).join(' · ')}`;
+}
+
+export interface HealthConditionDisplay {
+  code: string;
+  name: string;
+  teachingText: string;
+  /** null means the viewer is not entitled to a result (not the owner, or genuinely not known and
+   * not observable) - slice 0010 §2.4. Never guessed from a genotype the caller happens to have. */
+  status: 'clear' | 'carrier' | 'affected' | null;
+  copies: 0 | 1 | 2 | null;
+  testedGameDay: number | null;
+  /** True when status is 'affected' but was never paid for - a signs_visible condition, shown as
+   * an observation rather than a test result (§2.4's sharp version of the truth/knowledge split). */
+  observedOnly: boolean;
+}
+
+function healthStatusBadge(row: HealthConditionDisplay): SafeHtml {
+  if (row.status === null) return html`<span class="badge">Not tested</span>`;
+  if (row.status === 'clear') return html`<span class="badge badge-success">Clear</span>`;
+  if (row.status === 'carrier') return html`<span class="badge badge-warning">Carrier</span>`;
+  const label = row.observedOnly ? 'Shows signs' : 'Affected';
+  const copiesNote = row.copies === 2 ? ' (two copies)' : '';
+  return html`<span class="badge badge-danger">${label}${copiesNote}</span>`;
+}
+
+/** Slice 0010 §8: the Health card, below Conformation. For the owner: one row per applicable
+ * enabled condition with the status they are entitled to, a Test button, and a link to the test
+ * page. For anyone else viewing (today, only an admin - horsePageRoute's own owner-or-admin gate)
+ * the card shows nothing but the condition names (§1 step 5) - no results, no Test button, even
+ * for a condition that would otherwise be visible without a test. That is a deliberate scope limit
+ * for this slice's one non-owner viewer, not a rule about what visible-without-a-test means. */
+function healthCard(params: { owner: boolean; rows: HealthConditionDisplay[]; horseId: number }): SafeHtml {
+  if (params.rows.length === 0) return raw('');
+  const rows = params.owner
+    ? params.rows.map(
+        (row) => html`
+        <div class="health-row">
+          <p><strong>${row.name}:</strong> ${healthStatusBadge(row)} ${row.testedGameDay !== null ? html`<span class="muted">(tested game day ${String(row.testedGameDay)})</span>` : raw('')}</p>
+          <p class="muted">${row.teachingText}</p>
+        </div>`
+      )
+    : params.rows.map((row) => html`<p>${row.name}</p>`);
+
+  return html`
+    <div class="card">
+      <h2>Health</h2>
+      ${rows}
+      ${params.owner ? html`<p><a class="button-link" href="/horses/${String(params.horseId)}/test">Test</a></p>` : raw('')}
+    </div>`;
 }
 
 /** Slice 0008 §8.1: "a small ribbon count or best-placing badge per horse" for the barn list -
@@ -280,6 +353,8 @@ export function renderHorsePage(params: {
   enterShow: EnterShowInfo | null;
   enterShowError?: string;
   enterShowNotice?: string;
+  /** Slice 0010 §8: the Health card's rows, already resolved to what this viewer is entitled to see. */
+  health: HealthConditionDisplay[];
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -387,6 +462,7 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
+    ${healthCard({ owner: params.owner, rows: params.health, horseId: h.id })}
     ${showRecordCard({
       summary: params.showSummary,
       recentResults: params.recentShowResults,
@@ -409,6 +485,90 @@ export function renderHorsePage(params: {
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
     subnav: params.owner ? stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer) : undefined,
+    body,
+  });
+}
+
+export interface TestConditionOption {
+  code: string;
+  name: string;
+  teachingText: string;
+  status: 'clear' | 'carrier' | 'affected' | null;
+  copies: 0 | 1 | 2 | null;
+  testedGameDay: number | null;
+  /** null when this condition is already known - nothing left to buy for it. */
+  price: number | null;
+}
+
+/** Slice 0010 §7.1: /horses/:id/test, owner-only. Lists every enabled condition, what is already
+ * known (with its tested date) or what it costs, then either a per-condition Test button or (if
+ * everything is already known) a plain sentence saying so - never a button with nothing behind it. */
+export function renderTestPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  ownerStable: StableRow;
+  hasFoundingOffer: boolean;
+  horse: HorseRow;
+  rows: TestConditionOption[];
+  untestedCount: number;
+  panelPrice: number;
+  error?: string;
+}): SafeHtml {
+  const h = params.horse;
+  const rows = params.rows.map((row) => {
+    const known: HealthConditionDisplay = {
+      code: row.code,
+      name: row.name,
+      teachingText: row.teachingText,
+      status: row.status,
+      copies: row.copies,
+      testedGameDay: row.testedGameDay,
+      observedOnly: false,
+    };
+    return html`
+      <div class="health-row">
+        <p><strong>${row.name}:</strong> ${row.price === null ? healthStatusBadge(known) : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested game day ${String(row.testedGameDay)})</span>` : raw('')}</p>
+        <p class="muted">${row.teachingText}</p>
+        ${row.price !== null
+          ? html`
+            <form method="post" action="/horses/${String(h.id)}/test">
+              <input type="hidden" name="condition_code" value="${row.code}">
+              <button type="submit">Test for ${row.name} (${String(row.price)})</button>
+            </form>`
+          : raw('')}
+      </div>`;
+  });
+
+  const panelBlock =
+    params.untestedCount > 1
+      ? html`
+        <div class="card">
+          <form method="post" action="/horses/${String(h.id)}/test">
+            <input type="hidden" name="action" value="panel">
+            <button type="submit">Test everything still unknown, all ${String(params.untestedCount)} (${String(params.panelPrice)})</button>
+          </form>
+        </div>`
+      : raw('');
+
+  const nothingLeft = params.untestedCount === 0 ? html`<p>Nothing is left to test - ${displayNameFor(h)} has a known result for every condition on this panel.</p>` : raw('');
+
+  const body = html`
+    <h1>Test ${displayNameFor(h)}</h1>
+    ${errorBox(params.error)}
+    <p class="muted">${params.ownerStable.name}'s balance: ${String(params.ownerStable.balance)}</p>
+    ${rows}
+    ${panelBlock}
+    ${nothingLeft}
+    <p><a href="/horses/${String(h.id)}">Back to ${displayNameFor(h)}</a></p>
+  `;
+  return pageShell({
+    title: `Test ${displayNameFor(h)}`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
     body,
   });
 }

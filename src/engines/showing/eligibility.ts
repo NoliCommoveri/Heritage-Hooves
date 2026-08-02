@@ -11,7 +11,8 @@ export type EligibilityReason =
   | 'wrong_sex'
   | 'requires_gait'
   | 'entry_cap_reached'
-  | 'already_entered';
+  | 'already_entered'
+  | 'barred_by_condition';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: EligibilityReason };
 
@@ -22,6 +23,11 @@ export interface EligibilityHorse {
   sex: 'mare' | 'stallion' | 'gelding';
   gaited: boolean;
   alreadyEntered: boolean;
+  /** Slice 0010 §7.4: true when the horse currently reads as affected by an enabled condition with
+   * bars_showing = 1 (HERDA, in this slice). Computed by the caller from the horse's genotype -
+   * this is truth already visible without a test (§2.4), not knowledge, so no boundary is crossed
+   * reading it here. */
+  barredByCondition: boolean;
 }
 
 export interface EligibilityClass {
@@ -42,6 +48,7 @@ export interface EligibilityClass {
  */
 export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass, stableEntryCountInClass: number): EligibilityResult {
   if (horse.alreadyEntered) return { ok: false, reason: 'already_entered' };
+  if (horse.barredByCondition) return { ok: false, reason: 'barred_by_condition' };
 
   if (horse.isCross) {
     if (!cls.crossesEligible) return { ok: false, reason: 'crossbred_not_eligible' };

@@ -7,11 +7,12 @@ import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { getBreedById } from './breeds';
-import { buildFoundingHorseInsertStatement, countAliveHorses } from './horses';
+import { buildFoundingHorseInsertStatements, countAliveHorses } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
 import { parseGenotype, serializeGenotype } from '../engines/genetics/genotype';
+import { getEnabledConditions, getLethalTriggers } from './health';
 
 export type ImportOfferSource = 'founding' | 'chore_grant' | 'admin_grant' | 'token_import';
 export type ImportOfferStatus = 'pending' | 'open' | 'claimed' | 'expired';
@@ -163,6 +164,9 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
   const breed = await getBreedById(env, breedId);
   if (!breed) throw new Error(`chooseBreedForOffer: breed ${String(breedId)} not found`);
   const pool = parseAllelePool(breed.founding_allele_pool);
+  // Slice 0010 §4.3: no candidate offered here can ever be homozygous-affected for a lethal
+  // condition - such a horse would have died as a foal and cannot exist as an adult in a batch.
+  const lethalTriggers = await getLethalTriggers(env);
 
   const slots: ('mare' | 'stallion')[] = [
     ...Array<'mare'>(offer.mare_candidates).fill('mare'),
@@ -187,6 +191,7 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
       ageMinGameDays: offer.age_min_game_days,
       ageMaxGameDays: offer.age_max_game_days,
       seed: candidateSeed,
+      lethalTriggers,
     });
     const { originPrefix, namePart } = generateFoundingName(candidateSeed);
 
@@ -235,6 +240,10 @@ export interface ClaimOfferParams {
   worldTickSeq: number;
   estrousCycleTicks: number;
   conformationNoiseSd: number;
+  /** The claiming stable's own account, threaded from the caller so a condition_signs event can be
+   * written if a claimed horse arrives already affected by something (slice 0010 §6.3). */
+  accountId: number | null;
+  lethalFoalDeathGameDays: number;
 }
 
 /**
@@ -262,12 +271,13 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
   if (!offer.breed_id) throw new Error(`claimOffer: offer ${String(offer.id)} has no breed`);
   const breed = await getBreedById(env, offer.breed_id);
   if (!breed) throw new Error(`claimOffer: breed ${String(offer.breed_id)} not found`);
+  const conditions = await getEnabledConditions(env);
 
   const statements: D1PreparedStatement[] = [];
   for (const candidate of chosen) {
     const { registeredName, originPrefix } = await resolveUniqueName(env, candidate);
     statements.push(
-      buildFoundingHorseInsertStatement(env, {
+      ...buildFoundingHorseInsertStatements(env, {
         stableId: params.stableId,
         sex: candidate.sex,
         breedId: breed.id,
@@ -280,6 +290,9 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
         worldTickSeq: params.worldTickSeq,
         estrousCycleTicks: params.estrousCycleTicks,
         conformationNoiseSd: params.conformationNoiseSd,
+        conditions,
+        lethalFoalDeathGameDays: params.lethalFoalDeathGameDays,
+        accountId: params.accountId,
       })
     );
     statements.push(

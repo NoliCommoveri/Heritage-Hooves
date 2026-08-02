@@ -37,6 +37,14 @@ export const LOCI: readonly Locus[] = [
   // DMRT3's alleles are conventionally written C and A. That A is unrelated to the Agouti locus's
   // A above - they are different loci and never appear in the same allele list.
   { code: 'DMRT3', alleles: ['C', 'A'], wildType: 'C' },
+  // Four disease loci, slice 0010 §4.1. Appended after DMRT3, never inserted earlier - see this
+  // file's own comment above about why order is load-bearing. Unlike the five loci above, the
+  // wild type here IS alleles[0] for all four - written out per-locus regardless, per this file's
+  // wildType comment, so nothing downstream needs to know that pattern holds.
+  { code: 'HYPP', alleles: ['N', 'H'], wildType: 'N' },
+  { code: 'PSSM1', alleles: ['N', 'P1'], wildType: 'N' },
+  { code: 'HERDA', alleles: ['N', 'Hrd'], wildType: 'N' },
+  { code: 'GBED', alleles: ['N', 'Gb'], wildType: 'N' },
 ] as const;
 
 // Ancestors beyond this many generations are treated as unrelated founders (pedigree.ts). This is

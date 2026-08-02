@@ -18,6 +18,7 @@ const ELIGIBLE_HORSE: EligibilityHorse = {
   sex: 'mare',
   gaited: false,
   alreadyEntered: false,
+  barredByCondition: false,
 };
 
 describe('checkEligibility', () => {
@@ -74,5 +75,9 @@ describe('checkEligibility', () => {
 
   it('refuses a horse already entered in this class', () => {
     expect(checkEligibility({ ...ELIGIBLE_HORSE, alreadyEntered: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'already_entered' });
+  });
+
+  it('refuses a horse barred by a condition (slice 0010 §7.4, e.g. HERDA)', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, barredByCondition: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'barred_by_condition' });
   });
 });

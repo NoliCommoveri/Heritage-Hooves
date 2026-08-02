@@ -8,17 +8,24 @@ import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS } from '../../src/
 // The test CLAUDE.md §8/§11 asks for: the engine's LOCI constant is the source of truth for
 // iteration order and reproducibility (loci.ts), but a player-facing operator might reword
 // loci.teaching_text in the database - this test guards the two never drifting apart on the
-// things that actually matter: codes, canonical allele order, and iteration order.
-describe('LOCI vs migrations/0015_seed_loci.sql', () => {
+// things that actually matter: codes, canonical allele order, and iteration order. Slice 0010 §10
+// extends this to also cover 0050_seed_disease_loci.sql, the four loci appended after DMRT3 -
+// scanning both migrations in order and asserting against the whole of LOCI is what proves the new
+// four are last and in the right order, not a separate assertion bolted on beside it.
+describe('LOCI vs the seed migrations (0015 + 0050)', () => {
   it('seeds exactly the codes in LOCI, in the same order, with the same canonical allele order', () => {
-    const migration = MIGRATIONS.find((m) => m.name === '0015_seed_loci.sql');
-    expect(migration).toBeDefined();
-
+    const migrationNames = ['0015_seed_loci.sql', '0050_seed_disease_loci.sql'];
     const rowPattern = /\('([A-Z0-9]+)',\s*'[^']*',\s*'[^']*',\s*'[^']*',\s*'(\[[^\]]*\])'/g;
     const seeded: { code: string; alleles: string[] }[] = [];
-    let match: RegExpExecArray | null;
-    while ((match = rowPattern.exec(migration!.sql)) !== null) {
-      seeded.push({ code: match[1], alleles: JSON.parse(match[2]) as string[] });
+
+    for (const name of migrationNames) {
+      const migration = MIGRATIONS.find((m) => m.name === name);
+      expect(migration, `migration ${name} not found`).toBeDefined();
+      const pattern = new RegExp(rowPattern.source, rowPattern.flags);
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(migration!.sql)) !== null) {
+        seeded.push({ code: match[1], alleles: JSON.parse(match[2]) as string[] });
+      }
     }
 
     expect(seeded.length).toBe(LOCI.length);
@@ -32,10 +39,13 @@ describe('LOCI vs migrations/0015_seed_loci.sql', () => {
 // Slice 0005 §9: every seeded breed's founding_allele_pool must list every locus in LOCI, using
 // only known allele symbols, each locus summing to 1.0 - the guarantee that turns §3.2's rule
 // ("a pool missing a locus is an error, not a default") from a comment into something a future
-// locus-adding migration can't silently violate.
+// locus-adding migration can't silently violate. Reads 0051_breed_pools_disease_loci.sql (slice
+// 0010 §4.3), not 0014/0024 - that migration rewrites every breed's whole pool to add the four
+// disease loci, so it is the final, authoritative state a later UPDATE always supersedes an INSERT
+// with, the same reasoning test/founding/generate.test.ts's own pool-loading helper uses.
 describe('every seeded breed pool vs LOCI', () => {
-  const seedMigrations = ['0014_seed_breeds.sql', '0024_seed_breed_pools.sql'];
-  const poolPattern = /'([A-Z0-9]+)',\s*'[^']*',\s*\d+,\s*\d+,\s*\n?\s*'(\{[^']*\})'/g;
+  const seedMigrations = ['0051_breed_pools_disease_loci.sql'];
+  const poolPattern = /founding_allele_pool = '(\{[^']*\})' WHERE code = '([A-Z0-9]+)'/g;
 
   const pools: { code: string; poolJson: string }[] = [];
   for (const name of seedMigrations) {
@@ -44,7 +54,7 @@ describe('every seeded breed pool vs LOCI', () => {
     let match: RegExpExecArray | null;
     const pattern = new RegExp(poolPattern.source, poolPattern.flags);
     while ((match = pattern.exec(migration!.sql)) !== null) {
-      pools.push({ code: match[1], poolJson: match[2] });
+      pools.push({ code: match[2], poolJson: match[1] });
     }
   }
 

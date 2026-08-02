@@ -3,10 +3,22 @@ import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { ACTION_COSTS } from '../lib/actions';
 import { spendAction } from '../db/accounts';
-import { renderBarnList, renderBreedPage, renderHorsePage, renderImagePickerPage, displayNameFor, type BreedPreview, type EnterShowInfo } from '../render/horses';
+import {
+  renderBarnList,
+  renderBreedPage,
+  renderHorsePage,
+  renderImagePickerPage,
+  renderTestPage,
+  displayNameFor,
+  type BreedPreview,
+  type EnterShowInfo,
+  type HealthConditionDisplay,
+  type TestConditionOption,
+} from '../render/horses';
 import { eligibilityMessage, placingText } from '../render/shows';
 import {
   listStableHorses,
+  listStableHorsesWithDead,
   getHorse,
   previewCoi,
   registerHorseName,
@@ -38,6 +50,17 @@ import {
   checkHorseEligibilityForClass,
   enterHorseInClass,
 } from '../db/shows';
+import {
+  getEnabledConditions,
+  getKnowledgeForHorse,
+  untestedConditions,
+  visibleAffectedConditions,
+  buildKnowledgePurchaseStatements,
+  breedingHealthWarningsFor,
+} from '../db/health';
+import { buildLedgerStatements } from '../db/ledger';
+import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../engines/health/status';
+import type { Genotype } from '../engines/genetics/genotype';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -90,19 +113,29 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
 
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const cfg = ctx.config.values;
-  const [horses, traitRows] = await Promise.all([listStableHorses(ctx.env, stableId), getConformationTraits(ctx.env)]);
+  // Slice 0010 §1 step 9: the barn list includes dead horses now, marked Died - every other reader
+  // of a stable's horses (breeding, the NPC show barn's field, the image picker) still wants
+  // listStableHorses' alive-only rows, unchanged.
+  const [horses, traitRows, conditions] = await Promise.all([
+    listStableHorsesWithDead(ctx.env, stableId),
+    getConformationTraits(ctx.env),
+    getEnabledConditions(ctx.env),
+  ]);
   const rows = await Promise.all(
     horses.map(async (horse) => ({
       horse,
       description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
       // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
-      // rather than a query per horse - it's already loaded on the row.
+      // rather than a query per horse - it's already loaded on the row. Guarded to living horses
+      // only (slice 0010) - a dead mare's stored cycle slot means nothing.
       inSeason:
+        horse.status === 'alive' &&
         horse.sex === 'mare' &&
         horse.cycle_anchor_tick_seq !== null &&
         isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
       conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
+      visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions),
     }))
   );
 
@@ -224,6 +257,10 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     const mareAgeYears = (ctx.world.game_day - mare.born_game_day) / gameDaysPerYear;
     const stallionAgeYears = (ctx.world.game_day - stallion.born_game_day) / gameDaysPerYear;
     const breakdown = estimateConceptionChance(mareAgeYears, stallionAgeYears, coi, ctx.config);
+    // Slice 0010 §7.3: computed from this booking stable's own horse_knowledge rows only, never
+    // from either horse's genotype (both already loaded above for the COI calculation, which is
+    // exactly why this is delegated to a function that never has them in scope - see its comment).
+    const healthWarnings = await breedingHealthWarningsFor(ctx.env, stableId, mare.id, stallion.id);
     const preview: BreedPreview = {
       mareId: mare.id,
       stallionId: stallion.id,
@@ -235,6 +272,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       warning: coiWarning(coi, ctx.config.values.coi_warn_threshold),
       conceptionPercent: `${String(Math.round(breakdown.p * 100))}%`,
       conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
+      healthWarnings,
     };
     return htmlResponse(
       renderBreedPage({
@@ -309,6 +347,40 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   return notFound();
 }
 
+/**
+ * Slice 0010 §8/§2.4: the Health card's rows, resolved to what this viewer is entitled to see.
+ * Non-owners (today, only an admin - horsePageRoute's own gate) get names only (§1 step 5). An
+ * owner gets a paid-for result where one exists, else an observation for a signs_visible condition
+ * their horse's genotype already reads as affected by (no charge, no test - §2.4), else "not
+ * tested".
+ */
+async function healthRowsFor(ctx: RequestContext, owner: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
+  const conditions = await getEnabledConditions(ctx.env);
+  if (!owner) {
+    return conditions.map((c) => ({ code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false }));
+  }
+
+  const knowledge = await getKnowledgeForHorse(ctx.env, ownerStableId, horseId);
+  return conditions.map((c) => {
+    const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
+    // locus_code is only null for a future polygenic condition (none seeded yet) - nothing to
+    // compute against a genotype for one of those, so it reads as never-tested-never-observed.
+    if (c.locus_code === null) {
+      return { code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false };
+    }
+    const visible = ownerVisibleStatus(genotype, parseConditionTrigger(c.trigger), c.signs_visible === 1, known);
+    return {
+      code: c.code,
+      name: c.name,
+      teachingText: c.teaching_text,
+      status: visible.status,
+      copies: visible.copies,
+      testedGameDay: known?.tested_game_day ?? null,
+      observedOnly: visible.observedOnly,
+    };
+  });
+}
+
 export async function horsePageRoute(ctx: RequestContext, horseId: number): Promise<Response> {
   const horse = await getHorse(ctx.env, horseId);
   if (!horse) return notFound();
@@ -361,6 +433,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
   const enterShow = owner ? await buildEnterShowInfo(ctx, horse, await getBreeds(ctx.env)) : null;
+  const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
 
   return htmlResponse(
     renderHorsePage({
@@ -393,6 +466,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       enterShow,
       enterShowError,
       enterShowNotice,
+      health,
     })
   );
 }
@@ -593,5 +667,151 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
     return htmlResponse(render('Choose one of the pictures shown, or "No picture".'));
   }
   await setHorseImage(ctx.env, horseId, submitted);
+  return redirect(`/horses/${String(horseId)}`);
+}
+
+/** Slice 0010 §7.1: the test page's rows - what is already known (with tested date) or what it
+ * costs, re-derived fresh on every render rather than trusted from a form. */
+async function buildTestPageRows(
+  ctx: RequestContext,
+  ownerStableId: number,
+  horseId: number,
+  genotype: Genotype
+): Promise<{ rows: TestConditionOption[]; untested: ReturnType<typeof untestedConditions> }> {
+  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  const untested = untestedConditions(conditions, knowledge);
+  const untestedCodes = new Set(untested.map((c) => c.code));
+
+  const rows: TestConditionOption[] = conditions.map((c) => {
+    const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
+    const copies = known && c.locus_code !== null ? conditionStatus(genotype, parseConditionTrigger(c.trigger)).copies : null;
+    return {
+      code: c.code,
+      name: c.name,
+      teachingText: c.teaching_text,
+      status: known ? known.result : null,
+      copies,
+      testedGameDay: known ? known.tested_game_day : null,
+      price: untestedCodes.has(c.code) ? ctx.config.values.genotype_test_cost : null,
+    };
+  });
+
+  return { rows, untested };
+}
+
+/**
+ * /horses/:id/test - slice 0010 §7.1/§7.2. Owner-only on both GET and POST, the same
+ * notFound()-for-a-non-owner shape every stable-scoped route already uses. GET lists every enabled
+ * condition; POST buys either one (`condition_code`) or the whole remaining panel (`action=panel`).
+ */
+export async function horseTestRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+
+  const genotype = parseGenotype(horse.genotype);
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
+
+  const render = async (error?: string) => {
+    const { rows, untested } = await buildTestPageRows(ctx, ownerStable.id, horseId, genotype);
+    return htmlResponse(
+      renderTestPage({
+        world: ctx.world,
+        isAdmin: ctx.account!.is_admin === 1,
+        actionsLeft: actionsLeftFor(ctx),
+        ownerStable,
+        hasFoundingOffer,
+        horse,
+        rows,
+        untestedCount: untested.length,
+        panelPrice: ctx.config.values.genotype_panel_cost,
+        error,
+      })
+    );
+  };
+
+  if (method === 'GET') return render();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  // Slice 0010 §7.1 step 1: re-derive what is untested from the knowledge rows rather than
+  // trusting the form - the same "re-derive and check membership" rule isAllowedImagePath
+  // established in slice 0007. A submitted condition code that is already known or not applicable
+  // is rejected and nothing is charged.
+  const { untested } = await buildTestPageRows(ctx, ownerStable.id, horseId, genotype);
+
+  let toBuy: (typeof untested)[number][];
+  let totalCost: number;
+  let description: string;
+
+  if (form.action === 'panel') {
+    if (untested.length === 0) return render('Nothing is left to test.');
+    toBuy = untested;
+    totalCost = ctx.config.values.genotype_panel_cost;
+    description = `Five-panel genotype test, ${displayNameFor(horse)}.`;
+  } else {
+    const found = untested.find((c) => c.code === form.condition_code);
+    if (!found) return render("That test isn't available for this horse.");
+    toBuy = [found];
+    totalCost = ctx.config.values.genotype_test_cost;
+    description = `Genotype test for ${found.name}, ${displayNameFor(horse)}.`;
+  }
+
+  // Slice 0009 Part B §5.3: check, act, then spend - the turn budget is checked up front, same
+  // pattern as booking a covering and entering a show.
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.genotype_test) {
+    return render(turnsRefusalMessage(ctx));
+  }
+
+  // Slice 0010 §7.2: a discretionary purchase, not a way out of debt - blocked like breeding, and
+  // unlike showing (see the comment on enterHorseInClass in src/db/shows.ts for why shows differ).
+  if (!canTakeOnCost(ownerStable.balance)) {
+    return render(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Win a show, or ask a grown-up to add money, before testing.`);
+  }
+
+  // Costs are split as evenly as whole numbers allow across the rows bought together, with any
+  // remainder on the last one - money is always an integer (CLAUDE.md §7), and the sum of what
+  // each row's receipt says it cost must equal what the ledger actually charged.
+  const costByCode: Record<string, number> = {};
+  const base = Math.floor(totalCost / toBuy.length);
+  toBuy.forEach((c) => {
+    costByCode[c.code] = base;
+  });
+  costByCode[toBuy[toBuy.length - 1].code] += totalCost - base * toBuy.length;
+
+  try {
+    await ctx.env.DB.batch([
+      ...buildKnowledgePurchaseStatements(ctx.env, {
+        stableId: ownerStable.id,
+        horseId,
+        gameDay: ctx.world.game_day,
+        genotype,
+        conditions: toBuy,
+        costByCode,
+      }),
+      ...buildLedgerStatements(ctx.env, [
+        {
+          stableId: ownerStable.id,
+          amount: -totalCost,
+          kind: 'vet',
+          referenceType: 'horse',
+          referenceId: horseId,
+          description,
+          gameDay: ctx.world.game_day,
+        },
+      ]),
+    ]);
+  } catch (err) {
+    // The unique index on (stable_id, horse_id, subject_code) means a race - two submissions for
+    // the same condition - fails the whole batch (one D1 transaction), so nothing was charged.
+    if (err instanceof Error && /unique constraint failed/i.test(err.message)) {
+      return render('That result is already known - nothing was charged.');
+    }
+    throw err;
+  }
+
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
   return redirect(`/horses/${String(horseId)}`);
 }

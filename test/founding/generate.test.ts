@@ -3,20 +3,25 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { generateCandidate } from '../../src/engines/founding/generate';
 
-/** Pulls one breed's founding_allele_pool JSON straight out of the seed migration SQL, so these
- * tests exercise the pool this codebase actually ships rather than a hand-copied duplicate that
- * could quietly drift from it. */
-function poolJsonForBreed(migrationName: string, code: string): string {
+/**
+ * Pulls one breed's founding_allele_pool JSON straight out of migration SQL, so these tests
+ * exercise the pool this codebase actually ships rather than a hand-copied duplicate that could
+ * quietly drift from it. Reads 0051_breed_pools_disease_loci.sql, not 0014/0024 - that migration
+ * (slice 0010 §4.3) rewrites every breed's whole pool to add the four disease loci, so it is the
+ * final, authoritative state, the same way a later UPDATE always supersedes the INSERT it followed.
+ */
+function poolJsonForBreed(code: string): string {
+  const migrationName = '0051_breed_pools_disease_loci.sql';
   const migration = MIGRATIONS.find((m) => m.name === migrationName);
   if (!migration) throw new Error(`migration ${migrationName} not found`);
-  const pattern = new RegExp(`'${code}',[\\s\\S]*?'(\\{[^']*\\})'`);
+  const pattern = new RegExp(`founding_allele_pool = '(\\{[^']*\\})' WHERE code = '${code}'`);
   const match = migration.sql.match(pattern);
   if (!match) throw new Error(`pool not found for breed ${code} in ${migrationName}`);
   return match[1];
 }
 
-const QH_POOL = parseAllelePool(poolJsonForBreed('0014_seed_breeds.sql', 'QH'));
-const FR_POOL = parseAllelePool(poolJsonForBreed('0024_seed_breed_pools.sql', 'FR'));
+const QH_POOL = parseAllelePool(poolJsonForBreed('QH'));
+const FR_POOL = parseAllelePool(poolJsonForBreed('FR'));
 
 describe('generateCandidate - Hardy-Weinberg', () => {
   it('two independent draws at population frequency produce Hardy-Weinberg proportions', () => {

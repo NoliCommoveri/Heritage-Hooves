@@ -14,6 +14,7 @@ import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { deleteOldEvents } from './events';
+import { killDueLethalFoals } from './health';
 
 export interface ExecuteTickParams {
   triggerSource: 'cron' | 'manual';
@@ -57,6 +58,12 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // stages guard their own writes with a status column, so re-running them is a no-op either way.
       await resolveDueCoverings(env, newGameDay, newTickSeq, config);
       await foalDuePregnancies(env, newGameDay, newTickSeq);
+      // Slice 0010 §6.1: after foaling, since a foal born this tick needs its horse_conditions row
+      // written first (though at a 30 game day window it cannot die on the tick it is born) - and
+      // before chargeUpkeep, so a horse that dies this tick is not billed for board over the period
+      // it partly lived. Idempotency comes free from horses.status = 'alive' (see that function's
+      // own comment) - no processed-marker column needed here either.
+      await killDueLethalFoals(env, newGameDay);
       // Slice 0008 §6: show creation before judging, same reasoning as the breeding stages above -
       // both stages guard their own writes (the UNIQUE(scheduled_game_day, tier) index and each
       // class's own status column), so re-running them against the same newGameDay is a no-op.
