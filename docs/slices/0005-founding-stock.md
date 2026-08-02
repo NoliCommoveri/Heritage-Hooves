@@ -366,6 +366,8 @@ Next number is `0022`. One logical change per file, and **register every file in
 
 `0024` inserts new rows only — it must not touch the Quarter Horse row.
 
+**Numbering note, added 2026-08-03.** `0022`–`0024` landed as written. The two PIN migrations and the config file did not: §7 was deferred, so the config keys landed as `0025_config_founding.sql` and the PIN tables were never created. **Do not read `0025`/`0026` above as reserved for the PIN work** — take the next free number from `migrations/` when you build it. See `CLAUDE.md` §11's 2026-08-03 numbering entry; this table has been the example of that mistake twice now.
+
 ### 10.1 Config keys
 
 Added with `json_set` on the single config row, bumping `version`, following `0020_config_fertility.sql`:

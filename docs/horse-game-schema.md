@@ -244,6 +244,7 @@ These are the tables that make §12.2 possible. All are small, all are edited ra
 - `eligible_class_types`, `discipline_aptitudes` — JSON
 - `gaited_typical` — 0/1, documentation only; actual gait comes from DMRT3
 - `colour_display_alias` — JSON (nullable): a phenotype to match and a name to show for it, so Paint is a display alias on the Quarter Horse row rather than a breed of its own (§4). A rule in data, never `if (breed.code === …)` in code.
+- `image_count` — INTEGER, default 0: how many library images exist for this breed (§5b). The library is a numbered set named `<breed code>-NN` under the static assets, so the picker derives the whole list from this number rather than from a manifest or a directory listing — Cloudflare's static assets have no listing, and a manifest would be a file the operator has to hand-edit. Adding images is an upload plus one number, which is the point: it is the operator's to grow without a session's help. The cost of deriving rather than listing is that files must never be renumbered or deleted, only replaced in place.
 
 **The row fills in two passes, and the build order decides which columns exist when.** All eight rows exist with `code`, `name`, `enabled`, `is_recognised_cross`, `gaited_typical` and a **`founding_allele_pool` covering every locus the engine knows about** from the founding stock generator onwards — a pool missing a locus is an error rather than a default, so the migration that adds locus six also updates all eight pools in the same change. The remaining columns are each added by the stage that first reads them, filled in for the Quarter Horse at that point, and filled in for the other seven at the later breeds stage (§12). Writing an ideal vector before a scorer exists to read it is guessing.
 
@@ -668,8 +669,8 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Foundation | `world`, `config`, `config_audit`, `tick_run`, `accounts`, `stables`, `stable_prefix_history`, stable picker |
 | Genetics core | `loci`, `breeds`, `horses`, `horse_ancestors`, `pregnancies` |
 | Founding stock | `import_offers`, `import_candidates` — the generator, without tokens attached; `breeds.founding_allele_pool` for all eight breeds; `accounts.pin_hash` and `pin_attempts` for the parent's grant |
-| Image slot | `horses.image_url` only |
-| One polygenic trait | `quantitative_traits` |
+| Image slot | `horses.image_url`, `horses.image_source`; `breeds.image_count` |
+| One polygenic trait | `quantitative_traits`; `horses.environmental_noise` |
 | One show class | `shows`, `show_classes`, `judges`, `show_entries`, `horse_show_summary`; `breeds.ideal_vector` for the Quarter Horse |
 | Turns and tick | `ledger`, `events` |
 | Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases` — over the PIN and attempt log already in place |
