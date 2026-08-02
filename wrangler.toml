@@ -13,3 +13,10 @@ database_id = "cefec735-ee58-4e7b-a63d-f11432e28e01"
 
 [triggers]
 crons = ["*/15 * * * *"]
+
+# Bundles each migration file into the Worker as plain text so /admin/migrations (src/db/migrations.ts)
+# can apply them from a button click - see CLAUDE.md §8 for why this exists alongside the CLI path.
+[[rules]]
+type = "Text"
+globs = ["**/*.sql"]
+fallthrough = true
