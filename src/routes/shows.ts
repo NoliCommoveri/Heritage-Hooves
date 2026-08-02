@@ -3,7 +3,14 @@ import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { ACTION_COSTS } from '../lib/actions';
 import { spendAction } from '../db/accounts';
-import { renderShowsIndexPage, renderShowPage, renderEntryResultPage, eligibilityMessage, type ShowPageClassView } from '../render/shows';
+import {
+  renderShowsIndexPage,
+  renderShowPage,
+  renderEntryResultPage,
+  eligibilityMessage,
+  type ShowPageClassView,
+  type EntryResultTraitRow,
+} from '../render/shows';
 import { displayNameFor } from '../render/horses';
 import {
   getNextShow,
@@ -21,7 +28,7 @@ import { getJudgeById } from '../db/judges';
 import { getBreeds, type BreedRow } from '../db/breeds';
 import { getHorse, listStableHorses } from '../db/horses';
 import { getStableById, listStablesForAccount } from '../db/stables';
-import { getConformationTraits } from '../db/quantitativeTraits';
+import { getConformationTraits, getAbilityTraits } from '../db/quantitativeTraits';
 
 function breedNameFor(breeds: BreedRow[], breedId: number | null): string {
   return breeds.find((b) => b.id === breedId)?.name ?? 'that breed';
@@ -215,21 +222,44 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
   }
 
   const judge = await getJudgeById(ctx.env, cls.judge_id);
-  const traitRows = await getConformationTraits(ctx.env);
-  const breakdown = JSON.parse(entry.score_breakdown) as {
-    traits: { code: string; expressed: number; target: number; weight: number; trait_score: number }[];
-    weight_sum: number;
-    raw_score: number;
-    noise: number;
-    final_score: number;
-  };
-  const traits = breakdown.traits.map((t) => ({
-    name: traitRows.find((r) => r.code === t.code)?.name ?? t.code,
-    expressed: t.expressed,
-    target: t.target,
-    weight: t.weight,
-    traitScore: t.trait_score,
-  }));
+  // Slice 0012 §9.1: an old row with no "kind" key reads as conformation (there is no such row
+  // after the world reset, but the fallback costs nothing and matches the migration's own note).
+  const breakdown = JSON.parse(entry.score_breakdown) as
+    | {
+        kind?: 'conformation';
+        traits: { code: string; expressed: number; target: number; weight: number; trait_score: number }[];
+        weight_sum: number;
+        raw_score: number;
+        noise: number;
+        final_score: number;
+      }
+    | {
+        kind: 'ability';
+        traits: { code: string; expressed: number; weight: number; contribution: number }[];
+        weight_sum: number;
+        raw_score: number;
+        noise: number;
+        final_score: number;
+      };
+
+  const traitRows = breakdown.kind === 'ability' ? await getAbilityTraits(ctx.env) : await getConformationTraits(ctx.env);
+  const traits: EntryResultTraitRow[] =
+    breakdown.kind === 'ability'
+      ? breakdown.traits.map((t) => ({
+          kind: 'ability' as const,
+          name: traitRows.find((r) => r.code === t.code)?.name ?? t.code,
+          expressed: t.expressed,
+          weight: t.weight,
+          contribution: t.contribution,
+        }))
+      : breakdown.traits.map((t) => ({
+          kind: 'conformation' as const,
+          name: traitRows.find((r) => r.code === t.code)?.name ?? t.code,
+          expressed: t.expressed,
+          target: t.target,
+          weight: t.weight,
+          traitScore: t.trait_score,
+        }));
 
   return htmlResponse(
     renderEntryResultPage({

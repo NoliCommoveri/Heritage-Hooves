@@ -61,6 +61,12 @@ import m0057 from '../../migrations/0057_ledger_add_vet_kind.sql';
 import m0058 from '../../migrations/0058_horses_ageing.sql';
 import m0059 from '../../migrations/0059_breeding_cancellation.sql';
 import m0060 from '../../migrations/0060_config_ageing.sql';
+import m0061 from '../../migrations/0061_quantitative_traits_agility.sql';
+import m0062 from '../../migrations/0062_disciplines.sql';
+import m0063 from '../../migrations/0063_seed_disciplines.sql';
+import m0064 from '../../migrations/0064_show_classes_discipline.sql';
+import m0065 from '../../migrations/0065_show_entries_trait_snapshot.sql';
+import m0066 from '../../migrations/0066_config_disciplines.sql';
 
 export interface MigrationFile {
   name: string;
@@ -138,6 +144,12 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0058_horses_ageing.sql', sql: m0058 },
   { name: '0059_breeding_cancellation.sql', sql: m0059 },
   { name: '0060_config_ageing.sql', sql: m0060 },
+  { name: '0061_quantitative_traits_agility.sql', sql: m0061 },
+  { name: '0062_disciplines.sql', sql: m0062 },
+  { name: '0063_seed_disciplines.sql', sql: m0063 },
+  { name: '0064_show_classes_discipline.sql', sql: m0064 },
+  { name: '0065_show_entries_trait_snapshot.sql', sql: m0065 },
+  { name: '0066_config_disciplines.sql', sql: m0066 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

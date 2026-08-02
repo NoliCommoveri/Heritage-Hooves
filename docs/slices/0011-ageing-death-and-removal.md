@@ -90,6 +90,8 @@ A failing horse scores exactly what it would have scored the month before. This 
 
 A decline multiplier is the natural first addition at the care and tack stage, where there is already a ±5% band for it to live in and something to tune it against. Not before.
 
+**Slice 0012 confirms this rather than complicating it.** Discipline classes (barrel racing and, later, the other five) follow the same rule explicitly - a Failing horse enters and competes at full expression there too (slice 0012 §5.4). Both scorers finish with the same multiplicative modifier line (`careModifier`/`tackModifier`/`trainingFactor`, all pinned at 1.0 today), so a decline-with-age multiplier built here would apply to conformation and discipline classes alike through that one shared line, with no change to either scorer's formula. Worth building once, not twice.
+
 ### 3.3 No money on removal, and no sale
 "Placed with a distant buyer" is flavour; a payout would be a money faucet with no market behind it to price it, and pruning a herd for cash is not the decision §7a wants players making. Selling a horse to another stable belongs to the market stage, which owns pricing, listings and transfer. This slice's exit is free and one-way.
 

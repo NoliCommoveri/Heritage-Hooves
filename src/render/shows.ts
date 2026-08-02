@@ -63,12 +63,25 @@ export function placingText(placing: number | null): string {
 }
 
 function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: number): string {
-  const parts = [`${breedName}`, cls.crosses_eligible ? 'purebreds and crosses' : 'purebreds only'];
-  let sentence = `${parts[0]} · ${parts[1]} · at least ${String(minAgeYears)} years old`;
+  // Slice 0012 §2.1: a discipline class has no breed_id and is always open to every breed and
+  // every cross - the "purebreds only" phrase never applies to one.
+  const parts =
+    cls.class_type === 'discipline' ? ['Open to every breed'] : [`${breedName}`, cls.crosses_eligible ? 'purebreds and crosses' : 'purebreds only'];
+  let sentence = `${parts.join(' · ')} · at least ${String(minAgeYears)} years old`;
   if (cls.max_age_game_days !== null) sentence += ` · no older than ${String(Math.round(cls.max_age_game_days / 360))} years`;
   if (cls.sex_restriction) sentence += ` · ${cls.sex_restriction}s only`;
   if (cls.requires_gait) sentence += ' · must be gaited';
   return sentence;
+}
+
+/** Slice 0012 §5.5: "a class with fewer than three entries says so in words" - so a thin
+ * Gaited Pleasure field (or, today, a thin Barrel Racing one before the barn is breed-aware and
+ * before enough players have entered) reads as expected rather than as something broken. Only
+ * discipline classes carry this note; a breed_conformation class already draws on a full
+ * breed-specific NPC pool. */
+function thinFieldNote(cls: ShowClassRow, entryCount: number): SafeHtml {
+  if (cls.class_type !== 'discipline' || entryCount >= 3) return raw('');
+  return html`<p class="muted">Only ${String(entryCount)} horse${entryCount === 1 ? ' has' : 's have'} entered so far - a thin field for a newer discipline, not a bug.</p>`;
 }
 
 export interface ShowsIndexNextClass {
@@ -105,6 +118,7 @@ export function renderShowsIndexPage(params: {
             <p class="muted">${classRulesSentence(c.cls, c.breedName, c.minAgeYears)}</p>
             <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
             <p class="muted">${String(c.entryCount)} horse${c.entryCount === 1 ? '' : 's'} entered so far.</p>
+            ${thinFieldNote(c.cls, c.entryCount)}
           </div>`
         )}
         <p><a class="button-link" href="/shows/${String(params.nextShow.show.id)}">View and enter</a></p>
@@ -197,6 +211,7 @@ export function renderShowPage(params: {
         <h2>${c.cls.name}</h2>
         <p class="muted">${classRulesSentence(c.cls, c.breedName, c.minAgeYears)}</p>
         <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
+        ${thinFieldNote(c.cls, c.entries.length)}
         <table>
           <thead><tr><th>Place</th><th>Horse</th><th>Score</th><th></th></tr></thead>
           <tbody>${entryRows.length ? entryRows : html`<tr><td colspan="4" class="muted">No entries yet.</td></tr>`}</tbody>
@@ -216,6 +231,16 @@ export function renderShowPage(params: {
   return pageShell({ title: s.name, world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
 }
 
+export type EntryResultTraitRow =
+  /** A breed_conformation entry's row - distance-from-target scoring, as before. */
+  | { kind: 'conformation'; name: string; expressed: number; target: number; weight: number; traitScore: number }
+  /** Slice 0012 §9.1: a discipline entry's row - no target, because there is no target for an
+   * ability trait, only a weight and what that weight times the expressed value contributed. */
+  | { kind: 'ability'; name: string; expressed: number; weight: number; contribution: number };
+
+/** §9.1: branches on the breakdown blob's own kind - a conformation entry shows
+ * expressed/target/weight/trait score exactly as before; a discipline entry shows
+ * expressed/weight/contribution, with no target column. */
 export function renderEntryResultPage(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -226,22 +251,36 @@ export function renderEntryResultPage(params: {
   judge: JudgeRow | undefined;
   placing: number;
   prizePaid: number;
-  traits: { name: string; expressed: number; target: number; weight: number; traitScore: number }[];
+  traits: EntryResultTraitRow[];
   weightSum: number;
   rawScore: number;
   noise: number;
   finalScore: number;
 }): SafeHtml {
-  const rows = params.traits.map(
-    (t) => html`
-    <tr>
-      <td>${t.name}</td>
-      <td>${String(t.expressed)}</td>
-      <td>${String(t.target)}</td>
-      <td>${t.weight.toFixed(2)}</td>
-      <td>${t.traitScore.toFixed(1)}</td>
-    </tr>`
+  const isAbility = params.traits.length > 0 && params.traits[0].kind === 'ability';
+
+  const rows = params.traits.map((t) =>
+    t.kind === 'ability'
+      ? html`
+        <tr>
+          <td>${t.name}</td>
+          <td>${String(t.expressed)}</td>
+          <td>${t.weight.toFixed(2)}</td>
+          <td>${t.contribution.toFixed(1)}</td>
+        </tr>`
+      : html`
+        <tr>
+          <td>${t.name}</td>
+          <td>${String(t.expressed)}</td>
+          <td>${String(t.target)}</td>
+          <td>${t.weight.toFixed(2)}</td>
+          <td>${t.traitScore.toFixed(1)}</td>
+        </tr>`
   );
+
+  const tableHead = isAbility
+    ? html`<tr><th>Trait</th><th>Measured</th><th>Weight</th><th>Contribution</th></tr>`
+    : html`<tr><th>Trait</th><th>Measured</th><th>Standard wants</th><th>Weight</th><th>Points</th></tr>`;
 
   const prizeSentence = params.prizePaid > 0 ? html` - paid <strong>${String(params.prizePaid)}</strong>` : raw('');
 
@@ -251,7 +290,7 @@ export function renderEntryResultPage(params: {
     <div class="card">
       <h2>How the score was reached</h2>
       <table>
-        <thead><tr><th>Trait</th><th>Measured</th><th>Standard wants</th><th>Weight</th><th>Points</th></tr></thead>
+        <thead>${tableHead}</thead>
         <tbody>${rows}</tbody>
       </table>
       <p>Weighted average: <strong>${params.rawScore.toFixed(2)}</strong> (out of a possible 100, over a total weight of ${params.weightSum.toFixed(2)})</p>

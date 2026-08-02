@@ -28,7 +28,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
 };
 
 /** Tables a reset must never empty - see the header comment in src/db/reset.ts. */
-const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'judges', 'world', 'd1_migrations'];
+const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'judges', 'conditions', 'disciplines', 'world', 'd1_migrations'];
 
 describe('reset delete order', () => {
   it('empties every table before the tables it points at', () => {

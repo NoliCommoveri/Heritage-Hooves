@@ -292,7 +292,19 @@ Breed-specific targets and weights live in `breeds.ideal_vector`, not here — t
 
 ### 3.5 `disciplines`, `judges`, `services`, `tack_types`
 
-Small reference tables, detailed in §7–§9 below where they are used.
+Small reference tables. `judges` is detailed in §6.3. `services`/`tack_types` are still design only,
+detailed in §8 below where they are used.
+
+**`disciplines` was built in slice 0012**, one row per discipline judged on ability rather than
+conformation: `id`, `code`, `name`, `ability_weights` (JSON, a weight per ability trait - `breeds.ideal_vector`'s
+counterpart, snapshotted onto `show_classes.ability_weights` at class creation and never re-read),
+`requires_gait`, `crosses_eligible`, `min_age_game_days`, `default_noise_sd` (per-discipline,
+because an ability composite's population spread depends on its own weight vector), `teaching_text`,
+`enabled` (the first lever for keeping a seven-class show week from outrunning the action budget),
+`sort_order`. Only Barrel Racing (`barrels`) is seeded so far - the other five disciplines the
+design calls for (Flat Racing, Show Jumping, Endurance, Dressage, Gaited Pleasure) are specified in
+`docs/slices/0012-discipline-shows.md` §5.1 but not yet built; adding one is a pure-data `INSERT`
+into this table, no code change.
 
 ---
 
@@ -477,13 +489,33 @@ Scheduling in game-days rather than ticks is what keeps the calendar stable when
 
 ### 6.2 `show_classes`
 
-- `id`, `show_id`, `class_type` — breed / conformation / performance / gaited
-- `breed_id` (nullable), `discipline_code` (nullable)
-- `min_age_days`, `max_age_days`, `sex_restriction`
-- `crosses_eligible` — 0/1, derived from `class_type` per §4c but stored so exceptions are possible
-- `requires_gait` — 0/1, checked against DMRT3
-- `entry_fee`, `prize_structure` (JSON), `target_field_size`
-- `judge_id`, `rng_seed`
+**As built (slice 0008, widened by slice 0012):** `class_type` has exactly two real values, not the
+four this section originally sketched - `breed_conformation` (scored by `scoreEntry` against a
+breed's `ideal_vector`) and `discipline` (scored by `scoreAbilityEntry` against a discipline's
+`ability_weights`). A `CHECK` constraint enforces the pairing: a `breed_conformation` row has
+`ideal_vector` and `breed_id` set, `ability_weights` null, and `discipline_code` null; a `discipline`
+row has `ability_weights` and `discipline_code` set, `ideal_vector` null, and `breed_id` null.
+`discipline_code` matches a `disciplines.code` by value, not by foreign key - the same convention
+`horse_conditions.condition_code` already uses for `conditions.code`.
+
+- `id`, `show_id`, `name`, `class_type` (`breed_conformation` / `discipline`)
+- `breed_id` (nullable - null for a discipline class), `discipline_code` (nullable - null for a
+  breed_conformation class, matches `disciplines.code` otherwise)
+- `min_age_game_days`, `max_age_game_days` (nullable), `sex_restriction` (nullable)
+- `crosses_eligible` — 0/1. Always 1 for a discipline class (slice 0012 §2.1: no breed gating on
+  ability classes)
+- `requires_gait` — 0/1, checked against DMRT3 (only Gaited Pleasure sets this, and it is not built
+  yet - see §3.5)
+- `target_field_size`, `max_entries_per_stable`, `prize_schedule` (JSON, snapshotted from
+  `config.values.show_prize_schedule` at creation)
+- `ideal_vector` (nullable - a copy of `breeds.ideal_vector` at creation, for a breed_conformation
+  class only), `ability_weights` (nullable - a copy of `disciplines.ability_weights` at creation, for
+  a discipline class only), `ideal_falloff`, `noise_sd`
+- `judge_id`, `rng_seed`, `status`, `judged_game_day`
+
+`entry_fee` was never built - shows have never charged one (slice 0009 §2.4/§4.6 makes this a
+deliberate decision: shows are the only way a stable in debt earns its way back out, so an entry
+fee would defeat that).
 
 ### 6.3 `judges`
 

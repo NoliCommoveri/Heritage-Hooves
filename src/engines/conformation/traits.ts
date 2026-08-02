@@ -22,6 +22,7 @@ export const TRAIT_CATEGORY: Record<TraitCode, TraitCategory> = {
   speed: 'ability',
   trainability: 'ability',
   fertility: 'hidden',
+  agility: 'ability',
 };
 
 export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
@@ -34,10 +35,18 @@ export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
   speed: 'higher_better',
   trainability: 'higher_better',
   fertility: 'higher_better',
+  agility: 'higher_better',
 };
 
 /** The four traits this slice ever displays (§2.1) - in TRAITS' own order. */
 export const CONFORMATION_TRAITS: readonly TraitCode[] = TRAITS.filter((t) => TRAIT_CATEGORY[t] === 'conformation');
+
+/** Slice 0012 §7: the five traits a discipline scorer reads - stamina, jump_scope, speed,
+ * trainability, agility, in TRAITS' own order (fertility is category 'hidden' and is correctly
+ * excluded). scoreAbilityEntry iterates this, never Object.keys(weights), for the same reason
+ * scoreEntry iterates CONFORMATION_TRAITS rather than Object.keys(ideal) - a result's breakdown
+ * always reads in the same order regardless of how the JSON was written. */
+export const ABILITY_TRAITS: readonly TraitCode[] = TRAITS.filter((t) => TRAIT_CATEGORY[t] === 'ability');
 
 const ANCHOR_BIDIRECTIONAL = 50;
 const ANCHOR_UNIDIRECTIONAL = 0;

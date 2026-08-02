@@ -3,7 +3,7 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { LOCI } from '../../src/engines/genetics/loci';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../../src/engines/genetics/polygenic';
-import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS } from '../../src/engines/conformation/traits';
+import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS, ABILITY_TRAITS } from '../../src/engines/conformation/traits';
 
 // The test CLAUDE.md §8/§11 asks for: the engine's LOCI constant is the source of truth for
 // iteration order and reproducibility (loci.ts), but a player-facing operator might reword
@@ -77,31 +77,86 @@ describe('every seeded breed pool vs LOCI', () => {
   });
 });
 
-// Slice 0006 §8.6: TRAITS (polygenic.ts) is the source of truth for iteration order and the RNG
-// draw sequence; src/engines/conformation/traits.ts's TRAIT_CATEGORY/TRAIT_DIRECTION maps and
-// migrations/0029_seed_quantitative_traits.sql are both display metadata that must agree with it,
-// exactly as 0015_seed_loci.sql must agree with LOCI above.
-describe('TRAITS vs migrations/0029_seed_quantitative_traits.sql', () => {
+// Slice 0006 §8.6/slice 0012 §11.4: TRAITS (polygenic.ts) is the source of truth for iteration
+// order and the RNG draw sequence; src/engines/conformation/traits.ts's
+// TRAIT_CATEGORY/TRAIT_DIRECTION maps and the seed migrations are both display metadata that must
+// agree with it, exactly as 0015_seed_loci.sql must agree with LOCI above. Slice 0012 appends
+// 'agility' in migration 0061 - scanning 0029 then 0061 in sequence and asserting against the
+// whole of TRAITS is what proves agility is both correct and *last* (§4.1's append-only rule).
+describe('TRAITS vs migrations/0029 + 0061 (quantitative_traits seeds)', () => {
   it('seeds exactly the codes in TRAITS, in the same order, with matching category, direction and locus_count', () => {
-    const migration = MIGRATIONS.find((m) => m.name === '0029_seed_quantitative_traits.sql');
-    expect(migration).toBeDefined();
-
+    const migrationNames = ['0029_seed_quantitative_traits.sql', '0061_quantitative_traits_agility.sql'];
     const rowPattern =
       /\('([a-z_]+)',\s*'[^']*',\s*'(conformation|ability|hidden)',\s*'(bidirectional|higher_better)',\s*(?:'[^']*'|NULL),\s*(?:'[^']*'|NULL),\s*(\d+)/g;
     const seeded: { code: string; category: string; direction: string; locusCount: number }[] = [];
-    let match: RegExpExecArray | null;
-    while ((match = rowPattern.exec(migration!.sql)) !== null) {
-      seeded.push({ code: match[1], category: match[2], direction: match[3], locusCount: Number(match[4]) });
+
+    for (const name of migrationNames) {
+      const migration = MIGRATIONS.find((m) => m.name === name);
+      expect(migration, `migration ${name} not found`).toBeDefined();
+      const pattern = new RegExp(rowPattern.source, rowPattern.flags);
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(migration!.sql)) !== null) {
+        seeded.push({ code: match[1], category: match[2], direction: match[3], locusCount: Number(match[4]) });
+      }
     }
 
     expect(seeded.length).toBe(TRAITS.length);
     expect(seeded.map((s) => s.code)).toEqual([...TRAITS]);
+    expect(seeded[seeded.length - 1].code).toBe('agility');
     seeded.forEach((s) => {
       const code = s.code as TraitCode;
       expect(s.category, `${s.code} category`).toBe(TRAIT_CATEGORY[code]);
       expect(s.direction, `${s.code} direction`).toBe(TRAIT_DIRECTION[code]);
       expect(s.locusCount, `${s.code} locus_count`).toBe(LOCI_PER_TRAIT);
     });
+  });
+});
+
+// Slice 0012 §11.4: 0035's ideal-vector test from the other side - every seeded discipline's
+// ability_weights must name only codes ABILITY_TRAITS iterates, with weights >= 0 and at least one
+// strictly positive (a discipline that weights nothing would be a data-entry mistake, not a
+// legitimate discipline).
+describe('seeded disciplines vs ABILITY_TRAITS (slice 0012 §11.4)', () => {
+  const migration = MIGRATIONS.find((m) => m.name === '0063_seed_disciplines.sql');
+  it('migration 0063 exists', () => {
+    expect(migration).toBeDefined();
+  });
+
+  const rowPattern = /\('([a-z]+)',\s*'[^']*',\s*'(\{[^']*\})'/g;
+  const seeded: { code: string; weights: Record<string, number> }[] = [];
+  let match: RegExpExecArray | null;
+  const pattern = new RegExp(rowPattern.source, rowPattern.flags);
+  while (migration && (match = pattern.exec(migration.sql)) !== null) {
+    const parsed = JSON.parse(match[2]) as { v: number; traits: Record<string, number> };
+    seeded.push({ code: match[1], weights: parsed.traits });
+  }
+
+  it('found at least one seeded discipline', () => {
+    expect(seeded.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it.each(seeded.map((s) => [s.code, s.weights] as const))('%s names only ABILITY_TRAITS codes, weights >= 0, at least one > 0', (code, weights) => {
+    expect(Object.keys(weights).sort()).toEqual([...ABILITY_TRAITS].sort());
+    let anyPositive = false;
+    for (const [trait, weight] of Object.entries(weights)) {
+      expect(ABILITY_TRAITS, `${code} has unknown ability trait ${trait}`).toContain(trait);
+      expect(weight, `${code}.${trait} weight`).toBeGreaterThanOrEqual(0);
+      if (weight > 0) anyPositive = true;
+    }
+    expect(anyPositive, `${code} weights nothing at all`).toBe(true);
+  });
+
+  // §5.2's full "every ability is dominant in exactly one discipline" property is a property of
+  // the complete six-discipline design and does not hold for a one-discipline subset - it belongs
+  // with the other five, not here (CLAUDE.md §9's "do not build ahead"). What holds today: agility
+  // is Barrel Racing's dominant weight, which is the whole reason agility exists (§2.2/§5.2).
+  it('agility is the strict maximum weight in Barrel Racing', () => {
+    const barrels = seeded.find((s) => s.code === 'barrels');
+    expect(barrels).toBeDefined();
+    const maxWeight = Math.max(...Object.values(barrels!.weights));
+    expect(barrels!.weights.agility).toBe(maxWeight);
+    const others = Object.entries(barrels!.weights).filter(([t]) => t !== 'agility');
+    for (const [, w] of others) expect(w).toBeLessThan(barrels!.weights.agility);
   });
 });
 

@@ -91,26 +91,29 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
   return stable;
 }
 
-/** Slice 0008 §8.1: the horse page's "Enter in a show" button, or the plain sentence saying why
- * not. Only ever the first open class - today that's a horse's only possible open class, since
- * this slice never creates more than one at once (§3). */
-async function buildEnterShowInfo(ctx: RequestContext, horse: HorseRow, breeds: BreedRow[]): Promise<EnterShowInfo | null> {
-  const openClasses = await getOpenClasses(ctx.env, 5);
-  if (openClasses.length === 0) return null;
-  const cls = openClasses[0];
+/** Slice 0008 §8.1/slice 0012 §9: the horse page's "Enter in a show" section - one line per open
+ * class (a breed-conformation class and every open discipline class), each either a button or the
+ * plain sentence saying why not. Before slice 0012 there was ever only one open class at once; now
+ * there can be several, so every open class is checked rather than just the first. */
+async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow, breeds: BreedRow[]): Promise<EnterShowInfo[]> {
+  const openClasses = await getOpenClasses(ctx.env, 10);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
 
-  const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear);
-  if (result.ok) return { classId: cls.id, className: cls.name, eligible: true };
+  return Promise.all(
+    openClasses.map(async (cls) => {
+      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear);
+      if (result.ok) return { classId: cls.id, className: cls.name, eligible: true };
 
-  const breedName = breeds.find((b) => b.id === cls.breed_id)?.name ?? 'that breed';
-  const minAgeYears = Math.round(cls.min_age_game_days / gameDaysPerYear);
-  return {
-    classId: cls.id,
-    className: cls.name,
-    eligible: false,
-    reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`,
-  };
+      const breedName = breeds.find((b) => b.id === cls.breed_id)?.name ?? 'that breed';
+      const minAgeYears = Math.round(cls.min_age_game_days / gameDaysPerYear);
+      return {
+        classId: cls.id,
+        className: cls.name,
+        eligible: false,
+        reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`,
+      };
+    })
+  );
 }
 
 export async function stableHorsesRoute(ctx: RequestContext, stableId: number): Promise<Response> {
@@ -460,7 +463,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const showSummary = await getShowSummary(ctx.env, horse.id);
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
-  const enterShow = canManage ? await buildEnterShowInfo(ctx, horse, await getBreeds(ctx.env)) : null;
+  const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
 
   return htmlResponse(
@@ -618,7 +621,7 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
 
   if (!result.ok) {
     const breeds = await getBreeds(ctx.env);
-    const cls = (await getOpenClasses(ctx.env, 5)).find((c) => c.id === classId);
+    const cls = (await getOpenClasses(ctx.env, 10)).find((c) => c.id === classId);
     const breedName = breeds.find((b) => b.id === cls?.breed_id)?.name ?? 'that breed';
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`;

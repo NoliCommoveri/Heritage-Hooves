@@ -1,11 +1,18 @@
 // Potential -> genetic value -> realization -> expressed value. Slice 0006 §4. Pure, no database
 // access (CLAUDE.md §5.1) - the caller reads the horse, calls these, and either stores the result
 // (environmental noise, at birth) or renders it (everything else, on every read - §2.4).
+//
+// Naming debt, accepted deliberately (slice 0012 §7.1): this file also holds ability-trait
+// expression (abilityValues, below), which its name and path (engines/conformation/) do not
+// suggest - traits.ts:44's own comment anticipated exactly this ("a later slice displaying ability
+// traits needs no new expression function, only this lookup"). A rename to engines/traits/model.ts
+// would touch a dozen imports for no behavioural change, so it stays here. Flagged so the next
+// session finds it stated rather than surprising.
 
 import { makeRng, deriveSeed, type Rng } from '../../lib/rng';
 import { potential, TRAITS, type TraitCode } from '../genetics/polygenic';
 import type { Genotype } from '../genetics/genotype';
-import { anchorFor, CONFORMATION_TRAITS } from './traits';
+import { anchorFor, CONFORMATION_TRAITS, ABILITY_TRAITS } from './traits';
 
 export type NoiseByTrait = Record<TraitCode, number>;
 
@@ -99,6 +106,28 @@ export function conformationValues(genotype: Genotype, noise: NoiseByTrait, ageY
       expressed: expressedValue(gv, realization(ageYears, coi, config), anchor),
       matureExpressed: expressedValue(gv, matureRealization, anchor),
     };
+  });
+}
+
+export interface AbilityValue {
+  code: TraitCode;
+  /** The value right now, at this horse's current age and COI. No matureExpressed here (unlike
+   * ConformationValue) - ability values are never displayed (§2.3), only scored, so there is
+   * nothing that needs a "will mature to" figure. */
+  expressed: number;
+}
+
+/** Slice 0012 §7.1: the five ability values a discipline scorer reads, computed through the exact
+ * same potential -> geneticValue -> realization -> expressedValue pipeline conformationValues
+ * uses, with anchorFor's 0 for a higher_better trait doing the real work: expressed = geneticValue
+ * x realization, so a young horse is straightforwardly worse rather than pulled toward a midpoint
+ * the way a bidirectional conformation trait is. Never asked for CONFORMATION_TRAITS or fertility -
+ * see ABILITY_TRAITS. */
+export function abilityValues(genotype: Genotype, noise: NoiseByTrait, ageYears: number, coi: number, config: RealizationConfig): AbilityValue[] {
+  const realizationVal = realization(ageYears, coi, config);
+  return ABILITY_TRAITS.map((trait) => {
+    const gv = geneticValue(genotype, trait, noise[trait]);
+    return { code: trait, expressed: expressedValue(gv, realizationVal, anchorFor(trait)) };
   });
 }
 

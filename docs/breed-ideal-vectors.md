@@ -331,8 +331,12 @@ Steps 1 and 2 are the work. Step 3 is fifteen minutes.
 Ideal vectors are one of five things overview §4a lists as breed identity. Recording these does not
 close the stage — still unwritten anywhere, for all eight breeds:
 
-- `eligible_class_types` and `discipline_aptitudes` (needs a `disciplines` table, which does not
-  exist)
+- `eligible_class_types` and `discipline_aptitudes` — the `disciplines` table now exists (slice
+  0012, one row seeded so far: Barrel Racing), so this is no longer blocked on schema. Slice 0012
+  §2.1 deliberately shipped with no breed gating at all (every discipline is `crosses_eligible = 1`
+  and open to every breed) rather than pre-empting this - `discipline_aptitudes` is the modifier
+  that would make breed matter *beyond* the allele pools it already lives in, and building it before
+  the aptitudes are decided would double-count
 - `height_range` and `weight_range`
 - disease panels for the seven non-Quarter-Horse breeds — the `conditions` table holds the Quarter
   Horse's four (`migrations/0053`), and overview §4a names the others' signature conditions but

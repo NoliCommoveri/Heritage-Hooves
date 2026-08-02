@@ -10,15 +10,17 @@ import type { Config } from '../lib/config-cache';
 import { calendarEntryFor } from '../engines/showing/calendar';
 import { checkEligibility, type EligibilityReason } from '../engines/showing/eligibility';
 import { scoreEntry, parseIdealVector, parseJudgeWeights } from '../engines/showing/score';
+import { scoreAbilityEntry, parseAbilityWeights } from '../engines/showing/abilityScore';
 import { assignPlacings } from '../engines/showing/placing';
 import { noiseForEntry } from '../engines/showing/noise';
-import { conformationValues, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import { conformationValues, abilityValues, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import { getHorse, horseDisplayName, listStableHorses, type HorseRow } from './horses';
 import { getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
+import { getEnabledDisciplines } from './disciplines';
 import { getShowBarnStable } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
@@ -46,7 +48,7 @@ export interface ShowClassRow {
   id: number;
   show_id: number;
   name: string;
-  class_type: 'breed_conformation';
+  class_type: 'breed_conformation' | 'discipline';
   breed_id: number | null;
   discipline_code: string | null;
   min_age_game_days: number;
@@ -57,7 +59,10 @@ export interface ShowClassRow {
   target_field_size: number;
   max_entries_per_stable: number;
   judge_id: number;
-  ideal_vector: string;
+  /** Null for a discipline class (§6.4's CHECK enforces the pairing). */
+  ideal_vector: string | null;
+  /** Null for a breed_conformation class. */
+  ability_weights: string | null;
   ideal_falloff: number;
   noise_sd: number;
   status: 'scheduled' | 'judged';
@@ -75,7 +80,9 @@ export interface ShowEntryRow {
   entered_by_stable_id: number;
   is_npc: number;
   entered_game_day: number;
-  conformation_snapshot: string;
+  /** Renamed from conformation_snapshot by migration 0065 (slice 0012 §6.5) - the blob shape was
+   * always trait-agnostic, only the column name said otherwise. */
+  trait_snapshot: string;
   raw_score: number | null;
   noise_applied: number | null;
   final_score: number | null;
@@ -291,18 +298,24 @@ export async function listShowsForAdmin(env: Env, limit: number): Promise<AdminS
 // Entering a horse
 // ---------------------------------------------------------------------------
 
-function expressedTraitsFor(horse: HorseRow, gameDay: number, config: RealizationConfig, gameDaysPerYear: number): Partial<Record<TraitCode, number>> {
+/** Slice 0012 §7.1/§8.2: branches on the class's own class_type - conformationValues for a
+ * breed_conformation class, abilityValues for a discipline one. Both go through the identical
+ * potential -> geneticValue -> realization -> expressedValue pipeline; only which trait list gets
+ * mapped differs. */
+function expressedTraitsForClass(horse: HorseRow, classType: ShowClassRow['class_type'], gameDay: number, config: RealizationConfig, gameDaysPerYear: number): Partial<Record<TraitCode, number>> {
   const genotype = parseGenotype(horse.genotype);
   const ageYears = (gameDay - horse.born_game_day) / gameDaysPerYear;
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
-  const values = conformationValues(genotype, noise, ageYears, horse.coi, config);
+  const values = classType === 'discipline' ? abilityValues(genotype, noise, ageYears, horse.coi, config) : conformationValues(genotype, noise, ageYears, horse.coi, config);
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
   return expressed;
 }
 
-function conformationSnapshot(horse: HorseRow, gameDay: number, config: RealizationConfig, gameDaysPerYear: number): string {
-  const traits = expressedTraitsFor(horse, gameDay, config, gameDaysPerYear);
+/** trait_snapshot, written at entry time (migration 0065 renamed the column - the blob shape was
+ * always trait-agnostic, §6.5). */
+function traitSnapshot(horse: HorseRow, classType: ShowClassRow['class_type'], gameDay: number, config: RealizationConfig, gameDaysPerYear: number): string {
+  const traits = expressedTraitsForClass(horse, classType, gameDay, config, gameDaysPerYear);
   const ageYears = (gameDay - horse.born_game_day) / gameDaysPerYear;
   return JSON.stringify({ v: 1, traits, age_years: Math.round(ageYears * 100) / 100, coi: horse.coi });
 }
@@ -375,11 +388,11 @@ export async function enterHorseInClass(
   const eligibility = await checkHorseEligibilityForClass(env, cls, horse, params.gameDay, params.gameDaysPerYear);
   if (!eligibility.ok) return eligibility;
 
-  const snapshot = conformationSnapshot(horse, params.gameDay, params.conformationConfig, params.gameDaysPerYear);
+  const snapshot = traitSnapshot(horse, cls.class_type, params.gameDay, params.conformationConfig, params.gameDaysPerYear);
 
   try {
     await env.DB.prepare(
-      `INSERT INTO show_entries (class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, conformation_snapshot)
+      `INSERT INTO show_entries (class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot)
        VALUES (?, ?, ?, 0, ?, ?)`
     )
       .bind(cls.id, horse.id, horse.owner_stable_id, params.gameDay, snapshot)
@@ -420,7 +433,11 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
   // Quarter Horse and nothing else - when the other seven breeds get vectors, they get classes with
   // no code change here.
   const eligibleBreeds = breeds.filter((b) => b.ideal_vector !== null);
-  if (eligibleBreeds.length === 0) return;
+  // Slice 0012 §8.1: one class per enabled discipline, ordered by sort_order, capped at
+  // show_discipline_classes_per_show. Today that's Barrel Racing and nothing else (§5.1/§6.3) -
+  // the other five disciplines arrive as pure data, no code change here either.
+  const enabledDisciplines = (await getEnabledDisciplines(env)).slice(0, config.values.show_discipline_classes_per_show);
+  if (eligibleBreeds.length === 0 && enabledDisciplines.length === 0) return;
 
   const judges = await getJudges(env);
   if (judges.length === 0) throw new Error('createShowIfMissing: no active judges are seeded');
@@ -451,10 +468,10 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
         `INSERT INTO show_classes (
            show_id, name, class_type, breed_id, discipline_code, min_age_game_days, max_age_game_days,
            sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
-           judge_id, ideal_vector, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+           judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
          ) VALUES (
            (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'breed_conformation', ?, NULL, ?, NULL,
-           NULL, 0, 0, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?, ?
+           NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
          )`
       ).bind(
         `${breed.name} Conformation`,
@@ -466,6 +483,43 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
         breed.ideal_vector,
         config.values.show_ideal_falloff,
         config.values.show_noise_sd,
+        classSeed,
+        prizeSchedule
+      )
+    );
+  });
+
+  // Slice 0012 §8.1: discipline classes are numbered after breed classes, continuing the same
+  // class_N/judge_N sub-seed labels off the show's own seed - judges are drawn from the same pool
+  // a conformation class uses (a conformation judge's trait_weights simply contributes nothing to
+  // an ability score, §8.1's own note on why that is correct rather than an oversight).
+  enabledDisciplines.forEach((discipline, index) => {
+    const ordinal = eligibleBreeds.length + index + 1;
+    const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
+    const judge = judges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(judges.length)];
+
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO show_classes (
+           show_id, name, class_type, breed_id, discipline_code, min_age_game_days, max_age_game_days,
+           sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
+           judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+         ) VALUES (
+           (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'discipline', NULL, ?, ?, NULL,
+           NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'scheduled', NULL, ?, ?
+         )`
+      ).bind(
+        discipline.name,
+        discipline.code,
+        discipline.min_age_game_days,
+        discipline.crosses_eligible,
+        discipline.requires_gait,
+        config.values.show_target_field_size,
+        config.values.show_max_entries_per_stable,
+        judge.id,
+        discipline.ability_weights,
+        config.values.show_ideal_falloff,
+        discipline.default_noise_sd,
         classSeed,
         prizeSchedule
       )
@@ -552,7 +606,12 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     if (horse) horseById.set(horse.id, horse);
   }
 
-  const ideal = parseIdealVector(cls.ideal_vector);
+  // Slice 0012 §8.2: branch once, at the top, on class_type. Everything after this block (NPC
+  // top-up already happened above, placings/summaries/prizes/events below) is shared and
+  // unchanged - it does not care which scorer produced the numbers.
+  const isDiscipline = cls.class_type === 'discipline';
+  const ideal = isDiscipline ? null : parseIdealVector(cls.ideal_vector!);
+  const abilityWeights = isDiscipline ? parseAbilityWeights(cls.ability_weights!) : null;
   const judge = await getJudgeById(env, cls.judge_id);
   const judgeWeights = judge ? parseJudgeWeights(judge.trait_weights) : {};
   const judgeCode = judge?.code ?? 'unknown';
@@ -569,29 +628,54 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   for (const horseId of allHorseIds) {
     const horse = horseById.get(horseId);
     if (!horse) continue;
-    const expressed = expressedTraitsFor(horse, gameDay, conformationConfig, gameDaysPerYear);
+    const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
     const noise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
-    const result = scoreEntry({ expressed, ideal, judgeWeights, falloff: cls.ideal_falloff, noise });
 
-    scored.push({
-      horseId: horse.id,
-      rawScore: result.rawScore,
-      noise: result.noise,
-      finalScore: result.finalScore,
-      // Snake_case to match the documented shape (migrations/0038_show_entries.sql's comment and
-      // slice 0008 §5.5) - the score_breakdown blob is read by a render route, not by TypeScript,
-      // so it follows this codebase's JSON-column convention rather than result.traits' own
-      // camelCase field names.
-      breakdown: {
-        v: 1,
-        judge_code: judgeCode,
-        traits: result.traits.map((t) => ({ code: t.code, expressed: t.expressed, target: t.target, weight: t.weight, trait_score: t.traitScore })),
-        weight_sum: result.weightSum,
-        raw_score: result.rawScore,
+    if (isDiscipline) {
+      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise });
+      scored.push({
+        horseId: horse.id,
+        rawScore: result.rawScore,
         noise: result.noise,
-        final_score: result.finalScore,
-      },
-    });
+        finalScore: result.finalScore,
+        // Snake_case to match the documented shape (§9.1) - read by a render route, not by
+        // TypeScript, so it follows this codebase's JSON-column convention rather than
+        // result.traits' own camelCase field names. No target column - there is no target for an
+        // ability trait, only a weight and a contribution.
+        breakdown: {
+          v: 1,
+          kind: 'ability',
+          discipline_code: cls.discipline_code,
+          traits: result.traits.map((t) => ({ code: t.code, expressed: t.expressed, weight: t.weight, contribution: t.contribution })),
+          weight_sum: result.weightSum,
+          raw_score: result.rawScore,
+          noise: result.noise,
+          final_score: result.finalScore,
+        },
+      });
+    } else {
+      const result = scoreEntry({ expressed, ideal: ideal!, judgeWeights, falloff: cls.ideal_falloff, noise });
+      scored.push({
+        horseId: horse.id,
+        rawScore: result.rawScore,
+        noise: result.noise,
+        finalScore: result.finalScore,
+        // Snake_case to match the documented shape (migrations/0038_show_entries.sql's comment and
+        // slice 0008 §5.5) - the score_breakdown blob is read by a render route, not by TypeScript,
+        // so it follows this codebase's JSON-column convention rather than result.traits' own
+        // camelCase field names.
+        breakdown: {
+          v: 1,
+          kind: 'conformation',
+          judge_code: judgeCode,
+          traits: result.traits.map((t) => ({ code: t.code, expressed: t.expressed, target: t.target, weight: t.weight, trait_score: t.traitScore })),
+          weight_sum: result.weightSum,
+          raw_score: result.rawScore,
+          noise: result.noise,
+          final_score: result.finalScore,
+        },
+      });
+    }
   }
 
   const placed = assignPlacings(scored.map((s) => ({ horseId: s.horseId, finalScore: s.finalScore, rawScore: s.rawScore })));
@@ -631,14 +715,14 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const s = scored.find((x) => x.horseId === horse.id);
     if (!s) continue;
     const placing = placingByHorseId.get(horse.id)!;
-    const snapshot = conformationSnapshot(horse, gameDay, conformationConfig, gameDaysPerYear);
+    const snapshot = traitSnapshot(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
     const entryId = nextEntryId++;
     entryIdByHorseId.set(horse.id, entryId);
     stableIdByHorseId.set(horse.id, horse.owner_stable_id);
     statements.push(
       env.DB.prepare(
         `INSERT INTO show_entries (
-           id, class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, conformation_snapshot,
+           id, class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot,
            raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day
          ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
