@@ -71,8 +71,10 @@ breaks — they just need to log in again.
 
 ## 6. Apply the database migrations
 
-"Migrations" are the instructions that build the empty tables the database needs. You run this
-once, from your own computer, using a terminal.
+"Migrations" are the instructions that build the empty tables the database needs. **This step
+needs a terminal (a command line).** If that's not something you have or want to use, this is the
+one setup step you'll need someone else's help with — everything else in this document is just
+clicking around the Cloudflare and GitHub websites.
 
 1. Make sure you have [Node.js](https://nodejs.org) installed.
 2. Download or clone this repository to your computer.
