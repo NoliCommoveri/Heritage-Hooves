@@ -15,7 +15,22 @@ import { nowUtcSeconds } from '../lib/time';
 // the event is written rather than looked up fresh when rendered - an append-only event should
 // read the same in a year even if the reference text is edited on /admin/config-adjacent tables
 // later. src/render/stables.ts's eventSentence renders both.
-export type EventKind = 'foaled' | 'covering_conceived' | 'covering_missed' | 'show_result' | 'condition_signs' | 'horse_died';
+//
+// Slice 0011 §7.6 adds two more, same no-migration-needed reasoning:
+//   horse_failing      -> {"v":1,"horse_name":"...","age_years":19,"sex":"mare"}
+//   horse_died_old_age -> {"v":1,"horse_name":"...","age_years":24,"sex":"mare","foals":6}
+// horse_died stays as it is and keeps meaning "died of a condition" - old age gets its own kind
+// rather than a branch on payload, because horse_died's render arm is written in the voice of a
+// foal dying and would have to become a conditional to serve both (§7.6).
+export type EventKind =
+  | 'foaled'
+  | 'covering_conceived'
+  | 'covering_missed'
+  | 'show_result'
+  | 'condition_signs'
+  | 'horse_died'
+  | 'horse_failing'
+  | 'horse_died_old_age';
 
 export interface EventRow {
   id: number;

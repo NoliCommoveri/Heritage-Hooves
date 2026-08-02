@@ -5,6 +5,7 @@ import { serializeGenotype, type Genotype } from '../engines/genetics/genotype';
 import { coefficientOfInbreeding, type AncestorEdge, type PedigreeHorse } from '../engines/genetics/pedigree';
 import { rollEnvironmentalNoise, serializeNoise } from '../engines/conformation/model';
 import { buildHorseConditionStatements, type ConditionRow } from './health';
+import { rollLifespanGameDays, type LifespanRollConfig } from '../engines/ageing/lifespan';
 
 export interface HorseRow {
   id: number;
@@ -40,6 +41,14 @@ export interface HorseRow {
    * before this slice - read via src/engines/conformation/model.ts's legacy fallback, never
    * backfilled. */
   environmental_noise: string | null;
+  /** Slice 0011 §4.1/§5.1. The day old age takes this horse, rolled once at creation and never
+   * rerolled. Null until the tick's backfill stage assigns one (§7.1) - every horse alive before
+   * this slice deployed is in that state until the first tick afterwards. Never rendered to a
+   * player, in any form, ever (§5.1). */
+  natural_death_game_day: number | null;
+  /** Slice 0011 §5.1/§7.2. The day the "failing" event fired, null until it has - its own
+   * idempotency marker, not rendered anywhere. */
+  frailty_notice_game_day: number | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -55,13 +64,30 @@ export async function listStableHorses(env: Env, stableId: number): Promise<Hors
   return result.results ?? [];
 }
 
-/** The barn list only (slice 0010 §1 step 9): alive and dead horses both, so a horse killed by a
- * lethal condition stays visible, marked Died, rather than vanishing from view the moment it dies.
- * Every other caller of listStableHorses (breeding, the NPC show barn's field, the image picker's
- * "also used by" check) wants alive-only, unchanged - do not swap those to this function. */
-export async function listStableHorsesWithDead(env: Env, stableId: number): Promise<HorseRow[]> {
+/** The barn list only (slice 0010 §1 step 9, extended by slice 0011 §8.1): alive horses always,
+ * plus dead or removed ones for a while after they ended - so a horse killed by a lethal condition
+ * or retired away stays visible, marked Died/Retired away, rather than vanishing the moment it
+ * ends. cutoffGameDay is the caller's own `gameDay - barn_shows_ended_game_days` (live config, read
+ * fresh) - an ended horse older than that drops out, still reachable from
+ * /stables/:id/past. Every other caller of listStableHorses (breeding, the NPC show barn's field,
+ * the image picker's "also used by" check) wants alive-only, unchanged - do not swap those to this
+ * function. */
+export async function listStableHorsesWithDead(env: Env, stableId: number, cutoffGameDay: number): Promise<HorseRow[]> {
   const result = await env.DB.prepare(
-    `SELECT * FROM horses WHERE owner_stable_id = ? AND status IN ('alive', 'dead') ORDER BY born_game_day ASC, id ASC`
+    `SELECT * FROM horses WHERE owner_stable_id = ?
+       AND (status = 'alive' OR (status IN ('dead', 'removed') AND ended_game_day >= ?))
+     ORDER BY born_game_day ASC, id ASC`
+  )
+    .bind(stableId, cutoffGameDay)
+    .all<HorseRow>();
+  return result.results ?? [];
+}
+
+/** /stables/:id/past (slice 0011 §8.1): every horse this stable ever owned that has since died or
+ * been retired away, newest-ended first - no cutoff, unlike listStableHorsesWithDead above. */
+export async function listPastHorses(env: Env, stableId: number): Promise<HorseRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT * FROM horses WHERE owner_stable_id = ? AND status IN ('dead', 'removed') ORDER BY ended_game_day DESC, id DESC`
   )
     .bind(stableId)
     .all<HorseRow>();
@@ -153,6 +179,11 @@ export interface FoundingHorseInsertInput {
   conditions: ConditionRow[];
   lethalFoalDeathGameDays: number;
   accountId: number | null;
+  /** Slice 0011 §7.1: rolls and snapshots natural_death_game_day here, at creation, from this
+   * horse's own seed - the one place every founding path (the admin form, a claimed batch, the NPC
+   * show barn) already shares for horse_conditions rows, so it is also the one place this needs
+   * wiring in. */
+  lifespanConfig: LifespanRollConfig;
 }
 
 /**
@@ -175,6 +206,9 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
   const cycleAnchorTickSeq =
     input.sex === 'mare' ? input.worldTickSeq + makeRng(deriveSeed(input.rngSeed, 'cycle_slot')).int(input.estrousCycleTicks) : null;
   const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
+  // Slice 0011 §4.2/§7.1: a new sub-seed label, independent of every stream that already derives
+  // from this horse's rng_seed - rolled once here and never rerolled.
+  const naturalDeathGameDay = input.bornGameDay + rollLifespanGameDays(makeRng(deriveSeed(input.rngSeed, 'lifespan')), input.lifespanConfig);
 
   return [
     env.DB.prepare(
@@ -182,8 +216,8 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
          born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
-         environmental_noise
-       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?)`
+         environmental_noise, natural_death_game_day
+       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
       input.registeredName,
@@ -196,7 +230,8 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
       serializeGenotype(input.genotype),
       input.rngSeed,
       cycleAnchorTickSeq,
-      environmentalNoise
+      environmentalNoise,
+      naturalDeathGameDay
     ),
     ...buildHorseConditionStatements(env, {
       genotype: input.genotype,
@@ -232,6 +267,7 @@ export interface CreateFoundingHorseInput {
   /** The stable's own account, so a condition_signs event can be written - null for the NPC show
    * barn (slice 0010 §6.3). */
   accountId: number | null;
+  lifespanConfig: LifespanRollConfig;
 }
 
 export type CreateFoundingHorseResult = { ok: true; horseId: number } | { ok: false; error: 'name_taken' };
@@ -256,6 +292,7 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
     conditions: input.conditions,
     lethalFoalDeathGameDays: input.lethalFoalDeathGameDays,
     accountId: input.accountId,
+    lifespanConfig: input.lifespanConfig,
   });
 
   try {
@@ -292,6 +329,8 @@ export interface FoalInsertInput {
   conditions: ConditionRow[];
   lethalFoalDeathGameDays: number;
   accountId: number | null;
+  /** Slice 0011 §7.1: same as FoundingHorseInsertInput's own field. */
+  lifespanConfig: LifespanRollConfig;
 }
 
 /**
@@ -309,6 +348,7 @@ export interface FoalInsertInput {
 export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1PreparedStatement[] {
   const nowSeconds = nowUtcSeconds();
   const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
+  const naturalDeathGameDay = input.bornGameDay + rollLifespanGameDays(makeRng(deriveSeed(input.rngSeed, 'lifespan')), input.lifespanConfig);
 
   return [
     env.DB.prepare(
@@ -316,8 +356,8 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
          born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
-         environmental_noise
-       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?, ?)`
+         environmental_noise, natural_death_game_day
+       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
       input.breederPrefix,
@@ -335,7 +375,8 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
       serializeGenotype(input.genotype),
       input.rngSeed,
       input.cycleAnchorTickSeq,
-      environmentalNoise
+      environmentalNoise,
+      naturalDeathGameDay
     ),
     // Each ancestor row references the foal via a fresh subquery rather than last_insert_rowid(),
     // because last_insert_rowid() reflects the single most recent insert on this connection and

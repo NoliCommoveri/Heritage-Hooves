@@ -59,6 +59,31 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = `${str('dam_name', 'A mare')}'s foal has died.\n\n${eventText}`;
       break;
     }
+    // Slice 0011 §2.1/§7.7: informative, unhurried, and specific about what is still possible - the
+    // whole point of announcing death rather than letting it arrive silently (§2.1's argument
+    // against a second unannounced mode).
+    case 'horse_failing': {
+      const name = str('horse_name', 'A horse');
+      const age = typeof payload.age_years === 'number' ? String(payload.age_years) : 'old';
+      const isMare = payload.sex === 'mare';
+      const subject = isMare ? 'she' : 'he';
+      const object = isMare ? 'her' : 'him';
+      sentence = `${name} is ${age} now, and ${subject} is starting to slow down. ${subject[0].toUpperCase()}${subject.slice(1)} can still be shown and still be bred, and there is nothing that needs treating - this is just what getting old looks like. If there is a show you wanted ${object} to have, this is the season for it.`;
+      break;
+    }
+    // Slice 0011 §2.1/§7.7: short, warm, no euphemism and no drama - drafted now rather than at the
+    // point of failure, per slice 0010 §5.6's own reasoning for the GBED wording.
+    case 'horse_died_old_age': {
+      const name = str('horse_name', 'A horse');
+      const age = typeof payload.age_years === 'number' ? String(payload.age_years) : 'old age';
+      const isMare = payload.sex === 'mare';
+      const possessive = isMare ? 'her' : 'his';
+      const subject = isMare ? 'She' : 'He';
+      const foals = typeof payload.foals === 'number' ? payload.foals : 0;
+      const foalsSentence = foals > 0 ? ` ${subject} leaves ${String(foals)} foal${foals === 1 ? '' : 's'}, and every one of them carries ${possessive} line.` : '';
+      sentence = `${name} died peacefully in ${possessive} paddock at ${age}, after a long life.${foalsSentence} ${subject === 'She' ? 'Her' : 'His'} page is still there whenever you want to look.`;
+      break;
+    }
     default:
       sentence = row.kind;
   }

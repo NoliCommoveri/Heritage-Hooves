@@ -9,6 +9,8 @@ import {
   renderHorsePage,
   renderImagePickerPage,
   renderTestPage,
+  renderRetireConfirmPage,
+  renderPastHorsesPage,
   displayNameFor,
   type BreedPreview,
   type EnterShowInfo,
@@ -19,6 +21,7 @@ import { eligibilityMessage, placingText } from '../render/shows';
 import {
   listStableHorses,
   listStableHorsesWithDead,
+  listPastHorses,
   getHorse,
   previewCoi,
   registerHorseName,
@@ -33,8 +36,10 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
-import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, type CoveringRow } from '../db/coverings';
-import { getActivePregnancyForMare, type PregnancyRow } from '../db/pregnancies';
+import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
+import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
+import { buildEndHorseParticipationStatements } from '../db/ageing';
+import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
@@ -49,6 +54,7 @@ import {
   getOpenClasses,
   checkHorseEligibilityForClass,
   enterHorseInClass,
+  listOpenEntriesForHorse,
 } from '../db/shows';
 import {
   getEnabledConditions,
@@ -113,11 +119,12 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
 
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const cfg = ctx.config.values;
-  // Slice 0010 §1 step 9: the barn list includes dead horses now, marked Died - every other reader
-  // of a stable's horses (breeding, the NPC show barn's field, the image picker) still wants
-  // listStableHorses' alive-only rows, unchanged.
+  // Slice 0010 §1 step 9/slice 0011 §8.1: the barn list includes dead and retired-away horses for
+  // a while after they ended, marked Died/Retired away - every other reader of a stable's horses
+  // (breeding, the NPC show barn's field, the image picker) still wants listStableHorses'
+  // alive-only rows, unchanged.
   const [horses, traitRows, conditions] = await Promise.all([
-    listStableHorsesWithDead(ctx.env, stableId),
+    listStableHorsesWithDead(ctx.env, stableId, ctx.world.game_day - cfg.barn_shows_ended_game_days),
     getConformationTraits(ctx.env),
     getEnabledConditions(ctx.env),
   ]);
@@ -136,12 +143,29 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
       visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions),
+      // Slice 0011 §4.3/§8.1: one glanceable marker for a living horse's own Veteran/Failing state
+      // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
+      // already has that logic; this is additive to it, not a replacement).
+      ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, cfg),
     }))
   );
 
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
   return htmlResponse(
     renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses: rows })
+  );
+}
+
+/** /stables/:id/past (slice 0011 §8.1): every ended horse this stable ever owned, with no cutoff -
+ * linked from the barn list, since listStableHorsesWithDead itself drops an ended horse after
+ * barn_shows_ended_game_days. */
+export async function stablePastHorsesRoute(ctx: RequestContext, stableId: number): Promise<Response> {
+  const stable = await loadOwnedStable(ctx, stableId);
+  if (stable instanceof Response) return stable;
+
+  const [horses, hasFoundingOffer] = await Promise.all([listPastHorses(ctx.env, stableId), hasWaitingFoundingOffer(ctx.env, stableId)]);
+  return htmlResponse(
+    renderPastHorsesPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses })
   );
 }
 
@@ -391,6 +415,10 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const owner = ownerStable.account_id === ctx.account!.id;
   if (!owner && !isAdmin) return notFound();
 
+  // Slice 0011 §8.1: the one flag that hides Enter in a show, Test, Choose/Change picture and
+  // Retire away for a horse that has already ended - reading content is never gated by this.
+  const canManage = owner && horse.status === 'alive';
+
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const ageDays = ctx.world.game_day - horse.born_game_day;
   const ageYears = ageDays / gameDaysPerYear;
@@ -421,7 +449,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   let loci: LocusRow[] | undefined;
   if (isAdmin) loci = await getLoci(ctx.env);
 
-  const mareStatus = horse.sex === 'mare' ? await mareStatusLine(ctx, horse) : undefined;
+  const mareStatus = horse.sex === 'mare' && horse.status === 'alive' ? await mareStatusLine(ctx, horse) : undefined;
   const hasFoundingOffer = owner ? await hasWaitingFoundingOffer(ctx.env, ownerStable.id) : false;
   const traitRows = await getConformationTraits(ctx.env);
   const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
@@ -432,7 +460,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const showSummary = await getShowSummary(ctx.env, horse.id);
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
-  const enterShow = owner ? await buildEnterShowInfo(ctx, horse, await getBreeds(ctx.env)) : null;
+  const enterShow = canManage ? await buildEnterShowInfo(ctx, horse, await getBreeds(ctx.env)) : null;
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
 
   return htmlResponse(
@@ -466,6 +494,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       enterShow,
       enterShowError,
       enterShowNotice,
+      ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, ctx.config.values),
+      canManage,
       health,
     })
   );
@@ -814,4 +844,98 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
   return redirect(`/horses/${String(horseId)}`);
+}
+
+/** Slice 0011 §6.2: what retiring this horse away is about to cancel or withdraw, named plainly -
+ * "a child should never discover this afterwards". Built fresh on every render rather than cached,
+ * since it must still be true the moment the confirm button is actually pressed. */
+async function buildRetireWarnings(ctx: RequestContext, horse: HorseRow): Promise<string[]> {
+  const [pregnancies, coverings, openEntries] = await Promise.all([
+    listActivePregnanciesInvolvingHorse(ctx.env, horse.id),
+    listBookedCoveringsInvolvingHorse(ctx.env, horse.id),
+    listOpenEntriesForHorse(ctx.env, horse.id),
+  ]);
+  const name = displayNameFor(horse);
+  const possessive = horse.sex === 'mare' ? 'her' : 'his';
+  const warnings: string[] = [];
+
+  for (const p of pregnancies) {
+    const isDam = p.dam_id === horse.id;
+    const other = await getHorse(ctx.env, isDam ? p.sire_id : p.dam_id);
+    const otherName = other ? displayNameFor(other) : isDam ? 'a stallion' : 'a mare';
+    warnings.push(
+      isDam
+        ? `${name} is in foal to ${otherName}, due around game day ${String(p.due_game_day)}. Retiring ${name} away ends the pregnancy.`
+        : `${otherName} is in foal to ${name}, due around game day ${String(p.due_game_day)}. Retiring ${name} away ends that pregnancy too.`
+    );
+  }
+
+  for (const c of coverings) {
+    const isMareSide = c.mare_id === horse.id;
+    const other = await getHorse(ctx.env, isMareSide ? c.stallion_id : c.mare_id);
+    const otherName = other ? displayNameFor(other) : isMareSide ? 'a stallion' : 'a mare';
+    warnings.push(
+      isMareSide
+        ? `${name} is booked to ${otherName}, waiting to be covered. Retiring ${name} away cancels the booking.`
+        : `${otherName} is booked to ${name}, waiting to be covered. Retiring ${name} away cancels that booking too.`
+    );
+  }
+
+  for (const entry of openEntries) {
+    warnings.push(`${name} is entered in ${entry.className}, not yet judged. Retiring ${name} away withdraws ${possessive === 'her' ? 'her' : 'his'} entry.`);
+  }
+
+  return warnings;
+}
+
+/**
+ * /horses/:id/retire - slice 0011 §6.1-§6.4. Owner-only, the same notFound()-for-a-non-owner shape
+ * every horse-scoped route in this file uses. A horse that is already dead or removed 404s rather
+ * than rendering a confirmation for an action already taken. Spends no turn (§6.4) and moves no
+ * money (§3.3) - the shared exit path (src/db/ageing.ts) does the rest.
+ */
+export async function horseRetireRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
+  const ageYears = (ctx.world.game_day - horse.born_game_day) / ctx.config.values.game_days_per_year;
+
+  const render = async (error?: string) => {
+    const warnings = await buildRetireWarnings(ctx, horse);
+    return htmlResponse(
+      renderRetireConfirmPage({
+        world: ctx.world,
+        isAdmin: ctx.account!.is_admin === 1,
+        actionsLeft: actionsLeftFor(ctx),
+        ownerStable,
+        hasFoundingOffer,
+        horse,
+        ageYears,
+        warnings,
+        error,
+      })
+    );
+  };
+
+  if (method === 'GET') return render();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.confirm !== 'yes') return render("Tick the box to confirm - retiring a horse away can't be undone.");
+
+  await ctx.env.DB.batch(
+    buildEndHorseParticipationStatements(ctx.env, {
+      horseId,
+      sex: horse.sex,
+      gameDay: ctx.world.game_day,
+      status: 'removed',
+      endReason: 'retired_away',
+    })
+  );
+
+  return redirect(`/stables/${String(ownerStable.id)}/horses`);
 }

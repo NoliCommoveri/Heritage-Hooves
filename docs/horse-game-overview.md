@@ -410,6 +410,13 @@ This wants deciding before the first horse dies rather than after. The same is t
 
 **Worth thinking about:** whether decline is visible in advance. An ageing horse showing signs gives a child the chance to plan a last season and retire deliberately, which is kinder than an unannounced disappearance and closer to true. Degenerative conditions (§3d) already produce this shape naturally.
 
+**Built 2026-08-02, in `docs/slices/0011-ageing-death-and-removal.md`** (§14 above records the announced-death decision itself). The shape that landed:
+
+- **Lifespan** is a normal draw — mean 23 game years, sd 3.5, clamped to 14–33 — rolled once at birth from the horse's own seed and snapshotted, never a hazard rolled every tick. Roughly one horse in thirteen dies before eighteen, about one in eight passes twenty-seven. Never rendered to a player in any form.
+- **The failing window** is 1.5 game years (about eighteen monthly shows), long enough to span a login gap and leave room for a real last season.
+- **"Retire away"** is the name for voluntary removal — never "sell", "cull", or "delete". It is free, one-way, costs no turn, and moves no money; the confirmation page names any active pregnancy, booked covering, or unjudged show entry it is about to cancel or withdraw.
+- **On retention, this departs from `docs/horse-game-schema.md` §4.2's recommendation** on two points, both argued in the slice document's §5.5: `image_url` is kept (the storage argument doesn't survive contact with a column that's a few dozen bytes), and `show_entries` are kept rather than pruned, because deleting them would retroactively falsify every show the horse competed in.
+
 ---
 
 ## 8. Care, tack, and professions
@@ -701,7 +708,7 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Care state and tack** — the modifiers, wear, and the farrier/vet call as a client action against NPC providers.
 
-**Ageing, death, and removal** (§7a) — early enough that the first losses happen under rules that were designed rather than discovered.
+**Ageing, death, and removal** (§7a) — early enough that the first losses happen under rules that were designed rather than discovered. Built in `docs/slices/0011-ageing-death-and-removal.md`, which settles §14's "does death arrive announced?" (it does) and takes three further decisions in its §2. That document departs from `docs/horse-game-schema.md` §4.2 on two points, with reasons in its §5.5: `image_url` is kept on death, and `show_entries` are **not** pruned, because deleting a dead horse's entries would retroactively falsify every show it ever competed in. **Taken ahead of care and tack**, at the operator's direction on 2 Aug 2026 — the two are independent, and the tuning that ageing needs is a longer feedback loop than tack's.
 
 **NPC stables as stored entities** — first as static show-field filler, without breeding.
 
@@ -741,7 +748,7 @@ Both are fully specified, neither is built, and neither blocks or is blocked by 
 - **How many conditions, and how frequent?** Twenty-ish is the suggested starting scope (§3f), with carrier frequencies low. Both are observation-tuned rather than reasoned out in advance.
 - **Test pricing**, which decides whether hidden information stays hidden (§3c). **Starting figures set 2 Aug 2026, in `docs/slices/0010-health-first-pass.md` §5.4:** 250 for a single condition, 700 for the four-condition panel, both live tunables (`genotype_test_cost`/`genotype_panel_cost`). Reasoned against a founding stable's starting economy (10,000 balance, 3 horses at 60/tick upkeep, a show win paying 600) so a full panel costs roughly one win and panelling all three founding horses (2,100) is a real decision that does not end the stable. The question stays open in the sense that matters — these are a starting point to watch and retune via `/admin/health`'s counts, not a settled answer.
 - **Frame lethal and the other lethal recessives** — implemented and explained; the wording of those notifications is worth drafting before one fires.
-- **Does death arrive announced?** Visible decline lets a child plan a last season; an unannounced end is more abrupt and arguably truer.
+- ~~**Does death arrive announced?** Visible decline lets a child plan a last season; an unannounced end is more abrupt and arguably truer.~~ **Decided 2 Aug 2026, in conversation, while specifying `docs/slices/0011-ageing-death-and-removal.md`:** announced, with a visible late phase. Past a threshold on its own remaining life a horse reads as **Failing** on its page, in the barn list and — the part that matters — **in the events feed**, for roughly a game year and a half before it dies, so a child can plan a last season and retire deliberately rather than finding the horse gone. §7a asks for exactly this shape and calls it kinder and closer to true. The argument that settled it: **the GBED foal is already the unannounced case**, deliberately so (slice 0010 §2.2), and if ordinary old age were also silent then silence would be the game's only mode of loss and the foal's silence would stop meaning anything. The failing state is visible and carries **no mechanical penalty** — a last season is only a real choice if the horse can still win it. Three further ageing decisions were taken at the same time and are recorded in that slice's §2 rather than here: lifespan is mildly compressed (risk from ~18, few past 27, rolled once at birth and snapshotted rather than rolled as a hazard every tick), voluntary removal ships alongside death as a free, one-way **retire away** costing no turn and no money, and NPC show-barn horses age and die on the same code path as player horses, with the barn's headcount surfaced on `/admin/shows` so thinning show fields are visible rather than mysterious.
 - **Does hired training route around the action budget** acceptably, or should trainers wait (§8c)?
 - **Effectiveness by purchase or by experience**, and can a player hold more than one profession?
 - **Which professions beyond vet, farrier and trainer?** Tack merchant, transport, show handler and feed supplier are all plausible; none is necessary.

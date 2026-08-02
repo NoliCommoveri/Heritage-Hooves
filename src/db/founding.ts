@@ -13,6 +13,7 @@ import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
 import { parseGenotype, serializeGenotype } from '../engines/genetics/genotype';
 import { getEnabledConditions, getLethalTriggers } from './health';
+import type { LifespanRollConfig } from '../engines/ageing/lifespan';
 
 export type ImportOfferSource = 'founding' | 'chore_grant' | 'admin_grant' | 'token_import';
 export type ImportOfferStatus = 'pending' | 'open' | 'claimed' | 'expired';
@@ -244,6 +245,7 @@ export interface ClaimOfferParams {
    * written if a claimed horse arrives already affected by something (slice 0010 §6.3). */
   accountId: number | null;
   lethalFoalDeathGameDays: number;
+  lifespanConfig: LifespanRollConfig;
 }
 
 /**
@@ -293,6 +295,7 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
         conditions,
         lethalFoalDeathGameDays: params.lethalFoalDeathGameDays,
         accountId: params.accountId,
+        lifespanConfig: params.lifespanConfig,
       })
     );
     statements.push(

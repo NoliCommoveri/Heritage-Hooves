@@ -129,6 +129,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       conformationNoiseSd: ctx.config.values.conformation_noise_sd,
       accountId: stable.account_id,
       lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
+      lifespanConfig: ctx.config.values,
     });
 
     if (!result.ok) {
