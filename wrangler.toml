@@ -9,7 +9,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "heritage-hooves"
-database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+database_id = "cefec735-ee58-4e7b-a63d-f11432e28e01"
 
 [triggers]
 crons = ["*/15 * * * *"]
