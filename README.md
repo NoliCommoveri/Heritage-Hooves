@@ -71,30 +71,23 @@ breaks — they just need to log in again.
 
 ## 6. Apply the database migrations
 
-"Migrations" are the instructions that build the empty tables the database needs. **This step
-needs a terminal (a command line).** If that's not something you have or want to use, this is the
-one setup step you'll need someone else's help with — everything else in this document is just
-clicking around the Cloudflare and GitHub websites.
+"Migrations" are the instructions that build the empty tables the database needs. You do this
+entirely in the browser — no terminal needed.
 
-1. Make sure you have [Node.js](https://nodejs.org) installed.
-2. Download or clone this repository to your computer.
-3. Open a terminal in the project folder and run:
-   ```
-   npm install
-   ```
-4. Log in to Cloudflare from the terminal:
-   ```
-   npx wrangler login
-   ```
-   This opens a browser window asking you to approve access — approve it.
-5. Apply the migrations to the real (remote) database:
-   ```
-   npm run migrate:remote
-   ```
-   You should see a list of migration files with green checkmarks.
+1. Visit your Worker's URL and go to `/admin/migrations` (for example
+   `https://your-site.workers.dev/admin/migrations`).
+2. You'll see a list of migration files, all marked "pending" the first time.
+3. Tick the confirmation box and press **Apply pending migrations**. The list should flip to
+   "applied" for everything.
+4. Continue to the next step (creating the first account).
 
 You only need to do this once for a brand new database. If this document later adds new
-migration files, run the same command again — it only applies the ones that haven't run yet.
+migration files, come back to the same page — it only applies the ones that haven't run yet, and
+it's safe to press the button again even if nothing is pending.
+
+**If you're comfortable with a terminal, there's also a command-line option** — `npm run
+migrate:remote` (see "For developers" below). Both paths keep track of what's been applied in the
+same place, so it's safe to use either one, or switch between them.
 
 ## 7. Visit the site and create the first account
 

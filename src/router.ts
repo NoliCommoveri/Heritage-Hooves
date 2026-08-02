@@ -3,6 +3,7 @@ import { buildContext, withReissuedCookie } from './lib/context';
 import { redirect, notFound } from './lib/http';
 import { countAccounts } from './db/accounts';
 import { healthRoute } from './routes/health';
+import { migrationsRoute } from './routes/migrations';
 import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
 import { accountPasswordRoute } from './routes/account';
@@ -24,6 +25,10 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
   // The health check must work even when the database is unreachable, so it bypasses buildContext.
   if (path === '/health' && method === 'GET') return healthRoute(env);
+
+  // Migrations must be reachable before any table exists at all - including world/config, which
+  // buildContext needs - so this bypasses it too. It does its own auth check (see routes/migrations.ts).
+  if (path === '/admin/migrations') return migrationsRoute(request, env, method);
 
   const ctx = await buildContext(request, env);
 
