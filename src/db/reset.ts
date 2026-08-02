@@ -9,9 +9,9 @@
 //   - config          - the tuning numbers on /admin/config are settings, not world content.
 //   - config_audit    - append-only (CLAUDE.md §7), and it is a record of admin tuning rather
 //                       than of anything that happened in the world.
-//   - breeds, loci, quantitative_traits, judges, d1_migrations - reference data, created by
-//                       migrations. Clearing these would break the game with no way back from the
-//                       browser.
+//   - breeds, loci, quantitative_traits, judges, conditions, disciplines, d1_migrations -
+//                       reference data, created by migrations. Clearing these would break the game
+//                       with no way back from the browser.
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';

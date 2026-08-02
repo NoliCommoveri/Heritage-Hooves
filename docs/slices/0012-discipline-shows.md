@@ -1,6 +1,14 @@
 # Slice 0012 — Discipline shows, and a fifth ability
 
-**Status: specified, not built.**
+**Status: framework built, one of six disciplines built (2026-08-02).** The `agility` trait, the
+`disciplines` table, `scoreAbilityEntry`, the tick's discipline-class creation/judging, and every
+screen change in §9 are all built and generic to any discipline. Only Barrel Racing (`barrels`) is
+seeded (migration `0063`) - deliberately, per CLAUDE.md §9's "do not build ahead": the other five
+(§5.1's Flat Racing, Show Jumping, Endurance, Dressage, Gaited Pleasure) are a pure-data `INSERT`
+into `disciplines` when they're wanted, no code change. See the build log's 2026-08-02 discipline
+shows entry for what was decided and one correction to this document's own migration plan (§6.4's
+rebuild needed an extra step §6.4 itself doesn't mention, for a reason worth reading before writing
+a similar rebuild).
 
 The first classes judged on what a horse can *do* rather than what it looks like. Six disciplines,
 a new `agility` trait to make them distinguishable, and the scorer that reads them — reusing the

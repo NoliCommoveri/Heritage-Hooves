@@ -34,3 +34,10 @@ export async function getQuantitativeTraits(env: Env): Promise<QuantitativeTrait
 export async function getConformationTraits(env: Env): Promise<QuantitativeTraitRow[]> {
   return (await getQuantitativeTraits(env)).filter((t) => t.category === 'conformation');
 }
+
+/** Slice 0012 §9: names for a discipline result's trait breakdown - the ability-trait counterpart
+ * to getConformationTraits. Never used to put a bar on the horse page (§2.3) - only a result
+ * screen, which is "doing", not "looking". */
+export async function getAbilityTraits(env: Env): Promise<QuantitativeTraitRow[]> {
+  return (await getQuantitativeTraits(env)).filter((t) => t.category === 'ability');
+}

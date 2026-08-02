@@ -8,9 +8,10 @@ import {
   noiseFor,
   serializeNoise,
   conformationValues,
+  abilityValues,
   type RealizationConfig,
 } from '../../src/engines/conformation/model';
-import { anchorFor } from '../../src/engines/conformation/traits';
+import { anchorFor, ABILITY_TRAITS, CONFORMATION_TRAITS } from '../../src/engines/conformation/traits';
 import type { Genotype } from '../../src/engines/genetics/genotype';
 import { TRAITS } from '../../src/engines/genetics/polygenic';
 
@@ -142,5 +143,40 @@ describe('conformationValues', () => {
     const b = rollEnvironmentalNoise(777, 6);
     expect(a).toEqual(b);
     expect(Object.keys(a)).toEqual([...TRAITS]);
+  });
+});
+
+// Slice 0012 §11 item 2/3.
+describe('ABILITY_TRAITS', () => {
+  it('is exactly stamina, jump_scope, speed, trainability, agility, in TRAITS order', () => {
+    expect(ABILITY_TRAITS).toEqual(['stamina', 'jump_scope', 'speed', 'trainability', 'agility']);
+  });
+
+  it('is disjoint from CONFORMATION_TRAITS', () => {
+    for (const t of ABILITY_TRAITS) expect(CONFORMATION_TRAITS).not.toContain(t);
+  });
+});
+
+describe('abilityValues', () => {
+  it('returns exactly the five ability traits, fertility excluded', () => {
+    const genotype: Genotype = { v: 1, mendelian: {}, polygenic: {} };
+    const noise = rollEnvironmentalNoise(1, 6);
+    const values = abilityValues(genotype, noise, 5, 0, CONFIG);
+    expect(values.map((v) => v.code)).toEqual([...ABILITY_TRAITS]);
+  });
+
+  it('anchors at 0, so a horse at half realization expresses half its genetic value, not something pulled toward 50', () => {
+    const genotype = genotypeWithPotential('agility', 14); // potential 14 -> geneticValue 70 at noise 0
+    const zeroNoise = { neck_length: 0, shoulder_angle: 0, back_length: 0, hock_set: 0, stamina: 0, jump_scope: 0, speed: 0, trainability: 0, fertility: 0, agility: 0 };
+    const gv = geneticValue(genotype, 'agility', 0);
+    expect(gv).toBe(70);
+
+    // realization 0.5 at some age/COI combination - construct one directly via the formula rather
+    // than hunting for an age that lands exactly on it.
+    const halfConfig: RealizationConfig = { conformation_maturity_years: 10, conformation_realization_at_birth: 0, inbreeding_depression_factor: 0 };
+    const values = abilityValues(genotype, zeroNoise, 5, 0, halfConfig); // realization = 0 + (1-0)*(5/10) = 0.5
+    const agilityRow = values.find((v) => v.code === 'agility')!;
+    expect(agilityRow.expressed).toBe(Math.round(gv * 0.5));
+    expect(agilityRow.expressed).not.toBe(Math.round(50 + (gv - 50) * 0.5)); // the bidirectional formula would give a different number
   });
 });

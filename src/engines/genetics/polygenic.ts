@@ -28,6 +28,15 @@ export const TRAITS = [
   // src/engines/breeding/fertility.ts instead, which gives legacy horses a stable, well-distributed
   // score derived from their own rng_seed rather than a guess.
   'fertility',
+  // Added in slice 0012 §4.1, appended (not grouped with the other ability traits above) so every
+  // draw before it keeps reproducing the same horses. This list is append-ordered, not
+  // category-ordered - fertility already broke the tidy grouping for the same reason, and that
+  // visible oddness is deliberate: it is what tells the next session that inserting into the
+  // middle of this list is never safe, only appending to the end. Slice 0012 shipped alongside a
+  // full world reset, so no legacy horse is missing this key the way fertilityPotential() had to
+  // work around above - if a future trait is ever added WITHOUT a reset, it needs its own
+  // "*Potential()" stand-in before anything reads it, not a silent zero.
+  'agility',
 ] as const;
 
 export type TraitCode = (typeof TRAITS)[number];

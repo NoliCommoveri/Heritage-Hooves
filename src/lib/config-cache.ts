@@ -114,6 +114,10 @@ export interface ConfigValues {
   /** Slice 0011 §8.1. Live - how long a dead or removed horse stays in the barn list before
    * dropping to /stables/:id/past only. */
   barn_shows_ended_game_days: number;
+  /** Slice 0012 §6.6/§13.1. Live - how many discipline classes a show carries, alongside its
+   * breed-conformation classes. Read fresh at show-creation time; disciplines.enabled and this cap
+   * are the two levers for keeping seven-class shows from outrunning the action budget. */
+  show_discipline_classes_per_show: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

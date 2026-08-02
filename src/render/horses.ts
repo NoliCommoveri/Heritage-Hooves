@@ -296,21 +296,26 @@ export interface EnterShowInfo {
   reasonSentence?: string;
 }
 
-function enterShowBlock(horseId: number, info: EnterShowInfo | null): SafeHtml {
-  if (!info) return raw('');
-  if (!info.eligible) return html`<p class="muted">${info.reasonSentence}</p>`;
-  return html`
-    <form method="post" action="/horses/${String(horseId)}/enter-show">
-      <input type="hidden" name="class_id" value="${String(info.classId)}">
-      <button type="submit">Enter in ${info.className}</button>
-    </form>`;
+/** Slice 0012 §9: one line per open class the horse either can or can't enter, instead of the
+ * single class this rendered before there was ever more than one open at once. */
+function enterShowBlock(horseId: number, infos: EnterShowInfo[]): SafeHtml {
+  if (infos.length === 0) return raw('');
+  return html`${infos.map((info) =>
+    info.eligible
+      ? html`
+        <form method="post" action="/horses/${String(horseId)}/enter-show">
+          <input type="hidden" name="class_id" value="${String(info.classId)}">
+          <button type="submit">Enter in ${info.className}</button>
+        </form>`
+      : html`<p class="muted">${info.reasonSentence}</p>`
+  )}`;
 }
 
 /** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings. */
 function showRecordCard(params: {
   summary: HorseShowSummaryRow | null;
   recentResults: string[];
-  enterShow: EnterShowInfo | null;
+  enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
   horseId: number;
@@ -359,11 +364,12 @@ export function renderHorsePage(params: {
   conformationMaturityYears: number;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
-  /** Slice 0008 §8.1: the Show record card - starts, wins, best result, a few recent placings
-   * already formatted as sentences, and whether this horse can currently enter an open class. */
+  /** Slice 0008 §8.1/slice 0012 §9: the Show record card - starts, wins, best result, a few recent
+   * placings already formatted as sentences, and every open class this horse can (or can't yet)
+   * enter. */
   showSummary: HorseShowSummaryRow | null;
   recentShowResults: string[];
-  enterShow: EnterShowInfo | null;
+  enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
   /** Slice 0010 §8: the Health card's rows, already resolved to what this viewer is entitled to see. */
