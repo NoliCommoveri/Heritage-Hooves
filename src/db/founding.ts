@@ -208,17 +208,36 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
   return { ok: true };
 }
 
-/** Resolves a registered-name collision by walking generateFoundingName's own deterministic
- * sequence forward (slice 0005 §6.5) - never by inventing something ad hoc. horses.registered_name
- * is UNIQUE COLLATE NOCASE, so this comparison is already case-insensitive without extra work. */
-async function resolveUniqueName(env: Env, candidate: ImportCandidateRow): Promise<{ registeredName: string; originPrefix: string }> {
+/**
+ * Resolves a registered-name collision. `override` is a player-typed name word from the claim
+ * form (already validated by the caller with the same `validateHorseNamePart` the "register a
+ * name" form uses) - when present, only that exact name is tried, and a collision is reported
+ * back rather than silently substituted, since silently picking a different word than the one
+ * typed would be worse than just asking again. With no override, walks generateFoundingName's own
+ * deterministic sequence forward (slice 0005 §6.5) - never by inventing something ad hoc.
+ *
+ * Either way, the **origin prefix is never player-supplied** - it is the part of the name that
+ * actually carries "bred by" meaning (slice 0005 §2.6/§6.5), so only the name word after it is
+ * ever open to a typed override. horses.registered_name is UNIQUE COLLATE NOCASE, so this
+ * comparison is already case-insensitive without extra work.
+ */
+async function resolveUniqueName(
+  env: Env,
+  candidate: ImportCandidateRow,
+  override?: string
+): Promise<{ ok: true; registeredName: string; originPrefix: string } | { ok: false }> {
+  if (override) {
+    const registeredName = `${candidate.origin_prefix} ${override}`;
+    const existing = await env.DB.prepare('SELECT id FROM horses WHERE registered_name = ?').bind(registeredName).first<{ id: number }>();
+    return existing ? { ok: false } : { ok: true, registeredName, originPrefix: candidate.origin_prefix };
+  }
   let attempt = 0;
   for (;;) {
     const { originPrefix, namePart } =
       attempt === 0 ? { originPrefix: candidate.origin_prefix, namePart: candidate.name_part } : generateFoundingName(candidate.rng_seed, attempt);
     const registeredName = `${originPrefix} ${namePart}`;
     const existing = await env.DB.prepare('SELECT id FROM horses WHERE registered_name = ?').bind(registeredName).first<{ id: number }>();
-    if (!existing) return { registeredName, originPrefix };
+    if (!existing) return { ok: true, registeredName, originPrefix };
     attempt++;
   }
 }
@@ -229,7 +248,8 @@ export type ClaimOfferResult =
   | { ok: false; error: 'expired' }
   | { ok: false; error: 'wrong_mare_count'; expected: number }
   | { ok: false; error: 'wrong_stallion_count'; expected: number }
-  | { ok: false; error: 'no_room'; stableName: string };
+  | { ok: false; error: 'no_room'; stableName: string }
+  | { ok: false; error: 'name_taken' };
 
 export interface ClaimOfferParams {
   offerId: number;
@@ -237,6 +257,11 @@ export interface ClaimOfferParams {
   stableName: string;
   stableCapacity: number;
   chosenCandidateIds: number[];
+  /** Name words typed on the claim form, keyed by candidate id - already trimmed and validated
+   * (`validateHorseNamePart`) by the caller. Only the word after the origin prefix is ever
+   * player-supplied (see resolveUniqueName's comment); a candidate with no entry here keeps its
+   * generated name word unchanged. */
+  nameOverrides: Map<number, string>;
   gameDay: number;
   worldTickSeq: number;
   estrousCycleTicks: number;
@@ -277,7 +302,9 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
 
   const statements: D1PreparedStatement[] = [];
   for (const candidate of chosen) {
-    const { registeredName, originPrefix } = await resolveUniqueName(env, candidate);
+    const nameResult = await resolveUniqueName(env, candidate, params.nameOverrides.get(candidate.id));
+    if (!nameResult.ok) return { ok: false, error: 'name_taken' };
+    const { registeredName, originPrefix } = nameResult;
     statements.push(
       ...buildFoundingHorseInsertStatements(env, {
         stableId: params.stableId,
