@@ -113,6 +113,8 @@ const NUMERIC_CONFIG_KEYS = [
   'show_conformation_min_age_game_days',
   'npc_show_barn_size',
   'upkeep_per_horse_per_game_day',
+  'actions_per_tick',
+  'events_retention_game_days',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice

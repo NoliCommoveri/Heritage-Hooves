@@ -1,6 +1,7 @@
 import type { RequestContext } from '../lib/context';
+import { actionsLeftFor } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
-import { renderStablesPicker, renderNewStablePage, renderStableHomePage, renderPrefixPage } from '../render/stables';
+import { renderStablesPicker, renderNewStablePage, renderStableHomePage, renderPrefixPage, eventSentence } from '../render/stables';
 import { renderMoneyPage } from '../render/money';
 import {
   listStablesForAccount,
@@ -16,32 +17,45 @@ import { validatePrefix, normalizePrefix } from '../lib/prefix';
 import { buildStableCookie } from '../lib/session';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { getLedgerForStable, withRunningBalance } from '../db/ledger';
+import { listUnreadEventsForAccount, listRecentEventsForStable, markAllEventsReadForAccount } from '../db/events';
 
 export async function stablesPickerRoute(ctx: RequestContext): Promise<Response> {
   const account = ctx.account!;
-  const stables = await listStablesForAccount(ctx.env, account.id);
+  const [stables, unread] = await Promise.all([
+    listStablesForAccount(ctx.env, account.id),
+    listUnreadEventsForAccount(ctx.env, account.id, 30),
+  ]);
   const max = ctx.config.values.max_stables_per_account;
   return htmlResponse(
     renderStablesPicker({
       world: ctx.world,
       isAdmin: account.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
       stables,
       canCreateMore: stables.length < max,
       maxStables: max,
+      awayEvents: unread.map(eventSentence),
     })
   );
+}
+
+/** The "Mark all read" button on /stables (§6.3) - a POST, never a side effect of the GET above. */
+export async function stablesMarkReadRoute(ctx: RequestContext): Promise<Response> {
+  await markAllEventsReadForAccount(ctx.env, ctx.account!.id);
+  return redirect('/stables');
 }
 
 export async function stablesNewRoute(ctx: RequestContext, method: string): Promise<Response> {
   const account = ctx.account!;
   const isAdmin = account.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
   const max = ctx.config.values.max_stables_per_account;
 
   const currentCount = await countActiveStablesForAccount(ctx.env, account.id);
   if (currentCount >= max) return redirect('/stables');
 
   if (method === 'GET') {
-    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin }));
+    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft }));
   }
   if (method !== 'POST') return notFound();
 
@@ -51,13 +65,13 @@ export async function stablesNewRoute(ctx: RequestContext, method: string): Prom
 
   if (name.length < 1 || name.length > 60) {
     return htmlResponse(
-      renderNewStablePage({ world: ctx.world, isAdmin, error: 'Stable name is required (up to 60 characters).', name, prefix: prefixInput })
+      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: 'Stable name is required (up to 60 characters).', name, prefix: prefixInput })
     );
   }
 
   const validation = validatePrefix(prefixInput);
   if (!validation.ok) {
-    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, error: validation.error, name, prefix: prefixInput }));
+    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: validation.error, name, prefix: prefixInput }));
   }
 
   const result = await createStableWithPrefix(ctx.env, {
@@ -69,7 +83,7 @@ export async function stablesNewRoute(ctx: RequestContext, method: string): Prom
 
   if (!result.ok) {
     return htmlResponse(
-      renderNewStablePage({ world: ctx.world, isAdmin, error: 'That prefix is already taken. Try another.', name, prefix: prefixInput })
+      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: 'That prefix is already taken. Try another.', name, prefix: prefixInput })
     );
   }
 
@@ -88,18 +102,21 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
 export async function stableHomeRoute(ctx: RequestContext, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
-  const [hasFoundingOffer, aliveHorseCount] = await Promise.all([
+  const [hasFoundingOffer, aliveHorseCount, recentEvents] = await Promise.all([
     hasWaitingFoundingOffer(ctx.env, stableId),
     countAliveHorses(ctx.env, stableId),
+    listRecentEventsForStable(ctx.env, stableId, 20),
   ]);
   return htmlResponse(
     renderStableHomePage({
       world: ctx.world,
       isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
       stable,
       hasFoundingOffer,
       aliveHorseCount,
       upkeepPerHorsePerGameDay: ctx.config.values.upkeep_per_horse_per_game_day,
+      recentEvents: recentEvents.map(eventSentence),
     })
   );
 }
@@ -116,7 +133,7 @@ export async function stableMoneyRoute(ctx: RequestContext, stableId: number): P
   const withBalances = withRunningBalance([...ledgerNewestFirst].reverse());
   const rows = [...withBalances].reverse();
   return htmlResponse(
-    renderMoneyPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer, rows })
+    renderMoneyPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, rows })
   );
 }
 
@@ -133,10 +150,11 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
   const isAdmin = ctx.account!.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET' || stable.prefix_locked) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer }));
   }
   if (method !== 'POST') return notFound();
 
@@ -144,13 +162,13 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const prefixInput = form.prefix ?? '';
   const validation = validatePrefix(prefixInput);
   if (!validation.ok) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, error: validation.error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, error: validation.error }));
   }
 
   const result = await renamePrefix(ctx.env, { stableId, newPrefix: normalizePrefix(prefixInput), gameDay: ctx.world.game_day });
   if (!result.ok) {
     const error = result.error === 'locked' ? 'This prefix is locked and can no longer change.' : 'That prefix is already taken. Try another.';
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, error }));
   }
 
   return redirect(`/stables/${stableId}`);

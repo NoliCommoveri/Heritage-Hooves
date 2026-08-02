@@ -30,6 +30,10 @@ export type ResetScope = 'horses' | 'world';
  * horses-only reset also clears the show barn's own horses, so their entries and summaries would
  * otherwise dangle. `judges` is reference data (like `breeds`) and is never cleared.
  *
+ * Slice 0009 Part B adds `events` - it has a real foreign key into `horses` (subject_horse_id), so
+ * it must be emptied before horses are, in both scopes (unlike `ledger`, which a horses-only reset
+ * deliberately keeps - events have no balance-equals-sum invariant holding them back).
+ *
  * `horses` referencing itself (sire_id/dam_id) needs no special handling: SQLite checks an
  * immediate foreign key at the *end* of the statement, and by then the table is empty.
  */
@@ -42,6 +46,7 @@ const HORSE_TABLES = [
   'shows',
   'pregnancies',
   'coverings',
+  'events',
   'horse_ancestors',
   'horses',
 ] as const;
@@ -69,6 +74,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   shows: 'Shows',
   pregnancies: 'Pregnancies',
   coverings: 'Coverings (booked matings)',
+  events: 'While-you-were-away notices',
   horse_ancestors: 'Pedigree links',
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',

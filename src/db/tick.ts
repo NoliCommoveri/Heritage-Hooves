@@ -13,6 +13,7 @@ import { resolveDueCoverings } from './coverings';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
+import { deleteOldEvents } from './events';
 
 export interface ExecuteTickParams {
   triggerSource: 'cron' | 'manual';
@@ -66,6 +67,10 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // owed from each stable's own last_upkeep_game_day, so a re-fired or missed tick is safe the
       // same way the stages above are.
       await chargeUpkeep(env, newGameDay, newTickSeq, config);
+      // Slice 0009 Part B §6.4: a notice board, not an archive - deletes every event (read or not)
+      // older than events_retention_game_days. Sits inside this same paused === 0 branch so it
+      // never runs on a paused tick either, matching upkeep's own reasoning above.
+      await deleteOldEvents(env, newGameDay, config.values.events_retention_game_days);
     } else {
       status = 'skipped_paused';
     }

@@ -32,6 +32,7 @@ function candidateSexLabel(sex: 'mare' | 'stallion'): string {
 export function renderFoundingPage(params: {
   world: WorldRow;
   isAdmin: boolean;
+  actionsLeft: number | null;
   stable: StableRow;
   offer: ImportOfferRow | null;
   breeds?: BreedRow[];
@@ -116,6 +117,7 @@ export function renderFoundingPage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
     subnav: stableSubnav(s.id, 'founding', hasFoundingOffer),
     body,
   });

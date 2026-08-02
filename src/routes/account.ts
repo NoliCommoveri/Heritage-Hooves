@@ -1,4 +1,5 @@
 import type { RequestContext } from '../lib/context';
+import { actionsLeftFor } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderPasswordChangePage } from '../render/auth';
 import { updatePassword } from '../db/accounts';
@@ -8,9 +9,10 @@ export async function accountPasswordRoute(ctx: RequestContext, method: string):
   const account = ctx.account!;
   const forced = account.must_change_password === 1;
   const isAdmin = account.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
 
   if (method === 'GET') {
-    return htmlResponse(renderPasswordChangePage({ world: ctx.world, isAdmin, forced }));
+    return htmlResponse(renderPasswordChangePage({ world: ctx.world, isAdmin, actionsLeft, forced }));
   }
   if (method !== 'POST') return notFound();
 
@@ -23,7 +25,7 @@ export async function accountPasswordRoute(ctx: RequestContext, method: string):
     const valid = await verifyPassword(currentPassword, account.password_hash);
     if (!valid) {
       return htmlResponse(
-        renderPasswordChangePage({ world: ctx.world, isAdmin, forced, error: 'Current password is incorrect.' })
+        renderPasswordChangePage({ world: ctx.world, isAdmin, actionsLeft, forced, error: 'Current password is incorrect.' })
       );
     }
   }
@@ -33,13 +35,14 @@ export async function accountPasswordRoute(ctx: RequestContext, method: string):
       renderPasswordChangePage({
         world: ctx.world,
         isAdmin,
+        actionsLeft,
         forced,
         error: `Password must be at least ${ctx.config.values.min_password_length} characters.`,
       })
     );
   }
   if (newPassword !== confirmPassword) {
-    return htmlResponse(renderPasswordChangePage({ world: ctx.world, isAdmin, forced, error: 'Passwords do not match.' }));
+    return htmlResponse(renderPasswordChangePage({ world: ctx.world, isAdmin, actionsLeft, forced, error: 'Passwords do not match.' }));
   }
 
   const passwordHash = await hashPassword(newPassword);

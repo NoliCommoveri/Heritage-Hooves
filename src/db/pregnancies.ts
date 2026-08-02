@@ -6,11 +6,12 @@ import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { getConfig } from '../lib/config-cache';
-import { getHorse, loadAncestorEdges, buildFoalInsertStatements } from './horses';
+import { getHorse, horseDisplayName, loadAncestorEdges, buildFoalInsertStatements } from './horses';
 import { getStableById } from './stables';
 import { parseGenotype, serializeGenotype, type Genotype } from '../engines/genetics/genotype';
 import { buildAncestorRows } from '../engines/genetics/pedigree';
 import { foalComposition } from '../engines/genetics/composition';
+import { buildFoaledEventStatement } from './events';
 
 export interface PregnancyRow {
   id: number;
@@ -48,6 +49,11 @@ export interface BuildPregnancyInsertInput {
   gestationDaysSd: number;
 }
 
+export interface PregnancyInsertResult {
+  statement: D1PreparedStatement;
+  dueGameDay: number;
+}
+
 /**
  * Builds (but does not run) the pregnancy insert - the genetics are rolled here, at conception
  * (slice 0003 §3.9), from a freshly minted seed (foalRngSeed, minted by the caller) plus this
@@ -55,9 +61,11 @@ export interface BuildPregnancyInsertInput {
  * the gestation-length draw. Returns a statement rather than running it so the caller (db/coverings.ts's
  * resolveOneCovering) can batch it atomically with the covering's status update - a covering that
  * conceives but whose pregnancy row never lands, or a pregnancy created twice for one covering
- * retry, are both idempotency bugs this atomicity avoids.
+ * retry, are both idempotency bugs this atomicity avoids. dueGameDay is also handed back
+ * (unbatched, just a number) so the caller can put the same due day - not a second, differently
+ * seeded guess - into the covering_conceived event it writes in the same batch (slice 0009 Part B §6.2).
  */
-export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyInsertInput): D1PreparedStatement {
+export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyInsertInput): PregnancyInsertResult {
   const pregnancySeed = randomSeed();
   const gestationRng = makeRng(deriveSeed(pregnancySeed, 'gestation'));
   // Clamped well above zero - a normal draw this far from the mean would need a ~34 SD outlier.
@@ -65,7 +73,7 @@ export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyIns
   const dueGameDay = input.conceivedGameDay + gestationDays;
   const nowSeconds = nowUtcSeconds();
 
-  return env.DB.prepare(
+  const statement = env.DB.prepare(
     `INSERT INTO pregnancies (
        covering_id, dam_id, sire_id, conceived_game_day, gestation_days, due_game_day, status,
        rolled_genotype, rolled_coi, rng_seed, foal_rng_seed, foal_id, last_processed_tick_seq, created_real_ts
@@ -83,6 +91,8 @@ export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyIns
     input.foalRngSeed,
     nowSeconds
   );
+
+  return { statement, dueGameDay };
 }
 
 /**
@@ -152,6 +162,19 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
       `UPDATE pregnancies SET status = 'foaled', foal_id = (SELECT id FROM horses ORDER BY id DESC LIMIT 1), last_processed_tick_seq = ?
        WHERE id = ? AND status = 'in_progress'`
     ).bind(tickSeq, pregnancy.id),
+    // Slice 0009 Part B §6.2: one foaled event per foal - twins produce two, since each is its own
+    // pregnancy row resolved in its own batch, one call to foalOnePregnancy each.
+    ...buildFoaledEventStatement(env, {
+      stableId: dam.owner_stable_id,
+      accountId: ownerStable.account_id,
+      gameDay,
+      payload: {
+        foal_name: horseDisplayName({ registered_name: null, barn_name: null, sex }),
+        dam_name: horseDisplayName(dam),
+        sire_name: horseDisplayName(sire),
+        sex: sex === 'mare' ? 'filly' : 'colt',
+      },
+    }),
   ];
 
   await env.DB.batch(statements);

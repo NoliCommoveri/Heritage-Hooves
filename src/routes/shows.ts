@@ -1,5 +1,8 @@
 import type { RequestContext } from '../lib/context';
+import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
+import { ACTION_COSTS } from '../lib/actions';
+import { spendAction } from '../db/accounts';
 import { renderShowsIndexPage, renderShowPage, renderEntryResultPage, eligibilityMessage, type ShowPageClassView } from '../render/shows';
 import { displayNameFor } from '../render/horses';
 import {
@@ -67,7 +70,9 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
     }))
   );
 
-  return htmlResponse(renderShowsIndexPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, nextShow, recentShows }));
+  return htmlResponse(
+    renderShowsIndexPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), nextShow, recentShows })
+  );
 }
 
 /** The logged-in account's own horses eligible to enter one class, across every stable it owns -
@@ -122,11 +127,14 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
   const show = await getShow(ctx.env, showId);
   if (!show) return notFound();
   const isAdmin = ctx.account!.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
   const breeds = await getBreeds(ctx.env);
 
   if (method === 'GET') {
     const notice = new URL(ctx.request.url).searchParams.get('entered') ? 'Entered.' : undefined;
-    return htmlResponse(renderShowPage({ world: ctx.world, isAdmin, show, classes: await buildClassViews(ctx, show.id, breeds), notice }));
+    return htmlResponse(
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, show, classes: await buildClassViews(ctx, show.id, breeds), notice })
+    );
   }
   if (method !== 'POST') return notFound();
 
@@ -140,7 +148,29 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
 
   if (!horse || !ownerStable || ownerStable.account_id !== ctx.account!.id) {
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, show, classes: await buildClassViews(ctx, show.id, breeds), error: 'Choose one of your own horses.' })
+      renderShowPage({
+        world: ctx.world,
+        isAdmin,
+        actionsLeft,
+        show,
+        classes: await buildClassViews(ctx, show.id, breeds),
+        error: 'Choose one of your own horses.',
+      })
+    );
+  }
+
+  // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
+  // routes/horses.ts's stableBreedRoute.
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.enter_show) {
+    return htmlResponse(
+      renderShowPage({
+        world: ctx.world,
+        isAdmin,
+        actionsLeft,
+        show,
+        classes: await buildClassViews(ctx, show.id, breeds),
+        error: turnsRefusalMessage(ctx),
+      })
     );
   }
 
@@ -156,9 +186,12 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
     const cls = await getShowClass(ctx.env, classId);
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName: breedNameFor(breeds, cls?.breed_id ?? null), minAgeYears })}`;
-    return htmlResponse(renderShowPage({ world: ctx.world, isAdmin, show, classes: await buildClassViews(ctx, show.id, breeds), error: message }));
+    return htmlResponse(
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, show, classes: await buildClassViews(ctx, show.id, breeds), error: message })
+    );
   }
 
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.enter_show);
   return redirect(`/shows/${String(showId)}?entered=1`);
 }
 
@@ -202,6 +235,7 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
     renderEntryResultPage({
       world: ctx.world,
       isAdmin,
+      actionsLeft: actionsLeftFor(ctx),
       show,
       cls,
       horseName: displayNameFor(horse),

@@ -65,6 +65,16 @@ export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }
 
+/** The one place this rule lives: a registered name if there is one, else a barn name, else
+ * "Unnamed filly/colt". render/horses.ts's displayNameFor is this function, kept there under its
+ * existing name for the render-layer call sites that already import it from there - db-layer
+ * callers (event payloads, tick stages) that have no render dependency otherwise use this directly. */
+export function horseDisplayName(horse: Pick<HorseRow, 'registered_name' | 'barn_name' | 'sex'>): string {
+  if (horse.registered_name) return horse.registered_name;
+  if (horse.barn_name) return horse.barn_name;
+  return horse.sex === 'mare' ? 'Unnamed filly' : 'Unnamed colt';
+}
+
 export async function loadAncestorEdges(env: Env, horseId: number): Promise<AncestorEdge[]> {
   const result = await env.DB.prepare('SELECT ancestor_id, depth, path_count FROM horse_ancestors WHERE descendant_id = ?')
     .bind(horseId)

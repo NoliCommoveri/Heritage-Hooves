@@ -1,5 +1,8 @@
 import type { RequestContext } from '../lib/context';
+import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
+import { ACTION_COSTS } from '../lib/actions';
+import { spendAction } from '../db/accounts';
 import { renderFoundingPage } from '../render/founding';
 import { getStableById, type StableRow } from '../db/stables';
 import {
@@ -45,10 +48,11 @@ async function renderPage(
   extra: { error?: string; notice?: string } = {}
 ): Promise<Response> {
   const isAdmin = ctx.account!.is_admin === 1;
+  const actionsLeft = actionsLeftFor(ctx);
 
   if (offer && offer.status === 'pending') {
     const breeds = await getBreeds(ctx.env);
-    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, stable, offer, breeds, ...extra }));
+    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, breeds, ...extra }));
   }
 
   if (offer && offer.status === 'open') {
@@ -67,10 +71,10 @@ async function renderPage(
       const conformation = conformationDisplayRows(conformationValues(genotype, noise, ageYears, 0, ctx.config.values), traitRows);
       return { candidate, description, gaited: phenotype.gaited, conformation };
     });
-    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, stable, offer, candidates, ...extra }));
+    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, candidates, ...extra }));
   }
 
-  return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, stable, offer, ...extra }));
+  return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, ...extra }));
 }
 
 export async function stableFoundingRoute(ctx: RequestContext, method: string, stableId: number): Promise<Response> {
@@ -102,6 +106,14 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
 
   if (form.action === 'claim') {
     if (!offer || offer.status !== 'open') return notFound();
+
+    // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
+    // routes/horses.ts's stableBreedRoute.
+    const actionsLeft = actionsLeftFor(ctx);
+    if (actionsLeft !== null && actionsLeft < ACTION_COSTS.claim_founding) {
+      return renderPage(ctx, stable, offer, { error: turnsRefusalMessage(ctx) });
+    }
+
     const candidates = await getCandidatesForOffer(ctx.env, offer.id);
     const chosenCandidateIds = candidates.filter((c) => form[`chosen_${String(c.slot_index)}`] === 'yes').map((c) => c.id);
 
@@ -120,6 +132,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
     if (!result.ok) {
       return renderPage(ctx, stable, offer, { error: claimErrorMessage(result) });
     }
+    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.claim_founding);
     return redirect(`/stables/${String(stableId)}/horses`);
   }
 

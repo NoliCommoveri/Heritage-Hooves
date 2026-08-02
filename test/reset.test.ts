@@ -16,6 +16,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   shows: [],
   pregnancies: ['coverings', 'horses'],
   coverings: ['stables', 'horses'],
+  events: ['stables', 'horses'],
   horse_ancestors: ['horses'],
   horses: ['breeds', 'horses', 'stables'],
   stable_prefix_history: ['stables'],

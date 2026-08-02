@@ -7,13 +7,15 @@ import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { writeConfig } from '../lib/config-cache';
-import { getHorse, loadPedigreeContext } from './horses';
+import { getHorse, horseDisplayName, loadPedigreeContext } from './horses';
+import { getStableById } from './stables';
 import { buildPregnancyInsertStatement } from './pregnancies';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { combine } from '../engines/genetics/inheritance';
 import { coefficientOfInbreeding } from '../engines/genetics/pedigree';
 import { fertilityPotential, conceptionChance, type ConceptionBreakdown } from '../engines/breeding/fertility';
 import { rollTwins } from '../engines/breeding/twins';
+import { buildEventStatement } from './events';
 
 export interface CoveringRow {
   id: number;
@@ -170,10 +172,22 @@ async function resolveOneCovering(
   const conceptionRng = makeRng(deriveSeed(covering.rng_seed, 'conception'));
   const conceived = conceptionRng.next() < breakdown.p;
 
+  const ownerStable = await getStableById(env, covering.stable_id);
+
   if (!conceived) {
-    await env.DB.prepare(`UPDATE coverings SET status = 'resolved_failed', resolved_game_day = ?, resolved_tick_seq = ? WHERE id = ? AND status = 'booked'`)
-      .bind(gameDay, tickSeq, covering.id)
-      .run();
+    await env.DB.batch([
+      env.DB
+        .prepare(`UPDATE coverings SET status = 'resolved_failed', resolved_game_day = ?, resolved_tick_seq = ? WHERE id = ? AND status = 'booked'`)
+        .bind(gameDay, tickSeq, covering.id),
+      ...buildEventStatement(env, {
+        stableId: covering.stable_id,
+        accountId: ownerStable?.account_id ?? null,
+        gameDay,
+        kind: 'covering_missed',
+        subjectHorseId: mare.id,
+        payload: { mare_name: horseDisplayName(mare), stallion_name: horseDisplayName(stallion) },
+      }),
+    ]);
     return;
   }
 
@@ -201,25 +215,39 @@ async function resolveOneCovering(
       covering.id
     ),
   ];
+  let firstDueGameDay: number | null = null;
   for (let i = 0; i < foalCount; i++) {
     // Two independent genotype rolls for twins, each with its own foal_rng_seed - not identical
     // twins (slice 0003 §6).
     const foalRngSeed = randomSeed();
     const genotype = combine(sireGenotype, damGenotype, foalRngSeed);
-    statements.push(
-      buildPregnancyInsertStatement(env, {
-        coveringId: covering.id,
-        damId: mare.id,
-        sireId: stallion.id,
-        conceivedGameDay: gameDay,
-        genotype,
-        coi,
-        foalRngSeed,
-        gestationDaysMean: config.values.gestation_days_mean,
-        gestationDaysSd: config.values.gestation_days_sd,
-      })
-    );
+    const pregnancyInsert = buildPregnancyInsertStatement(env, {
+      coveringId: covering.id,
+      damId: mare.id,
+      sireId: stallion.id,
+      conceivedGameDay: gameDay,
+      genotype,
+      coi,
+      foalRngSeed,
+      gestationDaysMean: config.values.gestation_days_mean,
+      gestationDaysSd: config.values.gestation_days_sd,
+    });
+    statements.push(pregnancyInsert.statement);
+    if (firstDueGameDay === null) firstDueGameDay = pregnancyInsert.dueGameDay;
   }
+
+  // One covering_conceived event even for twins - it announces the covering taking, not the birth
+  // (each foal gets its own foaled event later, at foalDuePregnancies).
+  statements.push(
+    ...buildEventStatement(env, {
+      stableId: covering.stable_id,
+      accountId: ownerStable?.account_id ?? null,
+      gameDay,
+      kind: 'covering_conceived',
+      subjectHorseId: mare.id,
+      payload: { mare_name: horseDisplayName(mare), stallion_name: horseDisplayName(stallion), due_game_day: firstDueGameDay },
+    })
+  );
 
   await env.DB.batch(statements);
 }

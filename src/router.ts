@@ -7,7 +7,15 @@ import { migrationsRoute } from './routes/migrations';
 import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
 import { accountPasswordRoute } from './routes/account';
-import { stablesPickerRoute, stablesNewRoute, stableHomeRoute, stableSelectRoute, stablePrefixRoute, stableMoneyRoute } from './routes/stables';
+import {
+  stablesPickerRoute,
+  stablesMarkReadRoute,
+  stablesNewRoute,
+  stableHomeRoute,
+  stableSelectRoute,
+  stablePrefixRoute,
+  stableMoneyRoute,
+} from './routes/stables';
 import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute, horseImageRoute, horseEnterShowRoute } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
@@ -66,6 +74,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (path === '/account/password') return withReissuedCookie(ctx, await accountPasswordRoute(ctx, method));
 
   if (path === '/stables' && method === 'GET') return withReissuedCookie(ctx, await stablesPickerRoute(ctx));
+  if (path === '/stables' && method === 'POST') return withReissuedCookie(ctx, await stablesMarkReadRoute(ctx));
   if (path === '/stables/new') return withReissuedCookie(ctx, await stablesNewRoute(ctx, method));
 
   const stableMatch = path.match(STABLE_ROUTE);

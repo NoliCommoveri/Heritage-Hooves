@@ -12,6 +12,11 @@ export interface AccountRow {
   last_active_stable_id: number | null;
   last_login_real_ts: number | null;
   created_real_ts: number;
+  /** Slice 0009 Part B §5. Derived, not written by the tick - see src/lib/actions.ts's
+   * actionsRemaining(). Both default 0, which reads as "reset at tick 0, none left"; a fresh
+   * account is at full budget the moment its actions_reset_tick_seq is behind world.tick_seq. */
+  actions_remaining: number;
+  actions_reset_tick_seq: number;
 }
 
 export async function countAccounts(env: Env): Promise<number> {
@@ -75,4 +80,28 @@ export async function recordLogin(env: Env, accountId: number): Promise<void> {
 
 export async function setLastActiveStable(env: Env, accountId: number, stableId: number): Promise<void> {
   await env.DB.prepare('UPDATE accounts SET last_active_stable_id = ? WHERE id = ?').bind(stableId, accountId).run();
+}
+
+/**
+ * Spends `cost` turns, atomically checking the budget and decrementing it in the same statement
+ * (slice 0009 Part B §5.3) - the WHERE clause is what makes this race-safe, so two forms submitted
+ * at the same instant cannot both spend the last turn. Callers check-act-spend (read the budget
+ * and refuse up front if it looks empty, perform the game action, then spend): if this loses a
+ * race and returns false, the caller lets the action stand and charges nothing anyway - a child
+ * charged for something that did not happen has no way to find out why or get it back, so a rare
+ * free turn is the right way for this to fail, not a rare unexplained charge.
+ */
+export async function spendAction(env: Env, accountId: number, tickSeq: number, actionsPerTick: number, cost: number): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `UPDATE accounts
+        SET actions_remaining = CASE WHEN actions_reset_tick_seq = ?
+                                      THEN actions_remaining - ?
+                                      ELSE ? - ? END,
+            actions_reset_tick_seq = ?
+      WHERE id = ?
+        AND (actions_reset_tick_seq <> ? OR actions_remaining >= ?)`
+  )
+    .bind(tickSeq, cost, actionsPerTick, cost, tickSeq, accountId, tickSeq, cost)
+    .run();
+  return result.meta.changes === 1;
 }

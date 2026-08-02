@@ -39,6 +39,9 @@ function shell(world: WorldRow, body: SafeHtml, title: string, active: AdminSubn
     isAdmin: true,
     section: 'admin',
     subnav: adminSubnav(active),
+    // Admin pages never show a turn count - admin actions never spend one, and admin mode is
+    // already a visibly separate place (CLAUDE.md §11).
+    actionsLeft: null,
     body,
   });
 }
@@ -205,6 +208,15 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="upkeep_per_horse_per_game_day" value="${String(v.upkeep_per_horse_per_game_day)}">
       </label>
       <p class="muted">Kept deliberately gentle - prize money from one show a real day is the only income in the game until the market stage lands. Worth revisiting once selling a horse becomes a second way to earn.</p>
+      <h2>Turns and events</h2>
+      <label>Turns per tick
+        <input type="text" inputmode="numeric" name="actions_per_tick" value="${String(v.actions_per_tick)}">
+      </label>
+      <p class="muted">Kept separate from the tick schedule (world.tick_times_local) on purpose - changing how often the tick fires should never silently change how much play a day contains. Only booking a covering, entering a show and claiming a founding batch spend a turn; browsing, renaming and reading are always free.</p>
+      <label>Events kept for (game days)
+        <input type="text" inputmode="numeric" name="events_retention_game_days" value="${String(v.events_retention_game_days)}">
+      </label>
+      <p class="muted">The "While you were away" feed is a notice board, not an archive - every event older than this, read or not, is deleted on the tick. The horse, its pedigree, its show results and the ledger all survive regardless.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
