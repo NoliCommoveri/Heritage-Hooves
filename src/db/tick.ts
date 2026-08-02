@@ -9,6 +9,8 @@ import type { Env } from '../types';
 import { getWorld } from './world';
 import { getConfig } from '../lib/config-cache';
 import { nowUtcSeconds } from '../lib/time';
+import { resolveDueCoverings } from './coverings';
+import { foalDuePregnancies } from './pregnancies';
 
 export interface ExecuteTickParams {
   triggerSource: 'cron' | 'manual';
@@ -46,6 +48,12 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       newGameDay = world.game_day + config.values.game_days_per_tick;
       newSeasonIndex = Math.floor(newGameDay / config.values.game_days_per_year);
       status = 'ok';
+      // Slice 0003 §10: physics resolves against the tick's new game_day/tick_seq before the world
+      // row itself is updated below, so a failure here leaves world untouched and a retry recomputes
+      // the same newGameDay/newTickSeq and finds the same (still-pending) rows to process - both
+      // stages guard their own writes with a status column, so re-running them is a no-op either way.
+      await resolveDueCoverings(env, newGameDay, newTickSeq, config);
+      await foalDuePregnancies(env, newGameDay, newTickSeq);
     } else {
       status = 'skipped_paused';
     }

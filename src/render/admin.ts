@@ -6,12 +6,13 @@ import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import { formatLocal } from '../lib/time';
 
-function adminSubnav(active: 'home' | 'accounts' | 'config' | 'world' | 'migrations'): NavLink[] {
+function adminSubnav(active: 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'migrations'): NavLink[] {
   return [
     { label: 'Admin home', href: '/admin', active: active === 'home' },
     { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
     { label: 'Config', href: '/admin/config', active: active === 'config' },
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
+    { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
   ];
 }
@@ -20,7 +21,7 @@ function shell(
   world: WorldRow,
   body: SafeHtml,
   title: string,
-  active: 'home' | 'accounts' | 'config' | 'world' | 'migrations'
+  active: 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'migrations'
 ): SafeHtml {
   return pageShell({
     title,
@@ -46,6 +47,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/config">Config</a></p>
     <p><a class="button-link" href="/admin/world">World clock</a></p>
     <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
+    <p><a class="button-link" href="/admin/breeding">Breeding</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;
@@ -230,4 +232,59 @@ export function renderWorldPage(params: { world: WorldRow; tickRuns: TickRunRow[
     </details>
   `;
   return shell(w, body, 'World clock', 'world');
+}
+
+/**
+ * Slice 0003 §7: read-only view of the live fertility/twin tunables (editing them isn't asked for
+ * this slice - CLAUDE.md §13, "no polished admin UI"), plus the force-twins control from §1 step 9
+ * (a mare's owner has no way to trigger the ~1-in-330 twin event on demand otherwise). Follows the
+ * `required`-checkbox confirm pattern from the world-clock page above rather than a JS confirm().
+ */
+export function renderBreedingAdminPage(params: { world: WorldRow; config: Config; notice?: string }): SafeHtml {
+  const v = params.config.values;
+  const forceTwinsPending = params.config.flags.force_next_twins === true;
+
+  const knotRows = (knots: [number, number][]) =>
+    html`${knots.map((k) => html`<tr><td>${String(k[0])}</td><td>${(k[1] * 100).toFixed(0)}%</td></tr>`)}`;
+
+  const body = html`
+    <h1>Breeding</h1>
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Conception</h2>
+      <p><strong>Base chance:</strong> ${(v.conception_base * 100).toFixed(0)}% (clamped to ${(v.conception_min * 100).toFixed(0)}%-${(v.conception_max * 100).toFixed(0)}%)</p>
+      <p><strong>Inbreeding penalty:</strong> conception factor = 1 - ${String(v.inbreeding_fertility_penalty)} &times; foal COI</p>
+      <p><strong>Fertility gene range:</strong> ${String(v.fertility_gene_min)}-${String(v.fertility_gene_max)}</p>
+    </div>
+    <div class="card">
+      <h2>Mare fertility by age</h2>
+      <table><thead><tr><th>Age</th><th>Factor</th></tr></thead><tbody>${knotRows(v.mare_fertility_age_knots)}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Stallion fertility by age</h2>
+      <table><thead><tr><th>Age</th><th>Factor</th></tr></thead><tbody>${knotRows(v.stallion_fertility_age_knots)}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Cycle and season</h2>
+      <p><strong>Oestrous cycle:</strong> ${String(v.estrous_cycle_ticks)} ticks, in season for ${String(v.estrus_ticks)}</p>
+      <p><strong>Breeding season:</strong> game day ${String(v.breeding_season_start_game_day)} for ${String(v.breeding_season_length_game_days)} days</p>
+      <p><strong>Gestation:</strong> ${String(v.gestation_days_mean)} game days (sd ${String(v.gestation_days_sd)})</p>
+    </div>
+    <div class="card">
+      <h2>Twins</h2>
+      <p><strong>Double ovulation:</strong> ${(v.twin_double_ovulation_rate * 100).toFixed(0)}%</p>
+      <p><strong>Both continue:</strong> ${(v.twin_both_continue_rate * 100).toFixed(0)}%</p>
+      <p class="muted">Net: about 1 in ${String(Math.round(1 / (v.twin_double_ovulation_rate * v.twin_both_continue_rate)))} foalings.</p>
+      ${forceTwinsPending ? html`<p class="notice">Twins are forced for the next covering to conceive.</p>` : raw('')}
+      <form method="post" action="/admin/breeding">
+        <input type="hidden" name="action" value="force_twins">
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, force the next covering that conceives to be twins.
+        </label>
+        <button type="submit" class="secondary">Force next twins</button>
+      </form>
+    </div>
+  `;
+  return shell(params.world, body, 'Breeding', 'breeding');
 }

@@ -5,7 +5,6 @@ import {
   listStableHorses,
   getHorse,
   previewCoi,
-  breedNow,
   registerHorseName,
   setBarnName,
   countAliveHorses,
@@ -17,6 +16,11 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
+import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, type CoveringRow } from '../db/coverings';
+import { getActivePregnancyForMare, type PregnancyRow } from '../db/pregnancies';
+import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
+import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
+import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -36,8 +40,18 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   if (stable instanceof Response) return stable;
 
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const cfg = ctx.config.values;
   const horses = await listStableHorses(ctx.env, stableId);
-  const rows = horses.map((horse) => ({ horse, description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear) }));
+  const rows = horses.map((horse) => ({
+    horse,
+    description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
+    // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
+    // rather than a query per horse - it's already loaded on the row.
+    inSeason:
+      horse.sex === 'mare' &&
+      horse.cycle_anchor_tick_seq !== null &&
+      isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
+  }));
 
   return htmlResponse(renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, horses: rows }));
 }
@@ -48,7 +62,27 @@ function coiWarning(coi: number, threshold: number): string | undefined {
   return undefined;
 }
 
-async function validateBreedingPair(ctx: RequestContext, stable: StableRow, mare: HorseRow, stallion: HorseRow): Promise<string | undefined> {
+/** Turns the non-trivial factors in a conception breakdown into the sentences slice 0003 §4 wants:
+ * "she is 18 (-25%)", "these two are closely related (-6%)". Fertility/condition/method factors
+ * never appear here in this slice - the estimate always passes them as 1.0 (unknown-average), per
+ * slice 0003 §5, so they never produce a reason. */
+function conceptionReasons(breakdown: ConceptionBreakdown, mareAgeYears: number, stallionAgeYears: number): string[] {
+  const reasons: string[] = [];
+  const factorSentence = (label: string, factor: number): string | undefined => {
+    const pct = Math.round((factor - 1) * 100);
+    if (pct === 0) return undefined;
+    return `${label} (${pct > 0 ? '+' : ''}${String(pct)}%)`;
+  };
+  const mareAge = factorSentence(`she is ${String(Math.round(mareAgeYears))}`, breakdown.mareAgeFactor);
+  if (mareAge) reasons.push(mareAge);
+  const stallionAge = factorSentence(`he is ${String(Math.round(stallionAgeYears))}`, breakdown.stallionAgeFactor);
+  if (stallionAge) reasons.push(stallionAge);
+  const inbreeding = factorSentence('these two are closely related', breakdown.inbreedingFactor);
+  if (inbreeding) reasons.push(inbreeding);
+  return reasons;
+}
+
+async function validateBooking(ctx: RequestContext, stable: StableRow, mare: HorseRow, stallion: HorseRow): Promise<string | undefined> {
   if (stallion.sex === 'gelding') return 'Geldings cannot breed.';
   if (mare.sex !== 'mare' || stallion.sex !== 'stallion') return 'Breeding needs one mare and one stallion.';
 
@@ -61,6 +95,19 @@ async function validateBreedingPair(ctx: RequestContext, stable: StableRow, mare
     if (ctx.world.game_day - mare.last_foaled_game_day < recovery) {
       return `${displayNameFor(mare)} has just foaled and needs more time to recover before breeding again.`;
     }
+  }
+
+  const [activePregnancy, activeCovering] = await Promise.all([
+    getActivePregnancyForMare(ctx.env, mare.id),
+    getBookedCoveringForMare(ctx.env, mare.id),
+  ]);
+  if (activePregnancy) return `${displayNameFor(mare)} is already in foal.`;
+  if (activeCovering) return `${displayNameFor(mare)} is already booked to a covering.`;
+
+  const cfg = ctx.config.values;
+  if (!isInBreedingSeason(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year)) {
+    const next = nextSeasonStartGameDay(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year);
+    return `It's out of season for breeding right now. The season next opens around game day ${String(next)}.`;
   }
 
   const aliveCount = await countAliveHorses(ctx.env, stable.id);
@@ -99,15 +146,20 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
 
   if (form.action === 'check') {
     const coi = await previewCoi(ctx.env, stallion.id, mare.id);
+    const mareAgeYears = (ctx.world.game_day - mare.born_game_day) / gameDaysPerYear;
+    const stallionAgeYears = (ctx.world.game_day - stallion.born_game_day) / gameDaysPerYear;
+    const breakdown = estimateConceptionChance(mareAgeYears, stallionAgeYears, coi, ctx.config);
     const preview: BreedPreview = {
       mareId: mare.id,
       stallionId: stallion.id,
       mareDescription: describe(mare),
-      mareAgeYears: (ctx.world.game_day - mare.born_game_day) / gameDaysPerYear,
+      mareAgeYears,
       stallionDescription: describe(stallion),
-      stallionAgeYears: (ctx.world.game_day - stallion.born_game_day) / gameDaysPerYear,
+      stallionAgeYears,
       coiPercent: `${(coi * 100).toFixed(1)}%`,
       warning: coiWarning(coi, ctx.config.values.coi_warn_threshold),
+      conceptionPercent: `${String(Math.round(breakdown.p * 100))}%`,
+      conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
     };
     return htmlResponse(
       renderBreedPage({
@@ -124,8 +176,8 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     );
   }
 
-  if (form.action === 'confirm') {
-    const refusal = await validateBreedingPair(ctx, stable, mare, stallion);
+  if (form.action === 'book') {
+    const refusal = await validateBooking(ctx, stable, mare, stallion);
     if (refusal) {
       return htmlResponse(
         renderBreedPage({
@@ -141,8 +193,14 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         })
       );
     }
-    const result = await breedNow(ctx.env, { stableId, sireId: stallion.id, damId: mare.id, gameDay: ctx.world.game_day });
-    return redirect(`/horses/${String(result.foalId)}`);
+    await bookCovering(ctx.env, {
+      stableId,
+      mareId: mare.id,
+      stallionId: stallion.id,
+      gameDay: ctx.world.game_day,
+      tickSeq: ctx.world.tick_seq,
+    });
+    return redirect(`/horses/${String(mare.id)}`);
   }
 
   return notFound();
@@ -186,6 +244,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   let loci: LocusRow[] | undefined;
   if (isAdmin) loci = await getLoci(ctx.env);
 
+  const mareStatus = horse.sex === 'mare' ? await mareStatusLine(ctx, horse) : undefined;
+
   return htmlResponse(
     renderHorsePage({
       world: ctx.world,
@@ -204,8 +264,59 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       barnNameNotice,
       genotype: isAdmin ? genotype : undefined,
       loci,
+      mareStatus,
     })
   );
+}
+
+/** Slice 0003 §7: one line of state on a mare's page - in season now, due back in season around a
+ * day, booked to a stallion, in foal with a due date, or recovering. Checked in that priority
+ * order because a mare who is (say) both recovering and technically "due back in season" should
+ * only ever show the more informative of the two. */
+async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<string> {
+  const cfg = ctx.config.values;
+
+  const pregnancy: PregnancyRow | null = await getActivePregnancyForMare(ctx.env, mare.id);
+  if (pregnancy) {
+    const sire = await getHorse(ctx.env, pregnancy.sire_id);
+    return `In foal to ${sire ? displayNameFor(sire) : 'an unknown stallion'}, due around game day ${String(pregnancy.due_game_day)}.`;
+  }
+
+  const covering: CoveringRow | null = await getBookedCoveringForMare(ctx.env, mare.id);
+  if (covering) {
+    const stallion = await getHorse(ctx.env, covering.stallion_id);
+    return `Booked to ${stallion ? displayNameFor(stallion) : 'a stallion'}, to be covered when she next comes into season.`;
+  }
+
+  const seasonNote = (): string => {
+    if (isInBreedingSeason(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year)) {
+      return '';
+    }
+    const next = nextSeasonStartGameDay(
+      ctx.world.game_day,
+      cfg.breeding_season_start_game_day,
+      cfg.breeding_season_length_game_days,
+      cfg.game_days_per_year
+    );
+    return next !== null ? ` The breeding season opens again around game day ${String(next)}.` : '';
+  };
+
+  if (mare.last_foaled_game_day !== null) {
+    const recoverUntil = mare.last_foaled_game_day + cfg.mare_recovery_game_days;
+    if (ctx.world.game_day < recoverUntil) {
+      return `Recovering from foaling; can breed again from around game day ${String(recoverUntil)}.${seasonNote()}`;
+    }
+  }
+
+  if (mare.cycle_anchor_tick_seq === null) {
+    return `Not yet cycling.${seasonNote()}`;
+  }
+
+  const ticksUntil = ticksUntilNextEstrus(mare.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks);
+  if (ticksUntil === 0) return `In season now.${seasonNote()}`;
+
+  const estimatedDay = ctx.world.game_day + ticksUntil * cfg.game_days_per_tick;
+  return `Due back in season around game day ${String(estimatedDay)}.${seasonNote()}`;
 }
 
 export async function horseNameRoute(ctx: RequestContext, horseId: number): Promise<Response> {

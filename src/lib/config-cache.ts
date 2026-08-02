@@ -20,6 +20,24 @@ export interface ConfigValues {
   min_breeding_age_game_days: number;
   mare_recovery_game_days: number;
   coi_warn_threshold: number;
+  /** Ticks, not game days - slice 0003 §2: a real 21-day cycle aliases badly against a 10-day tick. */
+  estrous_cycle_ticks: number;
+  estrus_ticks: number;
+  breeding_season_start_game_day: number;
+  breeding_season_length_game_days: number;
+  conception_base: number;
+  conception_min: number;
+  conception_max: number;
+  /** [age_years, factor] pairs, linearly interpolated, flat outside the ends. */
+  mare_fertility_age_knots: [number, number][];
+  stallion_fertility_age_knots: [number, number][];
+  fertility_gene_min: number;
+  fertility_gene_max: number;
+  inbreeding_fertility_penalty: number;
+  gestation_days_mean: number;
+  gestation_days_sd: number;
+  twin_double_ovulation_rate: number;
+  twin_both_continue_rate: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

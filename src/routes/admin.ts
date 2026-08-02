@@ -1,6 +1,6 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
-import { renderAdminHomePage, renderAccountsPage, renderConfigPage, renderConfigHistoryPage, renderWorldPage } from '../render/admin';
+import { renderAdminHomePage, renderAccountsPage, renderConfigPage, renderConfigHistoryPage, renderWorldPage, renderBreedingAdminPage } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
 import { listAllStables } from '../db/stables';
@@ -166,6 +166,8 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     name: namePart,
     bornGameDay,
     mendelian,
+    worldTickSeq: ctx.world.tick_seq,
+    estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
   });
 
   if (!result.ok) {
@@ -204,6 +206,24 @@ export async function adminWorldRoute(ctx: RequestContext, method: string): Prom
     if (form.confirm !== 'yes') return redirect('/admin/world?confirm_required=1');
     await runManualTick(ctx.env);
     return redirect('/admin/world?advanced=1');
+  }
+
+  return notFound();
+}
+
+export async function adminBreedingRoute(ctx: RequestContext, method: string): Promise<Response> {
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('forced') ? 'The next covering to conceive will be twins.' : undefined;
+    return htmlResponse(renderBreedingAdminPage({ world: ctx.world, config: ctx.config, notice }));
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action === 'force_twins') {
+    if (form.confirm !== 'yes') return redirect('/admin/breeding');
+    await writeConfig(ctx.env, ctx.account!.id, { flags: { force_next_twins: true } });
+    return redirect('/admin/breeding?forced=1');
   }
 
   return notFound();

@@ -18,13 +18,13 @@ export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
   stable: StableRow;
-  horses: { horse: HorseRow; description: string }[];
+  horses: { horse: HorseRow; description: string; inSeason: boolean }[];
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description }) => html`
+        ({ horse, description, inSeason }) => html`
         <div class="card">
-          <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a></h2>
+          <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')}</h2>
           <p>${description}</p>
         </div>`
       )
@@ -54,6 +54,8 @@ export interface BreedPreview {
   stallionAgeYears: number;
   coiPercent: string;
   warning?: string;
+  conceptionPercent: string;
+  conceptionReasons: string[];
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -77,6 +79,10 @@ export function renderBreedPage(params: {
 }): SafeHtml {
   const preview = params.preview;
 
+  const conceptionReasonsBlock = preview && preview.conceptionReasons.length
+    ? html`<p class="muted">${preview.conceptionReasons.join(', ')}</p>`
+    : raw('');
+
   const previewBlock = preview
     ? html`
       <div class="card">
@@ -85,11 +91,13 @@ export function renderBreedPage(params: {
         <p><strong>Stallion:</strong> ${preview.stallionDescription}</p>
         <p><strong>Inbreeding coefficient of a foal from this pairing:</strong> ${preview.coiPercent}</p>
         ${preview.warning ? html`<p class="notice">${preview.warning}</p>` : raw('')}
+        <p><strong>Estimated chance this covering takes:</strong> ${preview.conceptionPercent}</p>
+        ${conceptionReasonsBlock}
         <form method="post" action="/stables/${String(params.stable.id)}/breed">
-          <input type="hidden" name="action" value="confirm">
+          <input type="hidden" name="action" value="book">
           <input type="hidden" name="mare_id" value="${String(preview.mareId)}">
           <input type="hidden" name="stallion_id" value="${String(preview.stallionId)}">
-          <button type="submit">Confirm breeding</button>
+          <button type="submit">Book covering</button>
         </form>
       </div>
     `
@@ -148,6 +156,7 @@ export function renderHorsePage(params: {
   barnNameNotice?: string;
   genotype?: Genotype;
   loci?: LocusRow[];
+  mareStatus?: string;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -225,6 +234,7 @@ export function renderHorsePage(params: {
       <p><strong>Breed:</strong> ${params.breed ? params.breed.name : h.is_cross ? 'Cross' : 'Unknown'} ${params.gaited ? html`<span class="badge badge-success">gaited</span>` : raw('')}</p>
       <p><strong>Bred by:</strong> ${h.breeder_prefix ? html`${h.breeder_prefix}${params.breederStableName ? ` (${params.breederStableName})` : ''}` : 'a founding stable (unbred stock)'}</p>
       <p><strong>Inbreeding coefficient:</strong> ${coiPercent}</p>
+      ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     <h2>Pedigree</h2>
     ${pedigreeTable}
