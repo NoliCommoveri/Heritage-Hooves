@@ -1,6 +1,7 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
-import { renderBarnList, renderBreedPage, renderHorsePage, renderImagePickerPage, displayNameFor, type BreedPreview } from '../render/horses';
+import { renderBarnList, renderBreedPage, renderHorsePage, renderImagePickerPage, displayNameFor, type BreedPreview, type EnterShowInfo } from '../render/horses';
+import { eligibilityMessage, placingText } from '../render/shows';
 import {
   listStableHorses,
   getHorse,
@@ -12,7 +13,7 @@ import {
   type HorseRow,
 } from '../db/horses';
 import { getStableById, type StableRow } from '../db/stables';
-import { getBreedById, getBreeds, getLoci, type LocusRow } from '../db/breeds';
+import { getBreedById, getBreeds, getLoci, type LocusRow, type BreedRow } from '../db/breeds';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
@@ -26,6 +27,13 @@ import { hasWaitingFoundingOffer } from '../db/founding';
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import {
+  getShowSummary,
+  listRecentResultsForHorse,
+  getOpenClasses,
+  checkHorseEligibilityForClass,
+  enterHorseInClass,
+} from '../db/shows';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -50,6 +58,28 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
   return stable;
 }
 
+/** Slice 0008 §8.1: the horse page's "Enter in a show" button, or the plain sentence saying why
+ * not. Only ever the first open class - today that's a horse's only possible open class, since
+ * this slice never creates more than one at once (§3). */
+async function buildEnterShowInfo(ctx: RequestContext, horse: HorseRow, breeds: BreedRow[]): Promise<EnterShowInfo | null> {
+  const openClasses = await getOpenClasses(ctx.env, 5);
+  if (openClasses.length === 0) return null;
+  const cls = openClasses[0];
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+
+  const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear);
+  if (result.ok) return { classId: cls.id, className: cls.name, eligible: true };
+
+  const breedName = breeds.find((b) => b.id === cls.breed_id)?.name ?? 'that breed';
+  const minAgeYears = Math.round(cls.min_age_game_days / gameDaysPerYear);
+  return {
+    classId: cls.id,
+    className: cls.name,
+    eligible: false,
+    reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`,
+  };
+}
+
 export async function stableHorsesRoute(ctx: RequestContext, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
@@ -57,17 +87,20 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const cfg = ctx.config.values;
   const [horses, traitRows] = await Promise.all([listStableHorses(ctx.env, stableId), getConformationTraits(ctx.env)]);
-  const rows = horses.map((horse) => ({
-    horse,
-    description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
-    // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
-    // rather than a query per horse - it's already loaded on the row.
-    inSeason:
-      horse.sex === 'mare' &&
-      horse.cycle_anchor_tick_seq !== null &&
-      isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
-    conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
-  }));
+  const rows = await Promise.all(
+    horses.map(async (horse) => ({
+      horse,
+      description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
+      // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
+      // rather than a query per horse - it's already loaded on the row.
+      inSeason:
+        horse.sex === 'mare' &&
+        horse.cycle_anchor_tick_seq !== null &&
+        isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
+      conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
+      showSummary: await getShowSummary(ctx.env, horse.id),
+    }))
+  );
 
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
   return htmlResponse(renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer, horses: rows }));
@@ -260,6 +293,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const params = new URL(ctx.request.url).searchParams;
   const nameError = params.get('name_error') ?? undefined;
   const barnNameNotice = params.get('barn_saved') ? 'Barn name saved.' : undefined;
+  const enterShowError = params.get('show_error') ?? undefined;
+  const enterShowNotice = params.get('entered_show') ? 'Entered!' : undefined;
 
   let loci: LocusRow[] | undefined;
   if (isAdmin) loci = await getLoci(ctx.env);
@@ -271,6 +306,11 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // Slice 0005 §5.3/§11: the Friesian pool carries a real recessive red (e at 8%), and a chestnut
   // Friesian is a genuine, if rare, outcome - it just can't be registered as one.
   const unregistrableFriesianChestnut = breed?.code === 'FR' && phenotype.baseColour === 'chestnut';
+
+  const showSummary = await getShowSummary(ctx.env, horse.id);
+  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
+  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
+  const enterShow = owner ? await buildEnterShowInfo(ctx, horse, await getBreeds(ctx.env)) : null;
 
   return htmlResponse(
     renderHorsePage({
@@ -297,6 +337,11 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       conformation,
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
+      showSummary,
+      recentShowResults,
+      enterShow,
+      enterShowError,
+      enterShowNotice,
     })
   );
 }
@@ -385,6 +430,40 @@ export async function horseBarnNameRoute(ctx: RequestContext, horseId: number): 
   const barnName = (form.barn_name ?? '').trim();
   await setBarnName(ctx.env, horseId, barnName.length ? barnName : null);
   return redirect(`/horses/${String(horseId)}?barn_saved=1`);
+}
+
+/** Slice 0008 §8.1: the horse page's "Enter in a show" button. Owner-only, same shape as every
+ * other horse-scoped route. Re-checks eligibility server-side rather than trusting that the button
+ * was only shown because it passed - the same discipline the image picker's POST uses (CLAUDE.md
+ * §11, slice 0007's "never trust the submitted value" entry). */
+export async function horseEnterShowRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+
+  const form = await parseForm(ctx.request);
+  const classId = Number(form.class_id);
+  if (!Number.isInteger(classId)) return redirect(`/horses/${String(horseId)}`);
+
+  const result = await enterHorseInClass(ctx.env, {
+    classId,
+    horseId,
+    gameDay: ctx.world.game_day,
+    gameDaysPerYear: ctx.config.values.game_days_per_year,
+    conformationConfig: ctx.config.values,
+  });
+
+  if (!result.ok) {
+    const breeds = await getBreeds(ctx.env);
+    const cls = (await getOpenClasses(ctx.env, 5)).find((c) => c.id === classId);
+    const breedName = breeds.find((b) => b.id === cls?.breed_id)?.name ?? 'that breed';
+    const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
+    const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`;
+    return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(message)}`);
+  }
+
+  return redirect(`/horses/${String(horseId)}?entered_show=1`);
 }
 
 /** The picker - slice 0007 §2.6/§6.2. Owner-only on both GET and POST, same shape as every other

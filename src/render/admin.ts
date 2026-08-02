@@ -8,10 +8,11 @@ import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import type { ImportOfferRow } from '../db/founding';
 import type { TableCount } from '../db/reset';
+import type { AdminShowSummary } from '../db/shows';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'migrations' | 'reset';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'migrations' | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -22,6 +23,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
     { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
     { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
+    { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -55,6 +57,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/breeding">Breeding</a></p>
     <p><a class="button-link" href="/admin/founding">Founding stock</a></p>
     <p><a class="button-link" href="/admin/breeds">Breeds</a></p>
+    <p><a class="button-link" href="/admin/shows">Shows</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -168,6 +171,32 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="inbreeding_depression_factor" value="${String(v.inbreeding_depression_factor)}">
       </label>
       <p class="notice">Changing this one re-scores every already-inbred horse in the game immediately, because conformation is computed fresh on every page view. Best tuned in the first weeks of play, then left alone.</p>
+      <h2>Shows</h2>
+      <label>Show interval (game days)
+        <input type="text" inputmode="numeric" name="show_interval_game_days" value="${String(v.show_interval_game_days)}">
+      </label>
+      <label>Entry window (game days ahead)
+        <input type="text" inputmode="numeric" name="show_entry_window_game_days" value="${String(v.show_entry_window_game_days)}">
+      </label>
+      <label>Show noise (standard deviation, score points)
+        <input type="text" inputmode="decimal" name="show_noise_sd" value="${String(v.show_noise_sd)}">
+      </label>
+      <label>Ideal falloff (points per point off standard)
+        <input type="text" inputmode="decimal" name="show_ideal_falloff" value="${String(v.show_ideal_falloff)}">
+      </label>
+      <label>Target field size
+        <input type="text" inputmode="numeric" name="show_target_field_size" value="${String(v.show_target_field_size)}">
+      </label>
+      <label>Max entries per stable, per class
+        <input type="text" inputmode="numeric" name="show_max_entries_per_stable" value="${String(v.show_max_entries_per_stable)}">
+      </label>
+      <label>Minimum age to show (game days)
+        <input type="text" inputmode="numeric" name="show_conformation_min_age_game_days" value="${String(v.show_conformation_min_age_game_days)}">
+      </label>
+      <label>NPC show barn target size
+        <input type="text" inputmode="numeric" name="npc_show_barn_size" value="${String(v.npc_show_barn_size)}">
+      </label>
+      <p class="muted">The five class-shaping numbers above (noise, falloff, field size, entry cap, minimum age) are copied onto each class the moment it's created - changing them here only affects shows created afterwards, never one already scheduled or judged.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">No feature flags exist yet.</p>
@@ -482,4 +511,74 @@ export function renderResetPage(params: {
     </div>
   `;
   return shell(params.world, body, 'Start over', 'reset');
+}
+
+/**
+ * Slice 0008 §8.2: stock the NPC show barn, judge the next show now (for testing, without waiting
+ * for the tick), and a read-only list of recent shows. No polished admin UI, per CLAUDE.md §13 -
+ * one form per action, both behind the `required`-checkbox confirm pattern the world-clock page
+ * established.
+ */
+export function renderShowsAdminPage(params: {
+  world: WorldRow;
+  barnCount: number;
+  barnTarget: number;
+  qualityBands: Record<string, number>;
+  defaultBand: string;
+  recentShows: AdminShowSummary[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const bandOptions = html`${Object.keys(params.qualityBands).map(
+    (band) =>
+      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
+  )}`;
+
+  const showRows = params.recentShows.map(
+    (s) => html`
+    <tr>
+      <td><a href="/shows/${String(s.id)}">${s.name}</a></td>
+      <td>${String(s.scheduled_game_day)}</td>
+      <td>${s.status}</td>
+      <td>${s.judgeName ?? raw('&mdash;')}</td>
+      <td>${s.winnerName ?? raw('&mdash;')}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Shows</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>The NPC show barn</h2>
+      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(params.barnCount)} of a target ${String(params.barnTarget)} Quarter Horses. It never breeds, ages out, or improves - stocking it only ever tops it up to the target, never past it.</p>
+      <form method="post" action="/admin/shows">
+        <input type="hidden" name="action" value="stock_barn">
+        <label>Quality band
+          <select name="band" required>${bandOptions}</select>
+        </label>
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, mint however many horses it takes to reach the target size.
+        </label>
+        <button type="submit">Stock the show barn</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Judge the next show now</h2>
+      <p class="muted">Judges every class whose show date has already arrived, without waiting for the next tick - useful for testing.</p>
+      <form method="post" action="/admin/shows">
+        <input type="hidden" name="action" value="judge_now">
+        <button type="submit" class="secondary">Judge now</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Recent shows</h2>
+      <table>
+        <thead><tr><th>Show</th><th>Game day</th><th>Status</th><th>Judge</th><th>Winner</th></tr></thead>
+        <tbody>${showRows.length ? showRows : html`<tr><td colspan="5" class="muted">No shows have been created yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+  return shell(params.world, body, 'Shows', 'shows');
 }

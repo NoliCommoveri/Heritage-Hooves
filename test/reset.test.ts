@@ -10,6 +10,10 @@ import { RESET_TABLES, RESET_TABLE_LABELS, tablesForScope, type ResetTable } fro
 const REFERENCES: Record<ResetTable, string[]> = {
   import_candidates: ['import_offers', 'horses'],
   import_offers: ['stables', 'accounts', 'breeds'],
+  show_entries: ['show_classes', 'horses', 'stables'],
+  horse_show_summary: ['horses'],
+  show_classes: ['shows', 'breeds', 'judges'],
+  shows: [],
   pregnancies: ['coverings', 'horses'],
   coverings: ['stables', 'horses'],
   horse_ancestors: ['horses'],
@@ -20,7 +24,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
 };
 
 /** Tables a reset must never empty - see the header comment in src/db/reset.ts. */
-const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'world', 'd1_migrations'];
+const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'judges', 'world', 'd1_migrations'];
 
 describe('reset delete order', () => {
   it('empties every table before the tables it points at', () => {

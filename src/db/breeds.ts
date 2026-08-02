@@ -16,6 +16,11 @@ export interface BreedRow {
   /** Slice 0007 §5.1/§2.3: how many numbered pictures exist for this breed in public/horses/. The
    * picker derives its list from this rather than a directory listing or a manifest file. */
   image_count: number;
+  /** Slice 0008 §4.2/§5.2. JSON, { v: 1, traits: { <conformation trait code>: {target, weight} } },
+   * or null. Null means no breed class can be created for this breed yet - true of every breed but
+   * the Quarter Horse until their own stage lands. Parse with src/engines/showing/score.ts's
+   * parseIdealVector. */
+  ideal_vector: string | null;
 }
 
 export interface LocusRow {
