@@ -8,7 +8,7 @@ import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
 import { accountPasswordRoute } from './routes/account';
 import { stablesPickerRoute, stablesNewRoute, stableHomeRoute, stableSelectRoute, stablePrefixRoute } from './routes/stables';
-import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute } from './routes/horses';
+import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute, horseImageRoute } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import {
   adminHomeRoute,
@@ -19,10 +19,11 @@ import {
   adminHorseNewRoute,
   adminBreedingRoute,
   adminFoundingRoute,
+  adminBreedsRoute,
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image)?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -82,6 +83,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (!sub && method === 'GET') return withReissuedCookie(ctx, await horsePageRoute(ctx, horseId));
     if (sub === '/name' && method === 'POST') return withReissuedCookie(ctx, await horseNameRoute(ctx, horseId));
     if (sub === '/barn-name' && method === 'POST') return withReissuedCookie(ctx, await horseBarnNameRoute(ctx, horseId));
+    if (sub === '/image') return withReissuedCookie(ctx, await horseImageRoute(ctx, method, horseId));
     return notFound();
   }
 
@@ -95,6 +97,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/horses/new') return withReissuedCookie(ctx, await adminHorseNewRoute(ctx, method));
     if (path === '/admin/breeding') return withReissuedCookie(ctx, await adminBreedingRoute(ctx, method));
     if (path === '/admin/founding') return withReissuedCookie(ctx, await adminFoundingRoute(ctx, method));
+    if (path === '/admin/breeds') return withReissuedCookie(ctx, await adminBreedsRoute(ctx, method));
     return notFound();
   }
 

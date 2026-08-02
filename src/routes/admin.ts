@@ -8,11 +8,12 @@ import {
   renderWorldPage,
   renderBreedingAdminPage,
   renderFoundingAdminPage,
+  renderBreedsAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
 import { listAllStables, getStableById } from '../db/stables';
-import { getBreeds, getLoci } from '../db/breeds';
+import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
 import { createFoundingHorse } from '../db/horses';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { hashPassword } from '../lib/password';
@@ -26,6 +27,7 @@ import { LOCI } from '../engines/genetics/loci';
 import { sortAllelePair, GENOTYPE_VERSION, type AllelePair, type Genotype } from '../engines/genetics/genotype';
 import { generateFounderPolygenic } from '../engines/genetics/polygenic';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
+import { parseImageCount } from '../lib/images';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -310,4 +312,34 @@ export async function adminFoundingRoute(ctx: RequestContext, method: string): P
   });
 
   return redirect('/admin/founding?granted=1');
+}
+
+/** Slice 0007 §6.4: grows the image library by count, not by upload - the Worker has no write path
+ * to static assets (§4.5). Rejects a non-whole-number or out-of-range count with a sentence naming
+ * the breed, the same shape as /admin/config's numeric validation. */
+export async function adminBreedsRoute(ctx: RequestContext, method: string): Promise<Response> {
+  const breeds = await getBreeds(ctx.env);
+
+  if (method === 'GET') {
+    const notice = new URL(ctx.request.url).searchParams.get('saved') ? 'Changes saved.' : undefined;
+    return htmlResponse(renderBreedsAdminPage({ world: ctx.world, breeds, notice }));
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const counts: { breedId: number; imageCount: number }[] = [];
+  for (const breed of breeds) {
+    const rawValue = form[`count_${String(breed.id)}`];
+    if (rawValue === undefined) continue;
+    const parsed = parseImageCount(rawValue.trim());
+    if (parsed === null) {
+      return htmlResponse(
+        renderBreedsAdminPage({ world: ctx.world, breeds, error: `${breed.name}'s count must be a whole number from 0 to 99.` })
+      );
+    }
+    counts.push({ breedId: breed.id, imageCount: parsed });
+  }
+
+  await updateBreedImageCounts(ctx.env, counts);
+  return redirect('/admin/breeds?saved=1');
 }

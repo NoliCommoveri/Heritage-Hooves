@@ -29,6 +29,11 @@ export interface HorseRow {
   rng_seed: number;
   /** Slice 0003 §3.2. Mares only; null for stallions, geldings, and mares not yet backfilled. */
   cycle_anchor_tick_seq: number | null;
+  /** Slice 0007 §5.2. Root-relative path into the library, e.g. /horses/qh-03.webp. Null means no
+   * picture chosen - true for every horse born before this slice and for an unpicked new foal
+   * alike (no auto-assign). image_source is null exactly when this is null. */
+  image_url: string | null;
+  image_source: 'library' | 'custom' | 'generated' | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -286,4 +291,16 @@ export async function registerHorseName(env: Env, horseId: number, registeredNam
 
 export async function setBarnName(env: Env, horseId: number, barnName: string | null): Promise<void> {
   await env.DB.prepare('UPDATE horses SET barn_name = ? WHERE id = ?').bind(barnName, horseId).run();
+}
+
+/**
+ * Sets or clears a horse's chosen picture (slice 0007 §6.2). Pass null for "No picture", or an
+ * already-validated library path (see isAllowedImagePath in src/lib/images.ts - the caller must
+ * validate before calling this; this function does not). image_source is 'library' exactly when
+ * imageUrl is non-null, keeping the two columns null together as the migration's comment requires.
+ */
+export async function setHorseImage(env: Env, horseId: number, imageUrl: string | null): Promise<void> {
+  await env.DB.prepare('UPDATE horses SET image_url = ?, image_source = ? WHERE id = ?')
+    .bind(imageUrl, imageUrl ? 'library' : null, horseId)
+    .run();
 }

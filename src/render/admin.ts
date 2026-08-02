@@ -3,12 +3,14 @@ import { pageShell, errorBox, noticeBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { AccountRow } from '../db/accounts';
 import type { StableRow } from '../db/stables';
+import type { BreedRow } from '../db/breeds';
 import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import type { ImportOfferRow } from '../db/founding';
 import { formatLocal } from '../lib/time';
+import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'migrations';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'migrations';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -18,6 +20,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
     { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
     { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
+    { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
   ];
 }
@@ -49,6 +52,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
     <p><a class="button-link" href="/admin/breeding">Breeding</a></p>
     <p><a class="button-link" href="/admin/founding">Founding stock</a></p>
+    <p><a class="button-link" href="/admin/breeds">Breeds</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;
@@ -348,4 +352,42 @@ export function renderFoundingAdminPage(params: {
     </div>
   `;
   return shell(params.world, body, 'Founding stock', 'founding');
+}
+
+/**
+ * Slice 0007 §6.4: the operator's only way to grow the image library - a table of number inputs,
+ * one Save for the lot (CLAUDE.md §13, "no polished admin UI"). The single most useful thing this
+ * page can tell the operator is the exact next filename per breed, so it's a column of its own
+ * rather than left for them to work out from the current count.
+ */
+export function renderBreedsAdminPage(params: { world: WorldRow; breeds: BreedRow[]; error?: string; notice?: string }): SafeHtml {
+  const rows = params.breeds.map(
+    (b) => html`
+    <tr>
+      <td>${b.code}</td>
+      <td>${b.name}</td>
+      <td>${String(b.image_count)}</td>
+      <td><input type="text" inputmode="numeric" name="count_${String(b.id)}" value="${String(b.image_count)}" style="width:4rem"></td>
+      <td class="muted">${libraryImagePath(b.code, b.image_count + 1)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Breeds</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <p>In GitHub, go to <code>public/horses</code> &rarr; <strong>Add file</strong> &rarr; <strong>Upload files</strong>. Name each picture for its breed code and the next number in the "Next filename" column below, save as <code>.webp</code>, and commit. Once the deploy finishes, set that breed's count to the new total here and save.</p>
+      <p><strong>Files are never renumbered and never deleted - only replaced in place.</strong> Skipping or removing a number shows a broken picture rather than being quietly left out, because the site has no way to know a file is missing without a child finding it. Replacing a picture at its existing number is fine and is how you fix a bad upload.</p>
+      <p class="muted">New pictures can take up to a minute to appear everywhere.</p>
+    </div>
+    <form method="post" action="/admin/breeds">
+      <table>
+        <thead><tr><th>Code</th><th>Breed</th><th>Current count</th><th>New count</th><th>Next filename</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <button type="submit">Save counts</button>
+    </form>
+  `;
+  return shell(params.world, body, 'Breeds', 'breeds');
 }

@@ -26,6 +26,8 @@ import m0022 from '../../migrations/0022_import_offers.sql';
 import m0023 from '../../migrations/0023_import_candidates.sql';
 import m0024 from '../../migrations/0024_seed_breed_pools.sql';
 import m0025 from '../../migrations/0025_config_founding.sql';
+import m0026 from '../../migrations/0026_breeds_image_count.sql';
+import m0027 from '../../migrations/0027_horses_image.sql';
 
 export interface MigrationFile {
   name: string;
@@ -68,6 +70,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0023_import_candidates.sql', sql: m0023 },
   { name: '0024_seed_breed_pools.sql', sql: m0024 },
   { name: '0025_config_founding.sql', sql: m0025 },
+  { name: '0026_breeds_image_count.sql', sql: m0026 },
+  { name: '0027_horses_image.sql', sql: m0027 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

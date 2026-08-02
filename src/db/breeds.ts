@@ -13,6 +13,9 @@ export interface BreedRow {
   is_recognised_cross: number;
   founding_allele_pool: string;
   gaited_typical: number;
+  /** Slice 0007 §5.1/§2.3: how many numbered pictures exist for this breed in public/horses/. The
+   * picker derives its list from this rather than a directory listing or a manifest file. */
+  image_count: number;
 }
 
 export interface LocusRow {
@@ -52,4 +55,21 @@ export async function getLoci(env: Env): Promise<LocusRow[]> {
   const rows = result.results ?? [];
   lociCache = { rows, expiresAtMs: now + CACHE_MS };
   return rows;
+}
+
+/**
+ * Slice 0007 §5.3: /admin/breeds is the first thing that writes to this table, so the 60-second
+ * module cache this file's own comment used to be able to ignore now needs clearing after a write
+ * - otherwise the admin's own next page load could show the stale count for up to a minute.
+ * Deliberately not cross-isolate (see that comment, and slice 0007 §5.3): a different isolate can
+ * still serve a stale count for up to a minute after a save, which is why /admin/breeds says so in
+ * plain English rather than pretending this is instant.
+ */
+export async function updateBreedImageCounts(env: Env, counts: { breedId: number; imageCount: number }[]): Promise<void> {
+  if (counts.length === 0) return;
+  const statements = counts.map((c) =>
+    env.DB.prepare('UPDATE breeds SET image_count = ? WHERE id = ?').bind(c.imageCount, c.breedId)
+  );
+  await env.DB.batch(statements);
+  breedsCache = null;
 }
