@@ -460,7 +460,14 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   // §6.2 step 2: top the field up with show-barn horses, deterministically off the class's own
   // seed - never more than the shortfall, and decided at judging time (not entry time) so a player
   // entering late never changes the top-up count (§6.2's "topping up at judging time is deliberate").
-  const shortfall = Math.max(0, cls.target_field_size - existingEntries.length);
+  //
+  // Never top up a class no player entered at all. A show nobody entered isn't a contest missing a
+  // few competitors, it's a show nobody came to - filling it anyway would hand out ribbons for a
+  // field of computer horses judged against each other, and inflate the show barn's own win/start
+  // record for a "win" no player was ever part of. This is a deliberate departure from a literal
+  // reading of §6.2, which tops up "if entries are fewer than target_field_size" with no floor -
+  // flagged here per CLAUDE.md §2.
+  const shortfall = existingEntries.length > 0 ? Math.max(0, cls.target_field_size - existingEntries.length) : 0;
   const npcHorses: HorseRow[] = [];
   if (shortfall > 0) {
     const barn = await getShowBarnStable(env);
@@ -478,8 +485,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   }
   const allHorseIds = [...existingEntries.map((e) => e.horse_id), ...npcHorses.map((h) => h.id)];
   if (allHorseIds.length === 0) {
-    // Nobody entered and the barn has nothing to offer - still close the class out (§4.7: every
-    // entry gets a placing, but zero entries is a valid, if quiet, field).
+    // Nobody entered at all (the only way to reach this branch, now that the barn is never used
+    // to top up an empty field - see the comment above). Still close the class out rather than
+    // leaving it 'scheduled' forever: §4.7 allows a zero-entry field, and nothing here touches
+    // horse_show_summary for anyone, since nobody showed.
     await env.DB.batch([
       env.DB.prepare(`UPDATE show_classes SET status = 'judged', judged_game_day = ? WHERE id = ? AND status = 'scheduled'`).bind(gameDay, cls.id),
       closeShowIfAllClassesJudgedStatement(env, cls.show_id),
