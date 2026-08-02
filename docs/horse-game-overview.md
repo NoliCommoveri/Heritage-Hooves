@@ -706,7 +706,7 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Remaining colour loci**, one gene at a time, with the colour-linked conditions attached as each gene lands rather than as a separate pass. Each gene also lands in all eight founding allele pools in the same change — a pool that does not list a locus is an error rather than a default — and each is a step towards the breeds in §4a looking like themselves, since blue roan, dun, silver and the pinto patterns are what several of them are actually known for.
 
-**Care state and tack** — the modifiers, wear, and the farrier/vet call as a client action against NPC providers.
+**Care state** — the modifier and the farrier/vet call as a client action against NPC providers. Specified in `docs/slices/0013-care-and-condition.md`. **Split from tack on 2 Aug 2026, in conversation**, and tack moved down the list past the market — see the tack bullet below for why. That document takes seven decisions in its §2; the two that change what §8a says are that care never touches a horse's *displayed* conformation numbers (a neck does not get longer because the farrier came — care multiplies the score a judge arrives at, and shows as its own line in the result), and that a care call costs money but **no turn**, with a one-click barn round, because a horse's welfare must not hinge on a seven-year-old remembering a chore. It also keeps slice 0010's promise that manageable conditions get something to actually do about them.
 
 **Ageing, death, and removal** (§7a) — early enough that the first losses happen under rules that were designed rather than discovered. Built in `docs/slices/0011-ageing-death-and-removal.md`, which settles §14's "does death arrive announced?" (it does) and takes three further decisions in its §2. That document departs from `docs/horse-game-schema.md` §4.2 on two points, with reasons in its §5.5: `image_url` is kept on death, and `show_entries` are **not** pruned, because deleting a dead horse's entries would retroactively falsify every show it ever competed in. **Taken ahead of care and tack**, at the operator's direction on 2 Aug 2026 — the two are independent, and the tuning that ageing needs is a longer feedback loop than tack's.
 
@@ -715,6 +715,8 @@ The common failure is building forty conformation traits and never shipping a sh
 **NPC breeding, ageing, and the ceiling parameter.** Where the escalation tuning in §10d gets its first real test.
 
 **Market** — NPC sale listings, buy offers, stud services, player-to-player trading, and the minimum listing duration that keeps same-owner sales public.
+
+**Tack** (§8b) — tiers, wear, repair or replace, and discipline specificity. **Separated from care and moved here on 2 Aug 2026**, for three reasons: discipline specificity is most of tack's design and needs more than one discipline seeded to be exercised at all; every price and wear rate in it is set against a market that does not exist until the stage above; and §8b's pay-to-win risk is worth taking deliberately, after the money in this game has been watched for a while, rather than on the same afternoon as the farrier. Care and tack share nothing structurally — they are two independent multipliers on one score line, and both scorers already take them as two separate parameters — so the split costs nothing.
 
 **Registries** — criteria as data, inductions evaluated on the tick after each show.
 
