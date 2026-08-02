@@ -239,7 +239,7 @@ export function renderHorsePage(params: {
   `;
 
   const portraitBlock = h.image_url
-    ? html`<img class="horse-portrait" src="${h.image_url}" width="480" height="360" alt="">`
+    ? html`<img class="horse-portrait" src="${h.image_url}" width="480" alt="">`
     : html`
       <div class="horse-portrait horse-portrait--placeholder">
         <p>${displayNameFor(h)} is ${params.visibleColour}.</p>
@@ -309,7 +309,7 @@ function imageOptionTile(option: ImageOption, checked: boolean, usedByName: stri
   return html`
     <label class="image-option">
       <input type="radio" name="image" value="${option.path}" ${checked ? raw('checked') : raw('')}>
-      <img src="${option.path}" width="160" height="120" loading="lazy" alt="${option.alt}">
+      <img src="${option.path}" width="160" loading="lazy" alt="${option.alt}">
       ${usedByName ? html`<span class="image-option-note">also used by ${usedByName}</span>` : raw('')}
     </label>`;
 }
