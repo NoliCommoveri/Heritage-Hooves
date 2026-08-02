@@ -1,0 +1,15 @@
+name = "heritage-hooves"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "heritage-hooves"
+database_id = "PASTE_YOUR_DATABASE_ID_HERE"
+
+[triggers]
+crons = ["*/15 * * * *"]

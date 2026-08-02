@@ -1,0 +1,79 @@
+// The tick's SQL. CLAUDE.md §5.4: a re-fired or double-fired tick must not double-advance
+// anything; §8.2/§8.5 of the slice document describe exactly what a run does.
+//
+// The initial tick_run insert (status 'error' by default) is committed on its own before the
+// world update runs, so a thrown error downstream still leaves a diagnosable row behind - D1
+// does not give us a way to hold that insert open across a later failure the way a real nested
+// transaction would.
+import type { Env } from '../types';
+import { getWorld } from './world';
+import { getConfig } from '../lib/config-cache';
+import { nowUtcSeconds } from '../lib/time';
+
+export interface ExecuteTickParams {
+  triggerSource: 'cron' | 'manual';
+  /** The slot this run was meant to be, e.g. "07:00". Null for manual runs. */
+  intendedLocalTime: string | null;
+  /** The local date (YYYY-MM-DD) the slot belongs to. */
+  localDate: string;
+  /** What the local time actually was when the run happened. */
+  firedLocalTime: string;
+  /** Cron runs update world.last_tick_local_date/slot/real_ts; manual runs do not. */
+  updateSlotBookkeeping: boolean;
+}
+
+export async function executeTick(env: Env, params: ExecuteTickParams): Promise<void> {
+  const world = await getWorld(env);
+  const config = await getConfig(env);
+  const startedRealTs = nowUtcSeconds();
+  const newTickSeq = world.tick_seq + 1;
+
+  const insertResult = await env.DB.prepare(
+    `INSERT INTO tick_run
+       (tick_seq, stage, trigger_source, intended_local_time, fired_local_time, local_date, started_real_ts, game_day_before, status)
+     VALUES (?, 'clock', ?, ?, ?, ?, ?, ?, 'error')`
+  )
+    .bind(newTickSeq, params.triggerSource, params.intendedLocalTime, params.firedLocalTime, params.localDate, startedRealTs, world.game_day)
+    .run();
+  const tickRunId = insertResult.meta.last_row_id;
+
+  try {
+    let newGameDay = world.game_day;
+    let newSeasonIndex = world.season_index;
+    let status: 'ok' | 'skipped_paused';
+
+    if (world.paused === 0) {
+      newGameDay = world.game_day + config.values.game_days_per_tick;
+      newSeasonIndex = Math.floor(newGameDay / config.values.game_days_per_year);
+      status = 'ok';
+    } else {
+      status = 'skipped_paused';
+    }
+
+    const completedRealTs = nowUtcSeconds();
+
+    const worldUpdateSql = params.updateSlotBookkeeping
+      ? `UPDATE world SET tick_seq = ?, game_day = ?, season_index = ?,
+           last_tick_local_date = ?, last_tick_slot_local = ?, last_tick_real_ts = ? WHERE id = 1`
+      : `UPDATE world SET tick_seq = ?, game_day = ?, season_index = ? WHERE id = 1`;
+    const worldUpdateArgs = params.updateSlotBookkeeping
+      ? [newTickSeq, newGameDay, newSeasonIndex, params.localDate, params.intendedLocalTime, completedRealTs]
+      : [newTickSeq, newGameDay, newSeasonIndex];
+
+    await env.DB.batch([
+      env.DB.prepare(worldUpdateSql).bind(...worldUpdateArgs),
+      env.DB.prepare('UPDATE tick_run SET completed_real_ts = ?, game_day_after = ?, status = ?, rows_touched = 1 WHERE id = ?').bind(
+        completedRealTs,
+        newGameDay,
+        status,
+        tickRunId
+      ),
+    ]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await env.DB.prepare('UPDATE tick_run SET status = ?, error_text = ?, completed_real_ts = ? WHERE id = ?')
+      .bind('error', message, nowUtcSeconds(), tickRunId)
+      .run();
+    throw err;
+  }
+}
