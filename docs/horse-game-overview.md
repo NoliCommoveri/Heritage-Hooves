@@ -143,6 +143,11 @@ This category also stops the Thoroughbred having nothing, since its heritable pr
 
 Two things follow. First, it makes frame testing genuinely valuable rather than a curiosity. Second, it will happen at a moment nobody chose, so the wording is worth drafting in advance rather than at the point of failure. Softening remains available without abandoning the biology: the loss can be presented as an early-term pregnancy that does not continue rather than as a foaling, and the explanation can lead with the genetics rather than the outcome.
 
+**Decided 2 Aug 2026, in conversation — the lethals are modelled fully.** Asked directly whether to model lethal white fully, soften it to a weak foal needing expensive intervention, or leave frame out of the founding pools altogether, the operator chose to model it fully. So a Fr/Fr conception is non-viable, with no intervention path and no survival roll. Two notes for whoever builds this:
+
+- **The presentation question above is still open**, because it was not the question asked. Whether the loss reads as an early-term pregnancy that does not continue or as a foaling is a separate and smaller decision, and §3b's softening option remains on the table for it. Ask before choosing.
+- **Draft the wording before building the mechanic, not after.** `conditions.event_text` exists precisely so that this is written calmly rather than at the point of failure — see the schema document §3.3. Frame lives in the Quarter Horse's pool (§4), which is accurate, and Paint being an alias on Quarter Horse rather than a breed means the players most likely to be breeding for pattern are exactly the ones carrying it.
+
 The same reasoning extends to the other lethal recessives — SCID, GBED, lavender foal syndrome, WFFS. **Recommendation: keep the lethal set small.** Four or five across the whole game is enough to make testing matter. A dozen makes foaling an anxious event rather than a hopeful one, and the difference is entirely in the tuning rather than in the biology.
 
 ### 3c. Testing, extending §2c
@@ -183,7 +188,13 @@ Dog sims run forty or more conditions across body systems. That is a lot of data
 
 ## 4. Breeds
 
-Six breeds: **Quarter Horse, Arabian, Thoroughbred, Paso Fino, Icelandic, German Warmblood.**
+Eight breeds: **Quarter Horse, Arabian, Thoroughbred, Paso Fino, Icelandic, German Warmblood, Friesian, Nokota.**
+
+**Decided 2 Aug 2026, in conversation:** Friesian and Nokota were added to the original six at the players' request. A third request, **Paint, is deliberately not a breed** — see the note under the table. Appaloosa was requested and **deferred on purpose**, to be revisited once shows exist and it is clear whether the colour-led breeds are actually being played; it is the only requested breed that would add genetics nothing else needs (the appaloosa pattern loci, plus MCOA-style ocular disease riding along with them).
+
+Neither addition costs new colour or gait genetics: every locus Friesian and Nokota need — dun, roan, tobiano, splash, frame, sabino — was already required by Quarter Horse or German Warmblood. The marginal genetic cost of both breeds is **two disease loci**, and both are the Friesian's.
+
+**Breed codes, confirmed 2 Aug 2026: `FR` Friesian, `NOK` Nokota.** Paint gets no code, because it is not a breed. Codes are confirmed explicitly rather than left to the implementing session because a breed code is written into every horse's `composition` blob at birth, so changing one later means rewriting every horse in the database — see CLAUDE.md §11. The spelling is **Nokota**, the North Dakota Badlands breed; "Nakota" is a common variant spelling of the same horse and is not what goes in the `code` or `name` column.
 
 ### 4a. Breed identity comes mostly from data
 
@@ -205,8 +216,20 @@ Roughly how the six sit against each other:
 | Paso Fino | Broad — most dilutions and pinto patterns | DSLD | Gaited |
 | Icelandic | Nearly everything, including silver, dun, cream, pinto, roan | Insect bite hypersensitivity; MCOA via silver | The colour-diversity breed. Gaited |
 | German Warmblood | Bay/chestnut/black, grey, tobiano in some lines, sabino | WFFS, osteochondrosis | Large sport type, performance-led |
+| Friesian | Black only. No dilutions, no patterns, no grey. Recessive red occurs and is unregistrable | Dwarfism, hydrocephalus | The closed pool. COI and recessives *are* the experience — the hard-mode breed |
+| Nokota | Blue roan is the signature; dun and grullo; frame occurs. Some individuals gaited | None distinctive | The landrace. Healthy, unrefined, unrelated to everything else — the outcross that answers gene-pool collapse (§10a) in-world |
 
 Arabian against Icelandic is close to the widest colour-genetics contrast available among common riding breeds, and the disease panels differentiate them further. The cost is research and balance rather than code.
+
+**Paint is a display alias on Quarter Horse, not a breed.** *Decided 2 Aug 2026, in conversation.* A Paint's `breed_id` is Quarter Horse and its `composition` is `{"QH": 1}`; when the horse expresses a pinto pattern, the UI shows its breed as "Paint" instead. There is no `breeds` row for Paint, no allele pool, no ideal vector and no disease panel — it shares the Quarter Horse's, which is correct, since APHA and AQHA horses are the same foundation stock and the same panel (HYPP, PSSM1, GBED, HERDA). This mirrors the real history: APHA exists because AQHA excluded excess-white "cropout" horses from the same gene pool.
+
+Three consequences, all wanted:
+
+- **The Quarter Horse × Paint cross problem disappears.** They are one breed, so no pairing between them produces a cross, and §4c's recognised-cross machinery is not needed for this case.
+- **It reduces rather than multiplies show classes**, which cuts the right way against the thin-fields problem in §10a.
+- **The alias belongs on the breed row as data, not as a rule in code.** Something like a `colour_display_alias` field — pattern to match, name to show — so a tobiano German Warmblood does *not* read as a Paint, and so no session ever writes `if (breed.code === 'QH')`. Per §12's rule that breeds are rows, not constants.
+
+The one visible oddity, accepted: a solid foal out of two Paints displays as a Quarter Horse, where real APHA would call it Breeding Stock Paint. The label follows the phenotype, not the lineage — which is arguably the better lesson anyway, since the pattern *is* a gene rather than an inheritance of status.
 
 "German Warmblood" is an umbrella over several separate studbooks. Treating it as one breed is a reasonable simplification at this scale; splitting it later is additive rather than disruptive.
 
@@ -231,7 +254,11 @@ This gives crosses a genuine niche rather than making them strictly worse, and i
 
 **Recommended rule, because the alternative leaks:** any horse with a non-purebred parent, or with parents of two different breeds, is a cross — and stays one, regardless of how many generations of purebred mates follow. Without a rule of this shape, breed allele restrictions dissolve within a few generations: cross once for tobiano, breed back twice, and the "Arabian" line now carries genes Arabians do not have. Those restrictions are most of what makes breeds feel like breeds.
 
-**Recognised crosses** — Quarab, and whatever else the breed list supports — are a later addition. A recognised cross would get its own ideal vector and its own classes, at which point it behaves as a seventh breed. Worth building the cross system so that promoting a pairing to recognised status is a data change rather than a structural one.
+**Recognised crosses** — Quarab, and whatever else the breed list supports — are a later addition. A recognised cross would get its own ideal vector and its own classes, at which point it behaves as another breed. Worth building the cross system so that promoting a pairing to recognised status is a data change rather than a structural one.
+
+**Decided 2 Aug 2026, in conversation — the Paint case is resolved without recognised crosses.** The first pairing that was going to make the rule above feel wrong was Quarter Horse × Paint: routine in reality, registrable, and yet barred from breed classes forever under the once-a-cross-always-a-cross rule. Rather than build recognised-cross machinery to fix it, Paint stopped being a breed (§4). Two same-breed Quarter Horses cannot produce a cross, so there is nothing to except.
+
+This is worth reading as a pattern and not just a one-off: **when a breed's identity is a phenotype the existing genetics already produce, a display alias is cheaper and more accurate than a breed row.** Reach for that before reaching for recognised crosses. The rule is still worth honouring for a genuine two-pool cross like Quarab, where the parents really are different gene pools — recognised crosses remain unbuilt and unneeded until one is wanted.
 
 ---
 
@@ -692,7 +719,7 @@ The common failure is building forty conformation traits and never shipping a sh
 - **Standards or circles** for the registries, and whether displacement between siblings is acceptable (§9a).
 - ~~**Can a stable's prefix change** once horses have been bred under it (§5d)?~~ **Decided 2 Aug 2026, in slice 0001:** free to change until the stable breeds its first horse, permanent afterwards. Retired prefixes are never reissued to anyone.
 - **Are library images matched to phenotype**, freely chosen, or matched by default with an override?
-- **Recognised crosses** — which pairings, and do they get full breed treatment?
+- ~~**Recognised crosses** — which pairings, and do they get full breed treatment?~~ **Partly decided 2 Aug 2026, in conversation:** the Paint case — the one that forced the question — is resolved by making Paint a display alias on Quarter Horse rather than a breed (§4, §4c), so no recognised-cross machinery is needed and none is built. Still open for a genuine two-pool cross such as Quarab, if one is ever wanted.
 - **Show cadence**, set against the time scale and action budget together.
 - **Does the founding population arrive as stock players already own**, or as something they choose from and buy into?
 - **Per-horse time advancement** — wanted at all, and if so as training acceleration rather than ageing?
