@@ -201,7 +201,7 @@ This is flagged as an open question in the design documents. It is written here 
 | Stage | Status | Notes |
 |---|---|---|
 | Foundation | built (2026-08-02) | Repo deploys via Workers Builds + D1 + Cron. Accounts, stables, the world clock, config, and the stable picker all work. No horses yet — see slice 0001. |
-| Genetics core | not started | |
+| Genetics core | not started | Spec is written and ready to build: `docs/slices/0002-genetics-core.md`. Read that, not the design documents. |
 | Founding stock generator | not started | |
 | Image slot | not started | |
 | One polygenic trait | not started | |

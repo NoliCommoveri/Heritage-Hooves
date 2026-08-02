@@ -351,7 +351,9 @@ Built by unioning both parents' rows with `depth + 1`, capped at the six generat
 
 **Decided in session:** COI is previewable before committing to a pairing, which is why this table exists at all. Without preview, parent IDs alone would suffice and COI could be computed once at birth. With preview, a hypothetical A×B kinship must be computable on demand from indexed rows rather than by recursive queries at request time.
 
-The exact coefficient formula — Wright's path method against the tabular method, and how `path_count` feeds it — belongs to the genetics specification session, not here. The schema supports either.
+~~The exact coefficient formula — Wright's path method against the tabular method, and how `path_count` feeds it — belongs to the genetics specification session, not here. The schema supports either.~~ **Decided 2 Aug 2026, in slice 0002:** the **tabular method** — `f(X,X) = ½(1+F_X)`, `f(X,Y) = ½[f(X, sire_Y) + f(X, dam_Y)]`, memoised, with `F_foal = f(sire, dam)`. Wright's path method was rejected because it requires enumerating paths in which no individual repeats, and that constraint cannot be checked against an aggregated `path_count` — the counts have already discarded which individuals were on which path. **So `path_count` does not feed the COI at all.** It is retained for display ("this horse appears four times in the pedigree"). The table still earns its place: it lets a COI preview fetch the whole relevant subgraph in two queries and run the recursion in memory, which is what makes preview possible without recursive queries at request time.
+
+Also decided there: the primary key is `(descendant_id, ancestor_id, depth)` rather than `(descendant_id, ancestor_id)`. The same ancestor can reach a horse by paths of different lengths, and collapsing those loses what the pedigree display wants.
 
 ### 4.4 `horse_knowledge` — what a player has learned
 
@@ -657,7 +659,7 @@ The tables that must exist correctly from the first migration, because retrofitt
 
 - ~~**Migration convention.** §11b flags it; still a spec-session question.~~ **Settled:** `CLAUDE.md` §8 — `NNNN_short_description.sql`, forward-only, one logical change per file. Adopted by slice 0001.
 - **Index list.** Deliberately omitted — indexes should follow the queries the first real screens make, not be guessed now.
-- **The exact COI formula** and how `path_count` feeds it. Genetics session.
+- ~~**The exact COI formula** and how `path_count` feeds it. Genetics session.~~ **Settled 2 Aug 2026, in slice 0002:** tabular method; `path_count` does not feed it. See §4.3.
 - **Is profession per account or per stable?** §2.3. The only place multi-stable ownership meaningfully collides with an existing rule.
 - **Standards or circles** for the registry, and whether displacement is acceptable between siblings. §6.6.
 - **What else tokens buy**, and how much of it falls in the *advantage* category. §2.7.
