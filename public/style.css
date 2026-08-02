@@ -479,14 +479,16 @@ details.row-actions button {
 .horse-thumb {
   flex: none;
   width: 96px;
-  height: 72px;
+  height: auto;
+  max-height: 96px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
-  object-fit: cover;
   background: var(--color-surface-alt);
 }
 
 .horse-thumb--placeholder {
   display: block;
+  height: 72px;
   border: 1px dashed var(--color-border);
 }
 
@@ -494,8 +496,9 @@ details.row-actions button {
   display: block;
   width: 100%;
   max-width: 480px;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
+  height: auto;
+  max-height: 640px;
+  object-fit: contain;
   border-radius: var(--radius);
   margin-bottom: 0.75rem;
   background: var(--color-surface-alt);
@@ -545,10 +548,12 @@ details.row-actions button {
 
 .image-option img {
   width: 160px;
-  height: 120px;
-  object-fit: cover;
+  height: auto;
+  max-height: 220px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
   box-shadow: 0 0 0 2px var(--color-border);
+  background: var(--color-surface-alt);
 }
 
 .image-option input:checked + img {

@@ -20,7 +20,7 @@ export function displayNameFor(horse: HorseRow): string {
  * rather than folded into the card markup. */
 function barnThumbnail(horse: HorseRow): SafeHtml {
   if (horse.image_url) {
-    return html`<img class="horse-thumb" src="${horse.image_url}" width="96" height="72" loading="lazy" alt="">`;
+    return html`<img class="horse-thumb" src="${horse.image_url}" width="96" loading="lazy" alt="">`;
   }
   return html`<span class="horse-thumb horse-thumb--placeholder" aria-hidden="true"></span>`;
 }
@@ -239,7 +239,7 @@ export function renderHorsePage(params: {
   `;
 
   const portraitBlock = h.image_url
-    ? html`<img class="horse-portrait" src="${h.image_url}" width="480" height="360" alt="">`
+    ? html`<img class="horse-portrait" src="${h.image_url}" width="480" alt="">`
     : html`
       <div class="horse-portrait horse-portrait--placeholder">
         <p>${displayNameFor(h)} is ${params.visibleColour}.</p>
@@ -309,7 +309,7 @@ function imageOptionTile(option: ImageOption, checked: boolean, usedByName: stri
   return html`
     <label class="image-option">
       <input type="radio" name="image" value="${option.path}" ${checked ? raw('checked') : raw('')}>
-      <img src="${option.path}" width="160" height="120" loading="lazy" alt="${option.alt}">
+      <img src="${option.path}" width="160" loading="lazy" alt="${option.alt}">
       ${usedByName ? html`<span class="image-option-note">also used by ${usedByName}</span>` : raw('')}
     </label>`;
 }
