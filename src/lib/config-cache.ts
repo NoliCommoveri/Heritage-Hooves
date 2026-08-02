@@ -51,6 +51,15 @@ export interface ConfigValues {
   founding_age_max_game_days: number;
   /** 0 means never (slice 0005 §6.2) - no tick stage sweeps offers yet; checked at claim time only. */
   founding_offer_expiry_game_days: number;
+  /** Slice 0006 §4.2. Read only at birth/candidate-generation; the realised roll is then snapshotted
+   * onto horses.environmental_noise, so changing this never moves a horse already alive. */
+  conformation_noise_sd: number;
+  /** Slice 0006 §4.3. Live - read fresh on every page view. */
+  conformation_maturity_years: number;
+  conformation_realization_at_birth: number;
+  /** Live - see CLAUDE.md's conformation entry: changing this re-scores every already-inbred horse
+   * in the game at once. */
+  inbreeding_depression_factor: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

@@ -11,9 +11,11 @@ import {
   type ClaimOfferResult,
 } from '../db/founding';
 import { getBreeds } from '../db/breeds';
+import { getConformationTraits } from '../db/quantitativeTraits';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
+import { conformationValues, conformationDisplayRows, rollEnvironmentalNoise } from '../engines/conformation/model';
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
   const stable = await getStableById(ctx.env, stableId);
@@ -51,12 +53,19 @@ async function renderPage(
 
   if (offer && offer.status === 'open') {
     const gameDaysPerYear = ctx.config.values.game_days_per_year;
-    const rows = await getCandidatesForOffer(ctx.env, offer.id);
+    const [rows, traitRows] = await Promise.all([getCandidatesForOffer(ctx.env, offer.id), getConformationTraits(ctx.env)]);
     const candidates = rows.map((candidate) => {
       const genotype = parseGenotype(candidate.genotype);
       const phenotype = expressPhenotype(genotype, candidate.age_game_days, gameDaysPerYear);
-      const description = describeHorse(phenotype, candidate.sex, candidate.age_game_days / gameDaysPerYear);
-      return { candidate, description, gaited: phenotype.gaited };
+      const ageYears = candidate.age_game_days / gameDaysPerYear;
+      const description = describeHorse(phenotype, candidate.sex, ageYears);
+      // Slice 0006 §2.6: no noise column on import_candidates - the seed already carries it, and
+      // this is exactly the noise the claimed horse will get (buildFoundingHorseInsertStatement
+      // rolls it from the same rngSeed, unchanged on claim).
+      const noise = rollEnvironmentalNoise(candidate.rng_seed, ctx.config.values.conformation_noise_sd);
+      // A founding candidate has no pedigree, so coi is always 0 here.
+      const conformation = conformationDisplayRows(conformationValues(genotype, noise, ageYears, 0, ctx.config.values), traitRows);
+      return { candidate, description, gaited: phenotype.gaited, conformation };
     });
     return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, stable, offer, candidates, ...extra }));
   }
@@ -105,6 +114,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       gameDay: ctx.world.game_day,
       worldTickSeq: ctx.world.tick_seq,
       estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
+      conformationNoiseSd: ctx.config.values.conformation_noise_sd,
     });
 
     if (!result.ok) {

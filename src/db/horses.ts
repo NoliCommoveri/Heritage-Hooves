@@ -3,6 +3,7 @@ import { nowUtcSeconds } from '../lib/time';
 import { deriveSeed, makeRng } from '../lib/rng';
 import { serializeGenotype, type Genotype } from '../engines/genetics/genotype';
 import { coefficientOfInbreeding, type AncestorEdge, type PedigreeHorse } from '../engines/genetics/pedigree';
+import { rollEnvironmentalNoise, serializeNoise } from '../engines/conformation/model';
 
 export interface HorseRow {
   id: number;
@@ -34,6 +35,10 @@ export interface HorseRow {
    * alike (no auto-assign). image_source is null exactly when this is null. */
   image_url: string | null;
   image_source: 'library' | 'custom' | 'generated' | null;
+  /** Slice 0006 §5.2. JSON, { v: 1, noise: { <trait code>: <integer offset> } }. Null means born
+   * before this slice - read via src/engines/conformation/model.ts's legacy fallback, never
+   * backfilled. */
+  environmental_noise: string | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -115,6 +120,8 @@ export interface FoundingHorseInsertInput {
   /** Only consulted for mares - slice 0003 §3.2 rolls a founding mare's cycle slot at creation. */
   worldTickSeq: number;
   estrousCycleTicks: number;
+  /** Slice 0006 §4.2: rolls this horse's environmental noise, once, from its own seed. */
+  conformationNoiseSd: number;
 }
 
 /**
@@ -130,13 +137,15 @@ export function buildFoundingHorseInsertStatement(env: Env, input: FoundingHorse
   // reproducible from this row alone the same way every other draw in the game is.
   const cycleAnchorTickSeq =
     input.sex === 'mare' ? input.worldTickSeq + makeRng(deriveSeed(input.rngSeed, 'cycle_slot')).int(input.estrousCycleTicks) : null;
+  const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
 
   return env.DB.prepare(
     `INSERT INTO horses (
        sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
        sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
-       born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq
-     ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?)`
+       born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
+       environmental_noise
+     ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?)`
   ).bind(
     input.sex,
     input.registeredName,
@@ -148,7 +157,8 @@ export function buildFoundingHorseInsertStatement(env: Env, input: FoundingHorse
     nowSeconds,
     serializeGenotype(input.genotype),
     input.rngSeed,
-    cycleAnchorTickSeq
+    cycleAnchorTickSeq,
+    environmentalNoise
   );
 }
 
@@ -168,6 +178,7 @@ export interface CreateFoundingHorseInput {
   rngSeed: number;
   worldTickSeq: number;
   estrousCycleTicks: number;
+  conformationNoiseSd: number;
 }
 
 export type CreateFoundingHorseResult = { ok: true; horseId: number } | { ok: false; error: 'name_taken' };
@@ -187,6 +198,7 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
     rngSeed: input.rngSeed,
     worldTickSeq: input.worldTickSeq,
     estrousCycleTicks: input.estrousCycleTicks,
+    conformationNoiseSd: input.conformationNoiseSd,
   });
 
   try {
@@ -216,6 +228,9 @@ export interface FoalInsertInput {
   ancestorRows: AncestorEdge[];
   /** Rolled by the caller the same way createFoundingHorse rolls one (slice 0003 §3.2) - null for colts. */
   cycleAnchorTickSeq: number | null;
+  /** Slice 0006 §4.2: rolls this foal's environmental noise, once, from its own (already-minted at
+   * conception) rngSeed. */
+  conformationNoiseSd: number;
 }
 
 /**
@@ -232,14 +247,16 @@ export interface FoalInsertInput {
  */
 export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1PreparedStatement[] {
   const nowSeconds = nowUtcSeconds();
+  const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
 
   return [
     env.DB.prepare(
       `INSERT INTO horses (
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
-         born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq
-       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?)`
+         born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
+         environmental_noise
+       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
       input.breederPrefix,
@@ -256,7 +273,8 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
       nowSeconds,
       serializeGenotype(input.genotype),
       input.rngSeed,
-      input.cycleAnchorTickSeq
+      input.cycleAnchorTickSeq,
+      environmentalNoise
     ),
     // Each ancestor row references the foal via a fresh subquery rather than last_insert_rowid(),
     // because last_insert_rowid() reflects the single most recent insert on this connection and

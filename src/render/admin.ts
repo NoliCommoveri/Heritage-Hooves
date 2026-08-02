@@ -150,6 +150,21 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
       <label>Minimum password length
         <input type="text" inputmode="numeric" name="min_password_length" value="${String(v.min_password_length)}">
       </label>
+      <h2>Conformation</h2>
+      <label>Environmental noise (standard deviation)
+        <input type="text" inputmode="numeric" name="conformation_noise_sd" value="${String(v.conformation_noise_sd)}">
+      </label>
+      <p class="muted">Only affects horses born after this is changed - a horse's own roll is snapshotted at birth.</p>
+      <label>Years to reach maturity
+        <input type="text" inputmode="numeric" name="conformation_maturity_years" value="${String(v.conformation_maturity_years)}">
+      </label>
+      <label>Realization at birth (0-1)
+        <input type="text" inputmode="decimal" name="conformation_realization_at_birth" value="${String(v.conformation_realization_at_birth)}">
+      </label>
+      <label>Inbreeding depression factor
+        <input type="text" inputmode="decimal" name="inbreeding_depression_factor" value="${String(v.inbreeding_depression_factor)}">
+      </label>
+      <p class="notice">Changing this one re-scores every already-inbred horse in the game immediately, because conformation is computed fresh on every page view. Best tuned in the first weeks of play, then left alone.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">No feature flags exist yet.</p>

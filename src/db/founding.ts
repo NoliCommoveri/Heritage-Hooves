@@ -234,6 +234,7 @@ export interface ClaimOfferParams {
   gameDay: number;
   worldTickSeq: number;
   estrousCycleTicks: number;
+  conformationNoiseSd: number;
 }
 
 /**
@@ -278,6 +279,7 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
         rngSeed: candidate.rng_seed,
         worldTickSeq: params.worldTickSeq,
         estrousCycleTicks: params.estrousCycleTicks,
+        conformationNoiseSd: params.conformationNoiseSd,
       })
     );
     statements.push(

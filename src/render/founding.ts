@@ -9,6 +9,7 @@ import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
 import type { BreedRow } from '../db/breeds';
 import type { ImportOfferRow, ImportCandidateRow } from '../db/founding';
+import type { ConformationDisplayRow } from '../engines/conformation/model';
 
 /** One plain sentence per breed, for the breed picker (slice 0005 §11) - not stored on the breeds
  * row because it's display copy, not data anything else reads. Keep in sync with the breed pools
@@ -34,7 +35,7 @@ export function renderFoundingPage(params: {
   stable: StableRow;
   offer: ImportOfferRow | null;
   breeds?: BreedRow[];
-  candidates?: { candidate: ImportCandidateRow; description: string; gaited: boolean }[];
+  candidates?: { candidate: ImportCandidateRow; description: string; gaited: boolean; conformation: ConformationDisplayRow[] }[];
   error?: string;
   notice?: string;
 }): SafeHtml {
@@ -76,7 +77,7 @@ export function renderFoundingPage(params: {
   } else if (params.offer.status === 'open') {
     const offer = params.offer;
     const rows = (params.candidates ?? []).map(
-      ({ candidate, description, gaited }) => html`
+      ({ candidate, description, gaited, conformation }) => html`
       <div class="card">
         <h2>
           ${candidate.origin_prefix} ${candidate.name_part}
@@ -84,6 +85,7 @@ export function renderFoundingPage(params: {
         </h2>
         <p class="muted">${candidateSexLabel(candidate.sex)}</p>
         <p>${description}</p>
+        <p class="muted conformation-compact">${html`${conformation.map((row) => `${row.name}: ${String(row.expressed)}`).join(' · ')}`}</p>
         <label>
           <input type="checkbox" name="chosen_${String(candidate.slot_index)}" value="yes">
           Claim this one
@@ -94,7 +96,6 @@ export function renderFoundingPage(params: {
       <h1>New horses</h1>
       ${errorBox(params.error)}
       <p>Choose ${String(offer.mare_claims)} mare${offer.mare_claims === 1 ? '' : 's'} and ${String(offer.stallion_claims)} stallion${offer.stallion_claims === 1 ? '' : 's'} from the ${String(offer.mare_candidates + offer.stallion_candidates)} below. The rest won't be seen again.</p>
-      <p class="muted">These horses only show their colour, sex, age and gait for now - their conformation is real and already decided, it just isn't visible on this screen yet.</p>
       <form method="post" action="/stables/${String(s.id)}/founding">
         <input type="hidden" name="action" value="claim">
         ${rows}
