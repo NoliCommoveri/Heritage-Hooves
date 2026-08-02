@@ -9,11 +9,13 @@
 //   - config          - the tuning numbers on /admin/config are settings, not world content.
 //   - config_audit    - append-only (CLAUDE.md §7), and it is a record of admin tuning rather
 //                       than of anything that happened in the world.
-//   - breeds, loci, quantitative_traits, d1_migrations - reference data, created by migrations.
-//                       Clearing these would break the game with no way back from the browser.
+//   - breeds, loci, quantitative_traits, judges, d1_migrations - reference data, created by
+//                       migrations. Clearing these would break the game with no way back from the
+//                       browser.
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
+import { SHOW_BARN_PREFIX } from './npc';
 
 export type ResetScope = 'horses' | 'world';
 
@@ -23,12 +25,21 @@ export type ResetScope = 'horses' | 'world';
  * `coverings` and `horses`; `horses`, `coverings`, `import_offers` and `stable_prefix_history`
  * all point at `stables` - so anything that references another row must be emptied first.
  *
+ * Slice 0008 adds `show_entries` and `horse_show_summary` (both point at `horses`) and
+ * `show_classes`/`shows` (which `show_entries` points at, in turn) to this same list - a
+ * horses-only reset also clears the show barn's own horses, so their entries and summaries would
+ * otherwise dangle. `judges` is reference data (like `breeds`) and is never cleared.
+ *
  * `horses` referencing itself (sire_id/dam_id) needs no special handling: SQLite checks an
  * immediate foreign key at the *end* of the statement, and by then the table is empty.
  */
 const HORSE_TABLES = [
   'import_candidates',
   'import_offers',
+  'show_entries',
+  'horse_show_summary',
+  'show_classes',
+  'shows',
   'pregnancies',
   'coverings',
   'horse_ancestors',
@@ -46,6 +57,10 @@ export type ResetTable = (typeof RESET_TABLES)[number];
 export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   import_candidates: 'Horses offered in a batch',
   import_offers: 'Founding-stock batches',
+  show_entries: 'Show entries',
+  horse_show_summary: 'Horses\' show records',
+  show_classes: 'Show classes',
+  shows: 'Shows',
   pregnancies: 'Pregnancies',
   coverings: 'Coverings (booked matings)',
   horse_ancestors: 'Pedigree links',
@@ -98,12 +113,34 @@ export interface ResetResult {
  * silently unpausing here would let the next cron tick start moving a world the operator had
  * stopped on purpose. Every other clock column is reset, because they describe a world that is
  * now gone.
+ *
+ * A full world reset's blanket `DELETE FROM stables` also removes the NPC show barn (slice 0008
+ * §5.7) - it is a stable like any other, and migrations/0040_npc_show_barn.sql only ever runs
+ * once, so nothing would recreate it afterwards. Re-inserted here, empty, in exactly the shape
+ * that migration leaves it in - the operator re-stocks it from /admin/shows the same way as after
+ * a fresh install.
  */
 export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResult> {
   const statements = tablesForScope(scope).map((table) => env.DB.prepare(`DELETE FROM ${table}`));
 
   if (scope === 'world') {
     statements.push(env.DB.prepare('UPDATE accounts SET last_active_stable_id = NULL'));
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+           VALUES (NULL, 'Fair Meadow Show Barn', ?, 0, 1, 1, 0, 200, 0, ?, 1)`
+        )
+        .bind(SHOW_BARN_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+           VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, 0, NULL, NULL, ?)`
+        )
+        .bind(SHOW_BARN_PREFIX, nowUtcSeconds())
+    );
     statements.push(
       env.DB
         .prepare(

@@ -3,7 +3,7 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { LOCI } from '../../src/engines/genetics/loci';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../../src/engines/genetics/polygenic';
-import { TRAIT_CATEGORY, TRAIT_DIRECTION } from '../../src/engines/conformation/traits';
+import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS } from '../../src/engines/conformation/traits';
 
 // The test CLAUDE.md §8/§11 asks for: the engine's LOCI constant is the source of truth for
 // iteration order and reproducibility (loci.ts), but a player-facing operator might reword
@@ -92,5 +92,26 @@ describe('TRAITS vs migrations/0029_seed_quantitative_traits.sql', () => {
       expect(s.direction, `${s.code} direction`).toBe(TRAIT_DIRECTION[code]);
       expect(s.locusCount, `${s.code} locus_count`).toBe(LOCI_PER_TRAIT);
     });
+  });
+});
+
+// Slice 0008 §4.2: the Quarter Horse's ideal vector must name exactly the four conformation trait
+// codes CONFORMATION_TRAITS iterates - no more, no fewer - or scoreEntry (which iterates that same
+// list) would silently ignore an extra trait or score a missing one as 0.
+describe('QH ideal_vector vs CONFORMATION_TRAITS (slice 0008 §4.2)', () => {
+  it('names exactly the four conformation trait codes', () => {
+    const migration = MIGRATIONS.find((m) => m.name === '0035_seed_qh_ideal_vector.sql');
+    expect(migration).toBeDefined();
+
+    const match = migration!.sql.match(/ideal_vector = '(\{.*\})'/);
+    expect(match).not.toBeNull();
+    const parsed = JSON.parse(match![1]) as { v: number; traits: Record<string, { target: number; weight: number }> };
+
+    expect(Object.keys(parsed.traits).sort()).toEqual([...CONFORMATION_TRAITS].sort());
+    for (const trait of Object.values(parsed.traits)) {
+      expect(trait.target).toBeGreaterThanOrEqual(1);
+      expect(trait.target).toBeLessThanOrEqual(99);
+      expect(trait.weight).toBeGreaterThan(0);
+    }
   });
 });

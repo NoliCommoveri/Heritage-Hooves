@@ -10,6 +10,7 @@ import {
   renderFoundingAdminPage,
   renderBreedsAdminPage,
   renderResetPage,
+  renderShowsAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
@@ -17,8 +18,10 @@ import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
 import { expireStableCookie } from '../lib/session';
 import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
-import { createFoundingHorse } from '../db/horses';
+import { createFoundingHorse, countAliveHorses } from '../db/horses';
 import { mintOffer, listRecentOffers } from '../db/founding';
+import { getShowBarnStable, stockShowBarn } from '../db/npc';
+import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
 import { hashPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
 import { listConfigAudit } from '../db/configAudit';
@@ -101,11 +104,24 @@ const NUMERIC_CONFIG_KEYS = [
   'min_password_length',
   'conformation_noise_sd',
   'conformation_maturity_years',
+  'show_interval_game_days',
+  'show_entry_window_game_days',
+  'show_target_field_size',
+  'show_max_entries_per_stable',
+  'show_conformation_min_age_game_days',
+  'npc_show_barn_size',
 ] as const;
 
-// These two are genuine fractions (0.55, 1.0) rather than whole numbers - CLAUDE.md §5.5/slice 0006
-// §5.3 - so they get their own validation rather than NUMERIC_CONFIG_KEYS's Number.isInteger check.
-const DECIMAL_CONFIG_KEYS = ['conformation_realization_at_birth', 'inbreeding_depression_factor'] as const;
+// These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
+// 0006 §5.3 - so they get their own validation rather than NUMERIC_CONFIG_KEYS's Number.isInteger
+// check. show_noise_sd and show_ideal_falloff aren't strictly fractional today, but they're tuned
+// in fine increments (slice 0008 §5.8), so they belong here rather than the whole-number list.
+const DECIMAL_CONFIG_KEYS = [
+  'conformation_realization_at_birth',
+  'inbreeding_depression_factor',
+  'show_noise_sd',
+  'show_ideal_falloff',
+] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
   if (method === 'GET') {
@@ -399,4 +415,60 @@ export async function adminResetRoute(ctx: RequestContext, method: string): Prom
   const response = redirect(`/admin/reset?cleared=${scope}`);
   if (scope === 'world') response.headers.append('Set-Cookie', expireStableCookie());
   return response;
+}
+
+/**
+ * Slice 0008 §8.2: stock the NPC show barn, judge the next show now (for testing), and a read-only
+ * list of recent shows. No show-creation form here - shows come from the tick (§6), not an admin
+ * button.
+ */
+export async function adminShowsRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const barn = await getShowBarnStable(ctx.env);
+    const barnCount = barn ? await countAliveHorses(ctx.env, barn.id) : 0;
+    const recentShows = await listShowsForAdmin(ctx.env, 20);
+    return htmlResponse(
+      renderShowsAdminPage({
+        world: ctx.world,
+        barnCount,
+        barnTarget: ctx.config.values.npc_show_barn_size,
+        qualityBands: ctx.config.values.quality_bands,
+        defaultBand: ctx.config.values.npc_show_barn_quality_band,
+        recentShows,
+        error,
+        notice,
+      })
+    );
+  }
+
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('stocked') ? 'Show barn stocked.' : params.get('judged') ? 'Judged every show that was due.' : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+
+  if (form.action === 'stock_barn') {
+    if (form.confirm !== 'yes') return page('Tick the box to confirm before stocking the barn.');
+    const band = form.band ?? '';
+    if (ctx.config.values.quality_bands[band] === undefined) return page('Choose a quality band.');
+
+    await stockShowBarn(ctx.env, {
+      config: ctx.config,
+      gameDay: ctx.world.game_day,
+      worldTickSeq: ctx.world.tick_seq,
+      targetSize: ctx.config.values.npc_show_barn_size,
+      band,
+    });
+    return redirect('/admin/shows?stocked=1');
+  }
+
+  if (form.action === 'judge_now') {
+    await judgeDueShowClasses(ctx.env, ctx.world.game_day, ctx.config);
+    return redirect('/admin/shows?judged=1');
+  }
+
+  return notFound();
 }

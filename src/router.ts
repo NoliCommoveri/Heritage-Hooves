@@ -8,8 +8,9 @@ import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
 import { accountPasswordRoute } from './routes/account';
 import { stablesPickerRoute, stablesNewRoute, stableHomeRoute, stableSelectRoute, stablePrefixRoute } from './routes/stables';
-import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute, horseImageRoute } from './routes/horses';
+import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute, horseImageRoute, horseEnterShowRoute } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
+import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
 import {
   adminHomeRoute,
   adminAccountsRoute,
@@ -21,10 +22,12 @@ import {
   adminFoundingRoute,
   adminBreedsRoute,
   adminResetRoute,
+  adminShowsRoute,
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show)?$/;
+const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -85,6 +88,18 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (sub === '/name' && method === 'POST') return withReissuedCookie(ctx, await horseNameRoute(ctx, horseId));
     if (sub === '/barn-name' && method === 'POST') return withReissuedCookie(ctx, await horseBarnNameRoute(ctx, horseId));
     if (sub === '/image') return withReissuedCookie(ctx, await horseImageRoute(ctx, method, horseId));
+    if (sub === '/enter-show' && method === 'POST') return withReissuedCookie(ctx, await horseEnterShowRoute(ctx, horseId));
+    return notFound();
+  }
+
+  if (path === '/shows' && method === 'GET') return withReissuedCookie(ctx, await showsIndexRoute(ctx));
+
+  const showMatch = path.match(SHOW_ROUTE);
+  if (showMatch) {
+    const showId = Number(showMatch[1]);
+    const entryId = showMatch[3] ? Number(showMatch[3]) : null;
+    if (entryId !== null && method === 'GET') return withReissuedCookie(ctx, await showEntryResultRoute(ctx, showId, entryId));
+    if (entryId === null) return withReissuedCookie(ctx, await showRoute(ctx, method, showId));
     return notFound();
   }
 
@@ -100,6 +115,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/founding') return withReissuedCookie(ctx, await adminFoundingRoute(ctx, method));
     if (path === '/admin/breeds') return withReissuedCookie(ctx, await adminBreedsRoute(ctx, method));
     if (path === '/admin/reset') return withReissuedCookie(ctx, await adminResetRoute(ctx, method));
+    if (path === '/admin/shows') return withReissuedCookie(ctx, await adminShowsRoute(ctx, method));
     return notFound();
   }
 

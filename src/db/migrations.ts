@@ -32,6 +32,16 @@ import m0028 from '../../migrations/0028_quantitative_traits.sql';
 import m0029 from '../../migrations/0029_seed_quantitative_traits.sql';
 import m0030 from '../../migrations/0030_horses_environmental_noise.sql';
 import m0031 from '../../migrations/0031_config_conformation.sql';
+import m0032 from '../../migrations/0032_judges.sql';
+import m0033 from '../../migrations/0033_seed_judges.sql';
+import m0034 from '../../migrations/0034_breeds_ideal_vector.sql';
+import m0035 from '../../migrations/0035_seed_qh_ideal_vector.sql';
+import m0036 from '../../migrations/0036_shows.sql';
+import m0037 from '../../migrations/0037_show_classes.sql';
+import m0038 from '../../migrations/0038_show_entries.sql';
+import m0039 from '../../migrations/0039_horse_show_summary.sql';
+import m0040 from '../../migrations/0040_npc_show_barn.sql';
+import m0041 from '../../migrations/0041_config_shows.sql';
 
 export interface MigrationFile {
   name: string;
@@ -80,6 +90,16 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0029_seed_quantitative_traits.sql', sql: m0029 },
   { name: '0030_horses_environmental_noise.sql', sql: m0030 },
   { name: '0031_config_conformation.sql', sql: m0031 },
+  { name: '0032_judges.sql', sql: m0032 },
+  { name: '0033_seed_judges.sql', sql: m0033 },
+  { name: '0034_breeds_ideal_vector.sql', sql: m0034 },
+  { name: '0035_seed_qh_ideal_vector.sql', sql: m0035 },
+  { name: '0036_shows.sql', sql: m0036 },
+  { name: '0037_show_classes.sql', sql: m0037 },
+  { name: '0038_show_entries.sql', sql: m0038 },
+  { name: '0039_horse_show_summary.sql', sql: m0039 },
+  { name: '0040_npc_show_barn.sql', sql: m0040 },
+  { name: '0041_config_shows.sql', sql: m0041 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

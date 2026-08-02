@@ -9,6 +9,8 @@ import type { Genotype } from '../engines/genetics/genotype';
 import { LOCI } from '../engines/genetics/loci';
 import { NO_PICTURE_VALUE, type ImageOption } from '../lib/images';
 import type { ConformationDisplayRow } from '../engines/conformation/model';
+import type { HorseShowSummaryRow } from '../db/shows';
+import { placingText } from './shows';
 
 export function displayNameFor(horse: HorseRow): string {
   if (horse.registered_name) return horse.registered_name;
@@ -31,15 +33,15 @@ export function renderBarnList(params: {
   isAdmin: boolean;
   stable: StableRow;
   hasFoundingOffer: boolean;
-  horses: { horse: HorseRow; description: string; inSeason: boolean; conformation: ConformationDisplayRow[] }[];
+  horses: { horse: HorseRow; description: string; inSeason: boolean; conformation: ConformationDisplayRow[]; showSummary: HorseShowSummaryRow | null }[];
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation }) => html`
+        ({ horse, description, inSeason, conformation, showSummary }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -190,6 +192,57 @@ function conformationCompactLine(conformation: ConformationDisplayRow[]): SafeHt
   return html`${conformation.map((row) => `${row.name.split(' ')[0]} ${String(row.expressed)}`).join(' · ')}`;
 }
 
+/** Slice 0008 §8.1: "a small ribbon count or best-placing badge per horse" for the barn list -
+ * kept to one glanceable thing, since the barn list is already dense (slice 0006's own comment on
+ * this file makes the same call for its compact conformation line). Nothing shown for a horse with
+ * no starts yet, rather than a "hasn't shown" sentence that would just be noise on every row. */
+function showBadge(summary: HorseShowSummaryRow | null): SafeHtml {
+  if (!summary || summary.starts === 0) return raw('');
+  return html`<span class="badge">${String(summary.wins)} win${summary.wins === 1 ? '' : 's'}, best ${placingText(summary.best_placing)}</span>`;
+}
+
+export interface EnterShowInfo {
+  classId: number;
+  className: string;
+  eligible: boolean;
+  /** Present when !eligible - "isn't old enough yet - this class needs a horse at least..." etc,
+   * from render/shows.ts's eligibilityMessage, with this horse's own name already prepended. */
+  reasonSentence?: string;
+}
+
+function enterShowBlock(horseId: number, info: EnterShowInfo | null): SafeHtml {
+  if (!info) return raw('');
+  if (!info.eligible) return html`<p class="muted">${info.reasonSentence}</p>`;
+  return html`
+    <form method="post" action="/horses/${String(horseId)}/enter-show">
+      <input type="hidden" name="class_id" value="${String(info.classId)}">
+      <button type="submit">Enter in ${info.className}</button>
+    </form>`;
+}
+
+/** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings. */
+function showRecordCard(params: {
+  summary: HorseShowSummaryRow | null;
+  recentResults: string[];
+  enterShow: EnterShowInfo | null;
+  enterShowError?: string;
+  enterShowNotice?: string;
+  horseId: number;
+}): SafeHtml {
+  const s = params.summary;
+  return html`
+    <div class="card">
+      <h2>Show record</h2>
+      ${errorBox(params.enterShowError)}
+      ${noticeBox(params.enterShowNotice)}
+      ${s
+        ? html`<p><strong>Starts:</strong> ${String(s.starts)} &middot; <strong>Wins:</strong> ${String(s.wins)} &middot; <strong>Best:</strong> ${s.best_placing !== null ? placingText(s.best_placing) : 'none yet'}</p>`
+        : html`<p class="muted">No shows entered yet.</p>`}
+      ${params.recentResults.length ? html`<ul>${params.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+      ${enterShowBlock(params.horseId, params.enterShow)}
+    </div>`;
+}
+
 export function renderHorsePage(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -219,6 +272,13 @@ export function renderHorsePage(params: {
   conformationMaturityYears: number;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
+  /** Slice 0008 §8.1: the Show record card - starts, wins, best result, a few recent placings
+   * already formatted as sentences, and whether this horse can currently enter an open class. */
+  showSummary: HorseShowSummaryRow | null;
+  recentShowResults: string[];
+  enterShow: EnterShowInfo | null;
+  enterShowError?: string;
+  enterShowNotice?: string;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -326,6 +386,14 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
+    ${showRecordCard({
+      summary: params.showSummary,
+      recentResults: params.recentShowResults,
+      enterShow: params.enterShow,
+      enterShowError: params.enterShowError,
+      enterShowNotice: params.enterShowNotice,
+      horseId: h.id,
+    })}
     <h2>Pedigree</h2>
     ${pedigreeTable}
     ${nameForm}

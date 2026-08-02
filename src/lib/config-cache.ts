@@ -60,6 +60,28 @@ export interface ConfigValues {
   /** Live - see CLAUDE.md's conformation entry: changing this re-scores every already-inbred horse
    * in the game at once. */
   inbreeding_depression_factor: number;
+  /** Slice 0008 §2.1/§5.8. Shows are scheduled in game days, not ticks, so the calendar survives a
+   * change to how often the tick fires (CLAUDE.md §5.3). Live - changes when the *next* show is
+   * created, never one already scheduled. */
+  show_interval_game_days: number;
+  /** How far ahead of the current game day a show is created and opens for entries. Live. */
+  show_entry_window_game_days: number;
+  /** Slice 0008 §4.5. Snapshotted onto show_classes at creation (CLAUDE.md §5.5). */
+  show_noise_sd: number;
+  /** Slice 0008 §4.4. Snapshotted onto show_classes at creation. */
+  show_ideal_falloff: number;
+  /** Slice 0008 §6.2. Snapshotted onto show_classes at creation - the tick tops a class's field up
+   * to this many entries with show-barn horses. */
+  show_target_field_size: number;
+  /** Slice 0008 §5.4. Snapshotted onto show_classes at creation - the stand-in for the action
+   * budget that does not exist yet. */
+  show_max_entries_per_stable: number;
+  /** Slice 0008 §5.4. Snapshotted onto show_classes at creation - the same number
+   * min_breeding_age_game_days already uses (three game years). */
+  show_conformation_min_age_game_days: number;
+  /** Slice 0008 §5.8/§8.2. Live - read only when an admin stocks the NPC show barn. */
+  npc_show_barn_quality_band: string;
+  npc_show_barn_size: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;
