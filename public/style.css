@@ -1,7 +1,8 @@
 /* One stylesheet. Mobile first, large tap targets, readable type, no horizontal scrolling.
    Organized top to bottom: tokens -> base -> header/nav -> subnav -> layout -> forms ->
-   buttons -> tables -> cards -> badges -> collapsibles -> utility. New pages should reuse
-   these custom properties and classes rather than hardcoding colors - see CLAUDE.md §11. */
+   buttons -> tables -> cards -> badges -> collapsibles -> confirm controls -> images -> utility.
+   New pages should reuse these custom properties and classes rather than hardcoding colors -
+   see CLAUDE.md §11. */
 
 :root {
   /* Surfaces */
@@ -465,4 +466,119 @@ details.row-actions button {
 
 .confirm-checkbox input {
   width: auto;
+}
+
+/* ---------- Images (slice 0007) ---------- */
+
+.horse-row {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.horse-thumb {
+  flex: none;
+  width: 96px;
+  height: 72px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--color-surface-alt);
+}
+
+.horse-thumb--placeholder {
+  display: block;
+  border: 1px dashed var(--color-border);
+}
+
+.horse-portrait {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--radius);
+  margin-bottom: 0.75rem;
+  background: var(--color-surface-alt);
+}
+
+.horse-portrait--placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  max-width: 480px;
+  padding: 1.25rem;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+
+.horse-portrait--placeholder p {
+  margin: 0;
+}
+
+.image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.image-option {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  cursor: pointer;
+}
+
+.image-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.image-option img {
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 2px var(--color-border);
+}
+
+.image-option input:checked + img {
+  box-shadow: 0 0 0 3px var(--color-accent);
+}
+
+.image-option input:focus-visible + img,
+.image-option input:focus-visible + .image-placeholder-tile {
+  outline: 3px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.image-option-note {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.image-placeholder-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 160px;
+  height: 120px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--color-border);
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.image-option input:checked + .image-placeholder-tile {
+  box-shadow: 0 0 0 3px var(--color-accent);
+  border-style: solid;
 }

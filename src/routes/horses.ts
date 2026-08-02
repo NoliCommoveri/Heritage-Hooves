@@ -1,17 +1,18 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
-import { renderBarnList, renderBreedPage, renderHorsePage, displayNameFor, type BreedPreview } from '../render/horses';
+import { renderBarnList, renderBreedPage, renderHorsePage, renderImagePickerPage, displayNameFor, type BreedPreview } from '../render/horses';
 import {
   listStableHorses,
   getHorse,
   previewCoi,
   registerHorseName,
   setBarnName,
+  setHorseImage,
   countAliveHorses,
   type HorseRow,
 } from '../db/horses';
 import { getStableById, type StableRow } from '../db/stables';
-import { getBreedById, getLoci, type LocusRow } from '../db/breeds';
+import { getBreedById, getBreeds, getLoci, type LocusRow } from '../db/breeds';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
@@ -22,6 +23,7 @@ import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
+import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -264,6 +266,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       hasFoundingOffer,
       horse,
       description,
+      visibleColour: phenotype.visibleColour,
       ageYears,
       breed,
       gaited: phenotype.gaited,
@@ -364,4 +367,74 @@ export async function horseBarnNameRoute(ctx: RequestContext, horseId: number): 
   const barnName = (form.barn_name ?? '').trim();
   await setBarnName(ctx.env, horseId, barnName.length ? barnName : null);
   return redirect(`/horses/${String(horseId)}?barn_saved=1`);
+}
+
+/** The picker - slice 0007 §2.6/§6.2. Owner-only on both GET and POST, same shape as every other
+ * stable-scoped route (CLAUDE.md §11, 2026-08-02 sessions entry): a non-owner gets notFound(),
+ * never a 403 that would confirm the horse exists. */
+export async function horseImageRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+
+  const [breeds, stableHorses] = await Promise.all([getBreeds(ctx.env), listStableHorses(ctx.env, ownerStable.id)]);
+  const composition = JSON.parse(horse.composition) as Record<string, number>;
+  const options = imageOptionsFor(composition, breeds);
+
+  const groups: { breedCode: string; breedName: string; options: typeof options }[] = [];
+  for (const option of options) {
+    let group = groups.find((g) => g.breedCode === option.breedCode);
+    if (!group) {
+      group = { breedCode: option.breedCode, breedName: option.breedName, options: [] };
+      groups.push(group);
+    }
+    group.options.push(option);
+  }
+
+  // Slice 0007 §6.2's courtesy label - one extra pass over a stable's own horses, already loaded
+  // above. Two horses may share a picture; this only tells the child so, it never prevents the choice.
+  const usedBy = new Map<string, string>();
+  for (const other of stableHorses) {
+    if (other.id === horseId || !other.image_url) continue;
+    usedBy.set(other.image_url, displayNameFor(other));
+  }
+
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const genotype = parseGenotype(horse.genotype);
+  const ageDays = ctx.world.game_day - horse.born_game_day;
+  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
+  const isAdmin = ctx.account!.is_admin === 1;
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
+
+  const render = (error?: string) =>
+    renderImagePickerPage({
+      world: ctx.world,
+      isAdmin,
+      ownerStable,
+      hasFoundingOffer,
+      horse,
+      visibleColour: phenotype.visibleColour,
+      groups,
+      usedBy,
+      error,
+    });
+
+  if (method === 'GET') return htmlResponse(render());
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const submitted = form.image ?? NO_PICTURE_VALUE;
+
+  if (submitted === NO_PICTURE_VALUE) {
+    await setHorseImage(ctx.env, horseId, null);
+    return redirect(`/horses/${String(horseId)}`);
+  }
+  // The POST never trusts the submitted value (slice 0007 §2.6) - the allowed set is re-derived
+  // above from the horse's own composition and the live image_counts, not accepted from the form.
+  if (!isAllowedImagePath(submitted, options)) {
+    return htmlResponse(render('Choose one of the pictures shown, or "No picture".'));
+  }
+  await setHorseImage(ctx.env, horseId, submitted);
+  return redirect(`/horses/${String(horseId)}`);
 }
