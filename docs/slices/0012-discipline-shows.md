@@ -1,4 +1,4 @@
-# Slice 0011 — Discipline shows, and a fifth ability
+# Slice 0012 — Discipline shows, and a fifth ability
 
 **Status: specified, not built.**
 
@@ -12,6 +12,13 @@ that makes the four ability traits mean anything, every horse in the game has be
 since slice 0002, and nothing about them needs an NPC stable to be worth playing.
 
 **This slice has a hard precondition. See §4.2 — it must not deploy without the world reset.**
+
+**Renumbered from 0011 to 0012.** This was drafted as slice 0011 while another session was
+independently building ageing, death and removal, which took that number first. Nothing in the
+design changed in the renumber, but three things in it were rewritten against what that slice
+actually built — §3.4 (the show barn now thins on its own), §5.4 (maximum ages, now that horses die)
+and §6.5 (`show_entries` are kept forever). The migration numbers moved from 0058–0063 to
+**0061–0066**, since ageing took 0058–0060.
 
 ---
 
@@ -116,7 +123,15 @@ separately; it belongs with the NPC ceiling schedule, which is what makes a tier
 
 ### 3.4 No NPC discipline barn
 `stockShowBarn` still generates Quarter Horses only. It can pad five of the six new classes, because
-they are open to all breeds — see §5.4 for the one it cannot.
+they are open to all breeds — see §5.5 for the one it cannot.
+
+**Slice 0011 made this more pressing than it was when this document was drafted.** NPC show-barn
+horses now age and die on the same code path as everyone else, so the barn thins on its own over
+months of play, and `/admin/shows` gained a headcount-against-target warning for exactly that
+reason. Seven classes drawing padding from one thinning barn will empty it faster than one class
+did. Nothing here needs to change — restocking is the button that already exists — but the operator
+should expect to press it more often once this lands, and §13 treats it as a thing to watch rather
+than a surprise.
 
 ### 3.5 No per-discipline show record
 `horse_show_summary` stays one row per horse, counting starts and wins across everything. Schema
@@ -270,7 +285,18 @@ ability values scale with realization, so a horse entering Endurance is at or ne
 while a two-year-old racer is not. It gives a young horse somewhere to start and an older horse
 somewhere to still be useful, which is the shape a show career should have.
 
-No maximum ages. Ageing and decline is a later stage.
+**No maximum ages, and that is now a decision rather than a deferral.** When this was drafted,
+ageing did not exist. Slice 0011 has since built it, and settled the neighbouring question in a way
+this slice should follow rather than contradict: a **Failing** horse *"can still be shown and still
+be bred"*, and its scores are explicitly unchanged — §2.2 of that document promises a child a real
+last season, and §3.2 gives the reasoning, that a decline multiplier *"would retune every class in
+the game as a side effect of a slice that is supposed to be about death."*
+
+The same holds here. A veteran horse enters any discipline it qualifies for and competes at full
+expression. If a decline-with-age modifier is ever wanted it belongs with care and tack, where slice
+0011 §3.2 already parks it — and it would then apply to conformation and discipline classes alike,
+through the `trainingFactor`/`careModifier` line §7 already carries, with no change to either
+scorer.
 
 ### 5.5 Gaited Pleasure will have thin fields, and ships anyway
 
@@ -291,9 +317,9 @@ so in words.
 
 ## 6. Data
 
-Six migrations. Next free number is **0058**.
+Six migrations. Next free number is **0061**.
 
-### 6.1 `0058_quantitative_traits_agility.sql`
+### 6.1 `0061_quantitative_traits_agility.sql`
 
 One `INSERT` into `quantitative_traits`: `agility`, category `ability`, direction `higher_better`,
 `low_label` and `high_label` **NULL** (ability traits show no bar — §2.3), `locus_count` 10,
@@ -304,7 +330,7 @@ One `INSERT` into `quantitative_traits`: `agility`, category `ability`, directio
 > How quickly and cleanly a horse can turn, stop and change direction. Revealed by doing, not by
 > looking — not shown here.
 
-### 6.2 `0059_disciplines.sql`
+### 6.2 `0062_disciplines.sql`
 
 ```
 CREATE TABLE disciplines (
@@ -331,11 +357,11 @@ This is `breeds` for disciplines, and `ability_weights` is `ideal_vector`'s coun
 data the class snapshots at creation and never re-reads. `enabled` is the §12.2 toggle, and §13.1
 explains why it earns its place immediately.
 
-### 6.3 `0060_seed_disciplines.sql`
+### 6.3 `0063_seed_disciplines.sql`
 
 The six rows from §5.1, with §5.4's ages and §6.5's noise values.
 
-### 6.4 `0061_show_classes_discipline.sql` — a table rebuild
+### 6.4 `0064_show_classes_discipline.sql` — a table rebuild
 
 SQLite cannot `ALTER` a `CHECK` constraint or drop a `NOT NULL`, so this is a genuine rebuild:
 create `show_classes_new`, copy, drop, rename, recreate both indexes. **Migration `0057` is the
@@ -364,7 +390,7 @@ code is what `conditions.locus_code` already does.
 Also recreate the two indexes `0037` defines (`idx_show_classes_show_id`,
 `idx_show_classes_status`). A rebuild drops them with the table.
 
-### 6.5 `0062_show_entries_trait_snapshot.sql` — a rename, by rebuild
+### 6.5 `0065_show_entries_trait_snapshot.sql` — a rename, by rebuild
 
 Rename `conformation_snapshot` to **`trait_snapshot`**. Another rebuild (SQLite's `RENAME COLUMN`
 exists but the surrounding comment block and the `NOT NULL` semantics are worth restating in one
@@ -378,9 +404,16 @@ place; either approach is acceptable, and a rebuild matches `0057`'s precedent).
 
 Only the column *name* said conformation. This is cosmetic and it is worth one migration anyway: a
 column called `conformation_snapshot` holding `{"speed": 62}` is precisely the kind of thing that
-misleads a session with no memory of this one. The world reset makes the copy step free.
+misleads a session with no memory of this one.
 
-### 6.6 `0063_config_disciplines.sql`
+**Copy every row, and do not treat the world reset as permission to be careless here.** Slice 0011
+§5.5 made `show_entries` explicitly permanent — it declined schema §4.2's instruction to prune a
+dead horse's entries, on the grounds that *"deleting them would retroactively falsify every show it
+ever competed in"* and `/shows/:id/entries/:entryId` would 404 for a result that did happen. This
+table is now load-bearing history by an explicit decision, so the rebuild's copy step is the part to
+get right even though a reset means there is little to copy on the day it runs.
+
+### 6.6 `0066_config_disciplines.sql`
 
 One live tunable:
 
@@ -571,7 +604,7 @@ Pure functions only, per this codebase's established convention — there is no 
 3. **`ABILITY_TRAITS`** — exactly `stamina`, `jump_scope`, `speed`, `trainability`, `agility`, in
    `TRAITS` order, and disjoint from `CONFORMATION_TRAITS`.
 4. **`consistency.test.ts`, extended twice:**
-   - the `TRAITS vs migrations/0029` block scans **`0029` + `0058` in sequence** and asserts against
+   - the `TRAITS vs migrations/0029` block scans **`0029` + `0061` in sequence** and asserts against
      the whole of `TRAITS` — the pattern slice 0010 established when `LOCI` grew, and what proves
      `agility` is both correct and *last*.
    - a new block: every seeded discipline's `ability_weights` names only codes in `ABILITY_TRAITS`,
@@ -587,7 +620,7 @@ Pure functions only, per this codebase's established convention — there is no 
 ## 12. Verifying it by hand
 
 Against `wrangler dev --local`, after applying all migrations through `/admin/migrations` (**not**
-the CLI — it uses a different splitter, and `0061`/`0062` are multi-statement rebuilds).
+the CLI — it uses a different splitter, and `0064`/`0065` are multi-statement rebuilds).
 
 1. Confirm the world reset has happened (§4.2). Check a living horse's genotype has an `agility`
    key. **If it does not, stop.**
@@ -642,7 +675,18 @@ but not most of it.
 **Review `show_prize_schedule` when this lands.** It is a live tunable, read fresh at class creation,
 so it is one edit on `/admin/config` and no migration. Halving it is the obvious first move.
 
-### 13.3 Noise against a tighter spread
+### 13.3 The show barn empties faster
+
+§3.4. Slice 0011 gave NPC show-barn horses lifespans, so the barn thins without anyone touching it,
+and `/admin/shows` warns when it drops below `npc_show_barn_size`. Seven classes drawing on it
+instead of one will surface that warning sooner and more often.
+
+No code change here — restocking is an existing button — but it belongs on this list because the
+symptom is the one slice 0011 §2.3 was most worried about: *"show fields quietly shrinking for a
+reason nobody can see."* With seven classes it will not be quiet, which is the good version of the
+problem.
+
+### 13.4 Noise against a tighter spread
 
 §6.5. The estimates are estimates; step 10 of §12 is how they get checked.
 
@@ -662,6 +706,10 @@ so it is one edit on `/admin/config` and no migration. Halving it is the obvious
   ones.
 - **`docs/breed-ideal-vectors.md` §6.3** — remove `discipline_aptitudes` from the "needs a
   `disciplines` table, which does not exist" line. It exists now.
+- **`docs/slices/0011-ageing-death-and-removal.md` §3.2** — that slice parks a decline-with-age
+  performance modifier on the care and tack stage. Once this slice lands, the note is worth one
+  sentence saying such a modifier would apply through the shared modifier line to both class types
+  (§5.4 here), so nobody later builds it twice.
 
 ---
 
