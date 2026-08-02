@@ -15,6 +15,7 @@ import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { deleteOldEvents } from './events';
 import { killDueLethalFoals } from './health';
+import { assignLifespansAndNoticeFrailty, killDueOldHorses } from './ageing';
 
 export interface ExecuteTickParams {
   triggerSource: 'cron' | 'manual';
@@ -64,6 +65,19 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // it partly lived. Idempotency comes free from horses.status = 'alive' (see that function's
       // own comment) - no processed-marker column needed here either.
       await killDueLethalFoals(env, newGameDay);
+      // Slice 0011 §7.5: after foalDuePregnancies and killDueLethalFoals, before createDueShows.
+      // A mare due to foal and due to die of old age on the same tick foals first, then dies - the
+      // foal lives, and that ordering is deliberate (see the comment on the "after
+      // foalDuePregnancies" point below). assignLifespansAndNoticeFrailty runs before
+      // killDueOldHorses so a horse backfilled with a lifespan this same tick can, in principle,
+      // already be due - both share the natural_death_game_day column, so there is nothing to lose
+      // by keeping them adjacent.
+      await assignLifespansAndNoticeFrailty(env, newGameDay, config);
+      // Guarded by `status = 'alive'` on its own update (killDueLethalFoals' own comment explains
+      // why that alone gives idempotency) and ordered after it: both stages guard the same column,
+      // so whichever runs first wins, and a foal that is both GBED-terminal and at its natural end
+      // dies of GBED - the more specific, more useful end_reason (§7.5).
+      await killDueOldHorses(env, newGameDay, config);
       // Slice 0008 §6: show creation before judging, same reasoning as the breeding stages above -
       // both stages guard their own writes (the UNIQUE(scheduled_game_day, tier) index and each
       // class's own status column), so re-running them against the same newGameDay is a no-op.

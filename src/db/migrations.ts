@@ -58,6 +58,9 @@ import m0054 from '../../migrations/0054_horse_conditions.sql';
 import m0055 from '../../migrations/0055_horse_knowledge.sql';
 import m0056 from '../../migrations/0056_config_health.sql';
 import m0057 from '../../migrations/0057_ledger_add_vet_kind.sql';
+import m0058 from '../../migrations/0058_horses_ageing.sql';
+import m0059 from '../../migrations/0059_breeding_cancellation.sql';
+import m0060 from '../../migrations/0060_config_ageing.sql';
 
 export interface MigrationFile {
   name: string;
@@ -132,6 +135,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0055_horse_knowledge.sql', sql: m0055 },
   { name: '0056_config_health.sql', sql: m0056 },
   { name: '0057_ledger_add_vet_kind.sql', sql: m0057 },
+  { name: '0058_horses_ageing.sql', sql: m0058 },
+  { name: '0059_breeding_cancellation.sql', sql: m0059 },
+  { name: '0060_config_ageing.sql', sql: m0060 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

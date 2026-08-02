@@ -11,10 +11,11 @@ import type { TableCount } from '../db/reset';
 import type { AdminShowSummary } from '../db/shows';
 import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import type { ConditionCensusRow } from '../db/health';
+import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'health' | 'migrations' | 'reset';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'health' | 'ageing' | 'migrations' | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -28,6 +29,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
     { label: 'Money', href: '/admin/money', active: active === 'money' },
     { label: 'Health', href: '/admin/health', active: active === 'health' },
+    { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -67,6 +69,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/shows">Shows</a></p>
     <p><a class="button-link" href="/admin/money">Money</a></p>
     <p><a class="button-link" href="/admin/health">Health (horses)</a></p>
+    <p><a class="button-link" href="/admin/ageing">Ageing</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -232,6 +235,31 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>
       <p class="muted">Only affects foals born after this changes - a foal already carrying a lethal condition has its death day snapshotted at birth, so retuning this never moves it.</p>
+      <h2>Ageing</h2>
+      <label>Lifespan mean (game days)
+        <input type="text" inputmode="numeric" name="lifespan_mean_game_days" value="${String(v.lifespan_mean_game_days)}">
+      </label>
+      <label>Lifespan standard deviation (game days)
+        <input type="text" inputmode="numeric" name="lifespan_sd_game_days" value="${String(v.lifespan_sd_game_days)}">
+      </label>
+      <label>Lifespan minimum (game days)
+        <input type="text" inputmode="numeric" name="lifespan_min_game_days" value="${String(v.lifespan_min_game_days)}">
+      </label>
+      <label>Lifespan maximum (game days)
+        <input type="text" inputmode="numeric" name="lifespan_max_game_days" value="${String(v.lifespan_max_game_days)}">
+      </label>
+      <p class="muted">These four apply only to horses created after the change and never move a death date already assigned - the same note lethal_foal_death_game_days carries above, for the same reason.</p>
+      <label>Frailty window (game days)
+        <input type="text" inputmode="numeric" name="frailty_window_game_days" value="${String(v.frailty_window_game_days)}">
+      </label>
+      <label>Veteran age (game days)
+        <input type="text" inputmode="numeric" name="veteran_age_game_days" value="${String(v.veteran_age_game_days)}">
+      </label>
+      <p class="muted">Both live - read fresh on every page view. Changing the frailty window only changes who currently reads as failing and when the notice next fires; it moves no death date. Shortening it can mean a horse already announced as failing stops reading that way, which is odd but harmless.</p>
+      <label>Ended horses stay in the barn list for (game days)
+        <input type="text" inputmode="numeric" name="barn_shows_ended_game_days" value="${String(v.barn_shows_ended_game_days)}">
+      </label>
+      <p class="muted">A dead or retired-away horse drops out of the barn list after this many game days, but stays reachable forever from a stable's Past horses page.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
@@ -559,6 +587,9 @@ export function renderShowsAdminPage(params: {
   world: WorldRow;
   barnCount: number;
   barnTarget: number;
+  /** Slice 0011 §2.3/§8.2: the barn's five oldest living horses, oldest first, with their own
+   * age state - the show barn ages and dies on the same code path as everyone else's horses. */
+  oldestBarnHorses: { name: string; ageState: string }[];
   qualityBands: Record<string, number>;
   defaultBand: string;
   recentShows: AdminShowSummary[];
@@ -581,13 +612,30 @@ export function renderShowsAdminPage(params: {
     </tr>`
   );
 
+  // Slice 0011 §2.3: what must not happen is show fields quietly shrinking for a reason nobody can
+  // see - so a below-target barn gets a visible warning, not just a smaller number.
+  const belowTargetWarning =
+    params.barnCount < params.barnTarget
+      ? html`<p class="notice">Below target by ${String(params.barnTarget - params.barnCount)} - horses in this barn age and die like any other, and nothing restocks it automatically. Use the button below.</p>`
+      : raw('');
+
+  const oldestBarnRows = params.oldestBarnHorses.map((h) => html`<tr><td>${h.name}</td><td>${h.ageState}</td></tr>`);
+
   const body = html`
     <h1>Shows</h1>
     ${errorBox(params.error)}
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>The NPC show barn</h2>
-      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(params.barnCount)} of a target ${String(params.barnTarget)} Quarter Horses. It never breeds, ages out, or improves - stocking it only ever tops it up to the target, never past it.</p>
+      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(params.barnCount)} of a target ${String(params.barnTarget)} Quarter Horses. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops it up to the target, never past it.</p>
+      ${belowTargetWarning}
+      ${params.oldestBarnHorses.length
+        ? html`
+          <table>
+            <thead><tr><th>Horse</th><th>State</th></tr></thead>
+            <tbody>${oldestBarnRows}</tbody>
+          </table>`
+        : raw('')}
       <form method="post" action="/admin/shows">
         <input type="hidden" name="action" value="stock_barn">
         <label>Quality band
@@ -716,4 +764,81 @@ export function renderHealthAdminPage(params: { world: WorldRow; census: Conditi
     <p class="muted">If a condition is firing too often or almost never, the lever is the breed's founding_allele_pool frequency, not this page - see CLAUDE.md's slice 0010 entry.</p>
   `;
   return shell(params.world, body, 'Health', 'health');
+}
+
+/**
+ * /admin/ageing (slice 0011 §8.4): the oldest living horses in the game (so the operator can see
+ * the population's age structure), deaths in the last window (so they can see the rate rather than
+ * infer it), and one control - bring a chosen horse's end forward to today, the same shape as
+ * /admin/breeding's force-twins control and for the same reason: §1's verification steps are
+ * otherwise four real months away. Labelled here as a testing control, behind the same admin login
+ * everything else on this page is behind.
+ */
+export function renderAgeingAdminPage(params: {
+  world: WorldRow;
+  livingHorses: LivingHorseAdminDisplay[];
+  recentDeaths: RecentDeathAdminDisplay[];
+  recentDeathsWindowGameDays: number;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const oldestRows = params.livingHorses.slice(0, 20).map(
+    (h) => html`
+    <tr>
+      <td><a href="/horses/${String(h.id)}">${h.name}</a></td>
+      <td>${h.stableName}</td>
+      <td>${String(h.bornGameDay)}</td>
+      <td>${h.ageState}</td>
+    </tr>`
+  );
+
+  const deathRows = params.recentDeaths.map(
+    (d) => html`
+    <tr>
+      <td><a href="/horses/${String(d.id)}">${d.name}</a></td>
+      <td>${d.stableName}</td>
+      <td>${String(d.endedGameDay)}</td>
+      <td>${d.endReason ?? raw('&mdash;')}</td>
+    </tr>`
+  );
+
+  const horseOptions = params.livingHorses.map(
+    (h) => html`<option value="${String(h.id)}">${h.name} (${h.stableName}, born game day ${String(h.bornGameDay)}, ${h.ageState})</option>`
+  );
+
+  const body = html`
+    <h1>Ageing</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Oldest living horses</h2>
+      <table>
+        <thead><tr><th>Horse</th><th>Stable</th><th>Born (game day)</th><th>State</th></tr></thead>
+        <tbody>${oldestRows.length ? oldestRows : html`<tr><td colspan="4" class="muted">No living horses yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Deaths in the last ${String(params.recentDeathsWindowGameDays)} game days</h2>
+      <table>
+        <thead><tr><th>Horse</th><th>Stable</th><th>Ended (game day)</th><th>End reason</th></tr></thead>
+        <tbody>${deathRows.length ? deathRows : html`<tr><td colspan="4" class="muted">None in this window.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Bring a horse's end forward</h2>
+      <p class="muted">Testing control - moves the chosen horse's own death date to today, so it dies old age on the next tick. Never changes its age, pedigree, COI or show eligibility.</p>
+      <form method="post" action="/admin/ageing">
+        <input type="hidden" name="action" value="force_death">
+        <label>Horse
+          <select name="horse_id" required>${horseOptions.length ? horseOptions : html`<option value="" disabled selected>No living horses</option>`}</select>
+        </label>
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, move this horse's own end to today.
+        </label>
+        <button type="submit" class="secondary">Bring forward</button>
+      </form>
+    </div>
+  `;
+  return shell(params.world, body, 'Ageing', 'ageing');
 }

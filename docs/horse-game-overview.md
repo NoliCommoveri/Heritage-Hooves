@@ -410,6 +410,13 @@ This wants deciding before the first horse dies rather than after. The same is t
 
 **Worth thinking about:** whether decline is visible in advance. An ageing horse showing signs gives a child the chance to plan a last season and retire deliberately, which is kinder than an unannounced disappearance and closer to true. Degenerative conditions (§3d) already produce this shape naturally.
 
+**Built 2026-08-02, in `docs/slices/0011-ageing-death-and-removal.md`** (§14 above records the announced-death decision itself). The shape that landed:
+
+- **Lifespan** is a normal draw — mean 23 game years, sd 3.5, clamped to 14–33 — rolled once at birth from the horse's own seed and snapshotted, never a hazard rolled every tick. Roughly one horse in thirteen dies before eighteen, about one in eight passes twenty-seven. Never rendered to a player in any form.
+- **The failing window** is 1.5 game years (about eighteen monthly shows), long enough to span a login gap and leave room for a real last season.
+- **"Retire away"** is the name for voluntary removal — never "sell", "cull", or "delete". It is free, one-way, costs no turn, and moves no money; the confirmation page names any active pregnancy, booked covering, or unjudged show entry it is about to cancel or withdraw.
+- **On retention, this departs from `docs/horse-game-schema.md` §4.2's recommendation** on two points, both argued in the slice document's §5.5: `image_url` is kept (the storage argument doesn't survive contact with a column that's a few dozen bytes), and `show_entries` are kept rather than pruned, because deleting them would retroactively falsify every show the horse competed in.
+
 ---
 
 ## 8. Care, tack, and professions
@@ -701,7 +708,7 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Care state and tack** — the modifiers, wear, and the farrier/vet call as a client action against NPC providers.
 
-**Ageing, death, and removal** (§7a) — early enough that the first losses happen under rules that were designed rather than discovered. Specified in `docs/slices/0011-ageing-death-and-removal.md`, which settles §14's "does death arrive announced?" (it does) and takes three further decisions in its §2. That document departs from `docs/horse-game-schema.md` §4.2 on two points, with reasons in its §5.5: `image_url` is kept on death, and `show_entries` are **not** pruned, because deleting a dead horse's entries would retroactively falsify every show it ever competed in. **Taken ahead of care and tack**, at the operator's direction on 2 Aug 2026 — the two are independent, and the tuning that ageing needs is a longer feedback loop than tack's.
+**Ageing, death, and removal** (§7a) — early enough that the first losses happen under rules that were designed rather than discovered. Built in `docs/slices/0011-ageing-death-and-removal.md`, which settles §14's "does death arrive announced?" (it does) and takes three further decisions in its §2. That document departs from `docs/horse-game-schema.md` §4.2 on two points, with reasons in its §5.5: `image_url` is kept on death, and `show_entries` are **not** pruned, because deleting a dead horse's entries would retroactively falsify every show it ever competed in. **Taken ahead of care and tack**, at the operator's direction on 2 Aug 2026 — the two are independent, and the tuning that ageing needs is a longer feedback loop than tack's.
 
 **NPC stables as stored entities** — first as static show-field filler, without breeding.
 
