@@ -91,12 +91,17 @@ export function renderFoundingPage(params: {
           <input type="checkbox" name="chosen_${String(candidate.slot_index)}" value="yes">
           Claim this one
         </label>
+        <label>
+          Call ${candidate.sex === 'mare' ? 'her' : 'him'} (optional)
+          <input type="text" name="barn_name_${String(candidate.slot_index)}" maxlength="60" placeholder="${candidate.origin_prefix} ${candidate.name_part}">
+        </label>
       </div>`
     );
     body = html`
       <h1>New horses</h1>
       ${errorBox(params.error)}
       <p>Choose ${String(offer.mare_claims)} mare${offer.mare_claims === 1 ? '' : 's'} and ${String(offer.stallion_claims)} stallion${offer.stallion_claims === 1 ? '' : 's'} from the ${String(offer.mare_candidates + offer.stallion_candidates)} below. The rest won't be seen again.</p>
+      <p class="muted">Each horse's registered name stays as shown - that's their record of where they came from. But you can give any of them a barn name here, right now, instead of picking one later.</p>
       <form method="post" action="/stables/${String(s.id)}/founding">
         <input type="hidden" name="action" value="claim">
         ${rows}

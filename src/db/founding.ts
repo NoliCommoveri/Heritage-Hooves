@@ -237,6 +237,11 @@ export interface ClaimOfferParams {
   stableName: string;
   stableCapacity: number;
   chosenCandidateIds: number[];
+  /** Barn names typed on the claim form, keyed by candidate id - optional per horse, trimmed and
+   * empty-to-null already by the caller. Never touches registered_name (§6.5's synthetic origin
+   * name is permanent); this only sets horses.barn_name, same column the existing per-horse "Barn
+   * name" form writes, just filled in at claim time instead of on a later visit. */
+  barnNames: Map<number, string | null>;
   gameDay: number;
   worldTickSeq: number;
   estrousCycleTicks: number;
@@ -286,6 +291,7 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
         breedCode: breed.code,
         registeredName,
         breederPrefix: originPrefix,
+        barnName: params.barnNames.get(candidate.id) ?? null,
         bornGameDay: params.gameDay - candidate.age_game_days,
         genotype: parseGenotype(candidate.genotype),
         rngSeed: candidate.rng_seed,

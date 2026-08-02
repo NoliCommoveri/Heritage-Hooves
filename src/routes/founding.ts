@@ -116,6 +116,11 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
 
     const candidates = await getCandidatesForOffer(ctx.env, offer.id);
     const chosenCandidateIds = candidates.filter((c) => form[`chosen_${String(c.slot_index)}`] === 'yes').map((c) => c.id);
+    const barnNames = new Map<number, string | null>();
+    for (const c of candidates) {
+      const typed = (form[`barn_name_${String(c.slot_index)}`] ?? '').trim();
+      barnNames.set(c.id, typed.length ? typed : null);
+    }
 
     const result = await claimOffer(ctx.env, {
       offerId: offer.id,
@@ -123,6 +128,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       stableName: stable.name,
       stableCapacity: stable.capacity,
       chosenCandidateIds,
+      barnNames,
       gameDay: ctx.world.game_day,
       worldTickSeq: ctx.world.tick_seq,
       estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
