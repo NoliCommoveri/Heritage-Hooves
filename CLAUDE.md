@@ -204,7 +204,7 @@ This is flagged as an open question in the design documents. It is written here 
 | Genetics core | built (2026-08-02) | Two horses, one breeding, a foal described in words. Five loci (E, A, CR, G, DMRT3), full pedigree + tabular COI. Admin founder form at `/admin/horses/new`; barn at `/stables/:id/horses`; breeding at `/stables/:id/breed`; horse page at `/horses/:id`. See `docs/slices/0002-genetics-core.md`. Its instant-foaling `breedNow` is gone — see the next row. |
 | Pregnancy, heat and fertility | built (2026-08-03) | `breedNow`'s instant foaling is replaced by booked coverings, a 4-tick oestrous cycle, a conception roll (age, fertility trait, inbreeding), real gestation, and twins (~1 in 330, both survive). Two new tick stages resolve coverings and foal due pregnancies. Admin tunables + force-twins control at `/admin/breeding`. See `docs/slices/0003-breeding-and-fertility.md` and §11's 2026-08-03 entry below. |
 | Cooled and frozen semen | specified, not built | Blocked on 0003 (now built). See `docs/slices/0004-semen-storage.md`. |
-| Founding stock generator | not started | |
+| Founding stock generator | specified, not built | Also seeds the seven remaining breeds' allele pools, and brings the parent PIN forward as a chore-reward grant. Independent of 0004 — either can land first. See `docs/slices/0005-founding-stock.md`. |
 | Image slot | not started | |
 | One polygenic trait | not started | |
 | One show class | not started | |
