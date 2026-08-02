@@ -655,13 +655,13 @@ The tables that must exist correctly from the first migration, because retrofitt
 
 ## 13. Open questions this document does not settle
 
-- **Migration convention.** §11b flags it; still a spec-session question.
+- ~~**Migration convention.** §11b flags it; still a spec-session question.~~ **Settled:** `CLAUDE.md` §8 — `NNNN_short_description.sql`, forward-only, one logical change per file. Adopted by slice 0001.
 - **Index list.** Deliberately omitted — indexes should follow the queries the first real screens make, not be guessed now.
 - **The exact COI formula** and how `path_count` feeds it. Genetics session.
 - **Is profession per account or per stable?** §2.3. The only place multi-stable ownership meaningfully collides with an existing rule.
 - **Standards or circles** for the registry, and whether displacement is acceptable between siblings. §6.6.
 - **What else tokens buy**, and how much of it falls in the *advantage* category. §2.7.
-- **Whether a stable's prefix can be changed at all** after horses have been bred under it. The history table supports it; whether it should be allowed is a different question.
+- ~~**Whether a stable's prefix can be changed at all** after horses have been bred under it.~~ **Decided 2 Aug 2026, in slice 0001:** changeable until the stable's first horse is bred, then locked by a `prefix_locked` flag. Note that slice 0001 also makes `stable_prefix_history.prefix` globally unique, so the table doubles as the registry of every prefix ever claimed — a retired name cannot be picked up by another stable, which §2.2 as written would have allowed.
 - **How many stables one account may hold.** Unlimited invites a child to found a stable per horse; a small cap in config is probably wise.
 - **Fixed CST or DST-following Central?** §1.2. Lean is DST-following, so the lunchtime tick stays at lunchtime.
 - **Events retention.** §10.1.

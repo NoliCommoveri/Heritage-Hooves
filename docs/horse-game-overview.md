@@ -690,7 +690,7 @@ The common failure is building forty conformation traits and never shipping a sh
 - **What else tokens buy**, and how much of that catalogue falls under *advantage* rather than access (§1b).
 - **Do the per-tick action allowance and the tick schedule hold the daily total constant**, or is the daily total meant to rise with more ticks (§6a)?
 - **Standards or circles** for the registries, and whether displacement between siblings is acceptable (§9a).
-- **Can a stable's prefix change** once horses have been bred under it (§5d)?
+- ~~**Can a stable's prefix change** once horses have been bred under it (§5d)?~~ **Decided 2 Aug 2026, in slice 0001:** free to change until the stable breeds its first horse, permanent afterwards. Retired prefixes are never reissued to anyone.
 - **Are library images matched to phenotype**, freely chosen, or matched by default with an override?
 - **Recognised crosses** — which pairings, and do they get full breed treatment?
 - **Show cadence**, set against the time scale and action budget together.
