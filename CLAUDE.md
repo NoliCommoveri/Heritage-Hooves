@@ -204,19 +204,20 @@ This is flagged as an open question in the design documents. It is written here 
 | Genetics core | built (2026-08-02) | Two horses, one breeding, a foal described in words. Five loci (E, A, CR, G, DMRT3), full pedigree + tabular COI. Admin founder form at `/admin/horses/new`; barn at `/stables/:id/horses`; breeding at `/stables/:id/breed`; horse page at `/horses/:id`. See `docs/slices/0002-genetics-core.md`. Its instant-foaling `breedNow` is gone — see the next row. |
 | Pregnancy, heat and fertility | built (2026-08-03) | `breedNow`'s instant foaling is replaced by booked coverings, a 4-tick oestrous cycle, a conception roll (age, fertility trait, inbreeding), real gestation, and twins (~1 in 330, both survive). Two new tick stages resolve coverings and foal due pregnancies. Admin tunables + force-twins control at `/admin/breeding`. See `docs/slices/0003-breeding-and-fertility.md` and §11's 2026-08-03 entry below. |
 | Cooled and frozen semen | specified, not built | Blocked on 0003 (now built). See `docs/slices/0004-semen-storage.md`. |
-| Founding stock generator | specified, not built | Also seeds the seven remaining breeds' allele pools, and brings the parent PIN forward as a chore-reward grant. Independent of 0004 — either can land first. See `docs/slices/0005-founding-stock.md`. |
+| Founding stock generator | specified, not built | The batch-and-claim flow every later import reuses. Also seeds the seven remaining breeds' **colour and gait allele pools** (no ideal vectors, no disease panels, no class eligibility — those wait for the systems that read them), and brings the parent PIN forward as a chore-reward grant of a batch, with no token currency in between. Independent of 0004 — either can land first. See `docs/slices/0005-founding-stock.md`. |
 | Image slot | not started | |
 | One polygenic trait | not started | |
-| One show class | not started | |
-| Tokens | not started | |
+| One show class | not started | The Quarter Horse's ideal vector and one class judged against it. Other breeds' ideals come with the breeds stage below. |
 | Turns and tick | not started | |
-| Health, first pass | not started | |
+| Tokens | not started | The account balance, token ledger and product catalogue, built over the PIN, the attempt log and the batch generator that slice 0005 already puts in place. Imports are the catalogue's first entry. Nothing here is a prerequisite for the chore-reward loop, which works from 0005 onwards. |
+| Health, first pass | not started | The Quarter Horse's Mendelian conditions plus genotype testing. |
 | Care and tack | not started | |
 | Ageing and death | not started | |
 | NPC stables | not started | |
 | Market | not started | |
 | Professions | not started | |
 | Registries | not started | |
+| The other seven breeds | not started | The non-colour half of breed identity for every breed but the Quarter Horse: ideal vectors, eligible class types and aptitudes, height and weight ranges, disease panels. Data entry against machinery already tuned on one breed — which is why it waits. |
 
 ---
 
