@@ -298,7 +298,13 @@ This removes image generation from the build entirely — no asset pipeline, no 
 
 **The slot is permanent, not temporary.** If generated art arrives, a chosen image should override it for that horse rather than being replaced by it.
 
-**Worth deciding:** whether images are tied to phenotype at all. A library organised by colour, defaulting to images matching the horse's actual coat, keeps the visual layer honest. Free selection is simpler. The middle position — default to matching, allow overriding — is probably right, but costs a little library metadata.
+**Decided 2 Aug 2026, in conversation: images are matched on breed, and on nothing else.** The question had been whether to tie images to phenotype — a library organised by colour, defaulting to the horse's actual coat, against free selection, against the middle position of matching-by-default with an override.
+
+Breed-only matching wins for two reasons. The library is being generated per breed with the colours chosen by hand at generation time, so the operator is already doing the colour curation that library metadata would otherwise have to encode. And a library that promises to match *colour* cannot keep that promise: the engine produces twelve visible colours today and the design plans roughly sixteen loci, at which point the colour space is combinatorial and no hand-built library will contain a silver dapple sooty roan tobiano. A library that never claimed to match colour is more honest than one that stops matching exactly as the colour genetics get interesting. Within a breed's set the player chooses freely.
+
+**The consequence, accepted:** a child can pick a chestnut picture for a black horse. The picker shows the horse's actual colour in text beside the grid, and adding a colour tag to filenames later is purely additive if it turns out to matter.
+
+**The library is a numbered set per breed, and the count is a column on the breed row.** Files are named `<breed code>-NN`, never renumbered and never deleted, so the app derives the list from the breed's code plus its `image_count` — no manifest file to hand-edit, no directory listing (Cloudflare's static assets have none), and adding images is an upload plus one number. This is what makes the library the operator's to grow without a session's help, which matters more here than in most places: the person running this project has no terminal, and the browser upload path is the only one they have.
 
 ### 5c. Generated art
 
@@ -679,9 +685,9 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Founding stock generator** — an unrelated horse of a given quality band drawn from a breed's allele pool, arriving as a private batch the player claims from. Three things land together here, because they are one screen: the generator, **all eight breeds' founding allele pools** (colour and gait only — §4a), and **the parent's PIN**, gating a grant of a further batch as a chore reward. The same generator serves imports later, so it is worth writing once and parameterising now. This is the point at which the game becomes playable by the people it is for.
 
-**Image slot** — library hosting and the picker (§5b).
+**Image slot** — library hosting and the picker (§5b). Matched on breed only, per the decision recorded there; the library is a numbered set per breed and its size is a column on the breed row, so it grows by upload rather than by code change.
 
-**One polygenic trait end to end** — potential, expression, display.
+**One polygenic trait end to end** — potential, expression, display. Specified in `docs/slices/0006-conformation.md`, which corrects one thing in §2b: conformation traits are bidirectional measurements rather than ceilings, so realization moves a horse away from the population middle towards its own genetic value in either direction. §2b's `potential × realization` framing stays correct for the ability traits.
 
 **One show class that scores it** — the Quarter Horse's ideal vector, and the class that judges against it. A playable loop exists here. Worth stopping to actually play it.
 
@@ -715,6 +721,19 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Generated art, recognised crosses, trait reference icons** — the long tail.
 
+### Two pieces sit outside this sequence
+
+Both are fully specified, neither is built, and neither blocks or is blocked by anything in the list above. They can land whenever there is an appetite for them.
+
+- **Cooled and frozen semen** (`docs/slices/0004-semen-storage.md`) — depends only on the breeding slice, which is built. It is the answer to the stallion fertility decline that already exists in the game.
+- **The parent's PIN** (`docs/slices/0005-founding-stock.md` §7) — separated out when the founding stock slice was built. The chore-reward loop works today via an admin login; the PIN is what moves it onto the child's own phone.
+
+### How the numbering works, because it is not the build order
+
+**Slice document numbers record when a document was written, not when it is built.** Slice 0005 was built before slice 0004 was started, and the image slot is specified after slice 0006 but built before it. A number is an identifier; this section is the order.
+
+**Migration numbers are claimed at build time, not when a slice is written.** A slice document proposing `0026`–`0029` is stating how many migrations it expects, not reserving those numbers — whichever slice is built first takes them. `CLAUDE.md` §9 already says to check `migrations/` for what actually exists rather than trusting a document, and this is the main reason it says so.
+
 ---
 
 ## 14. Open questions
@@ -734,7 +753,7 @@ The common failure is building forty conformation traits and never shipping a sh
 - **Do the per-tick action allowance and the tick schedule hold the daily total constant**, or is the daily total meant to rise with more ticks (§6a)?
 - **Standards or circles** for the registries, and whether displacement between siblings is acceptable (§9a).
 - ~~**Can a stable's prefix change** once horses have been bred under it (§5d)?~~ **Decided 2 Aug 2026, in slice 0001:** free to change until the stable breeds its first horse, permanent afterwards. Retired prefixes are never reissued to anyone.
-- **Are library images matched to phenotype**, freely chosen, or matched by default with an override?
+- ~~**Are library images matched to phenotype**, freely chosen, or matched by default with an override?~~ **Decided 2 Aug 2026, in conversation:** matched on breed and nothing else, with free choice within a breed's set. Colour matching is not attempted, because the colour space is combinatorial once the remaining loci land and the library would quietly stop being able to keep the promise. See §5b.
 - ~~**Recognised crosses** — which pairings, and do they get full breed treatment?~~ **Partly decided 2 Aug 2026, in conversation:** the Paint case — the one that forced the question — is resolved by making Paint a display alias on Quarter Horse rather than a breed (§4, §4c), so no recognised-cross machinery is needed and none is built. Still open for a genuine two-pool cross such as Quarab, if one is ever wanted.
 - **Show cadence**, set against the time scale and action budget together.
 - ~~**Does the founding population arrive as stock players already own**, or as something they choose from and buy into?~~ **Decided 2 Aug 2026, in slice 0005:** a private rolled batch per stable, free, from which the child claims a fixed number — two mares and one stallion out of six candidates — after choosing their breed from the eight. Not a blind draw, which gives the player nothing to think about, and not a shared pool, which at five players is a race the fastest child wins every time. Further batches are granted by the parent behind the PIN (§1b).

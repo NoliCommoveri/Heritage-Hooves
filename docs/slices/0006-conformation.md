@@ -1,6 +1,8 @@
 # Slice 0006 — Conformation: potential, expression and display
 
-**Status:** ready to build. Slices 0001, 0002, 0003 and 0005 are built. Slice 0004 (semen storage) is specified but **not** built, and nothing here depends on it — the two can land in either order. Slice 0005 §7 (the parent's PIN) is specified but **not** built; nothing here depends on it either. Nothing in this document exists yet.
+**Status:** specified, and **second in the queue rather than first** — the image slot is built before it (§9). Slices 0001, 0002, 0003 and 0005 are built. Slice 0004 (semen storage) is specified but **not** built, and nothing here depends on it — the two can land in either order. Slice 0005 §7 (the parent's PIN) is specified but **not** built; nothing here depends on it either. Nothing in this document exists yet.
+
+**Nothing here depends on the image slot either** — if that slice slips, this one is still buildable exactly as written. The order between them is a choice about what the children see next, not a technical dependency.
 
 **Who this is for.** A Claude Code session that has read `CLAUDE.md` and nothing else. Everything you need is in this document. **Do not read `docs/horse-game-overview.md` or `docs/horse-game-schema.md` in full.** Sections are cited inline where they matter — read only those.
 
@@ -175,7 +177,9 @@ For a unidirectional trait the anchor is 0 rather than 50, which recovers overvi
 
 ## 5. Data
 
-### 5.1 New table: `quantitative_traits` (migration `0026`)
+Four migrations. **The numbers below are provisional** — the image slot is built first and takes `0026` onwards, so read `migrations/` for the next free number and renumber these as you go. See §9.
+
+### 5.1 New table: `quantitative_traits` (first new migration)
 
 Schema doc §3.4, with three additions argued below.
 
@@ -193,7 +197,7 @@ Additions to the schema doc's list: `direction` (forced by §2.2), `low_label`/`
 
 **This table is display metadata. It is not the iteration order for anything genetic.** `TRAITS` in `polygenic.ts` stays the single source of truth for order, exactly as `LOCI` does, because the RNG draws against it. Do not reorder `TRAITS`, do not add to it, and do not iterate the database rows to make a random draw. Where the engine needs `direction` or an anchor, define it in a new `src/engines/conformation/traits.ts` that **imports** `TRAITS` rather than restating it, and mirror it into the seed migration.
 
-Seed nine rows (migration `0027`):
+Seed nine rows (second new migration):
 
 | code | category | direction | low ↔ high |
 |---|---|---|---|
@@ -209,7 +213,7 @@ Seed nine rows (migration `0027`):
 
 `hock_set`'s teaching text is worth writing properly — *post-legged* at one extreme and *sickle-hocked* at the other are the real terms, both are faults, and it is the clearest example in the set of a measurement where the middle is what a breed wants. It sets up the next slice's ideal vector better than any of the other three.
 
-### 5.2 New column: `horses.environmental_noise` (migration `0028`)
+### 5.2 New column: `horses.environmental_noise` (third new migration)
 
 `TEXT`, nullable. JSON, shape documented in the migration comment and in `src/engines/conformation/`:
 
@@ -227,7 +231,7 @@ Written at three creation points, all of which already exist and all of which mu
 
 **No change to `pregnancies`.** Schema doc §10 mentions a `rolled_noise` column alongside `rolled_genotype`; it is not needed. Genetics are rolled at conception because the pregnancy is a stored fact about a foal that does not exist yet and whose genotype must not drift; environmental noise is by definition applied at birth, nothing displays a pregnancy's conformation, and the foal's seed is already fixed at conception — so rolling it at foaling from that seed is both simpler and more faithful. Note the deviation in your summary.
 
-### 5.3 Config (migration `0029`)
+### 5.3 Config (fourth new migration)
 
 | Key | Value | Kind |
 |---|---|---|
@@ -271,21 +275,18 @@ Four screens, no new routes, no new pages.
 3. **Full siblings differ.** Two foals from the same pairing with different `foal_rng_seed`s get different genetic values. (Acceptance step 5.)
 4. **Inbreeding is monotonic.** Rising COI moves the mature value strictly towards 50, never past it, and COI 0 changes nothing.
 5. **Legacy fallback is stable.** A horse with null `environmental_noise` produces the same numbers across two calls, and produces the *same* numbers when `conformation_noise_sd` is changed — this is what §2.5 actually promises.
-6. **Consistency.** Extend `test/genetics/consistency.test.ts`, which already does this for `LOCI` against `0015_seed_loci.sql`: the codes seeded by `0027` must equal `TRAITS` exactly, in order, with matching `locus_count` and `direction`. It parses the migration text; follow that pattern rather than inventing a second one.
+6. **Consistency.** Extend `test/genetics/consistency.test.ts`, which already does this for `LOCI` against `0015_seed_loci.sql`: the codes seeded by the trait-seed migration must equal `TRAITS` exactly, in order, with matching `locus_count` and `direction`. It parses the migration text; follow that pattern rather than inventing a second one.
 7. **Clamping.** `potential = 0` and `potential = 20` both land inside 1..99 after a large noise draw.
 
 ---
 
-## 9. Numbering, and what this displaces
+## 9. Where this sits in the order, and how to number the migrations
 
-**Migrations `0026`–`0029`.** Slice 0005 §13 said the deferred PIN work would take `0026`; it does not, because this slice landed first. Whoever builds the PIN follow-up starts at `0030` — the numbers are sequence, not identity, and slice 0005 §7 is otherwise unchanged and still accurate.
+**The image slot is built before this slice, not after it.** An earlier draft of this document argued the reverse, on the grounds that the image library did not exist and that overview §14 had not decided whether images were matched to phenotype. **Both were resolved in conversation on 2 August 2026 and the reordering is withdrawn** — the operator is generating the library per breed and uploading it through GitHub's web editor, and images are matched on breed only (overview §5b, §14). The overview §13 build order, which always had the image slot first, is correct as written and needs no change on this point.
 
-**This slice takes the number `0006`, ahead of the image slot**, which the overview §13 build order places before it. Two reasons, both worth recording so the reordering is not read as an oversight:
+So the sequence around this slice is: **image slot → this slice → one show class.** Nothing about the content of this document changes; only its position.
 
-- The image slot needs a hosted image library that does not exist, and the operator has no terminal with which to generate or upload one (CLAUDE.md §1). It is blocked on an asset problem rather than a code problem.
-- Overview §14 leaves *"are library images matched to phenotype, freely chosen, or matched by default with an override?"* undecided, and that question is easier to answer once there is a structured phenotype worth matching against.
-
-The image slot is not cancelled, just moved behind the show class. Update the overview's §13 build order and CLAUDE.md §10 when this lands.
+**On the migration numbers.** §5 proposes `0026`–`0029`. Treat that as "this slice expects four migrations", not as a reservation. The image slot is built first and will take `0026` onwards, so **renumber this slice's migrations to whatever is actually free when you build it** — check `migrations/` rather than trusting this document, per CLAUDE.md §9. The same applies to the deferred PIN work in slice 0005 §7, whose own numbering note has now been wrong twice for exactly this reason.
 
 ---
 
