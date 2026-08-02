@@ -30,18 +30,22 @@ What this settles is where scarcity lives. **Anything scarce per human belongs t
 - **The obvious leak is worth naming rather than plugging.** A horse listed by stable A and bought by stable B moves money between two books that were meant to be independent. A minimum listing duration, so a sibling could plausibly have bought it first, plus a marker on transactions where buyer and seller share an account, are both cheap and probably sufficient. At five players nobody may care.
 - **A cap on stables per account** is probably wise. Unlimited invites a stable per horse.
 
-### 1b. Tokens and the household layer
+### 1b. The parent's PIN, and the household layer
 
-**A second currency, earned outside the game.** Tokens are granted by the parent, behind a PIN, against whatever chore or reading or practice arrangement the household already runs. They buy things game currency cannot.
+**Part of what the game hands out is earned outside it.** Whatever chore, reading or practice arrangement the household already runs, the parent can turn into something in the game — behind a four-digit PIN, typed on the child's own phone, in the child's own session. Nothing about the child's login changes; the PIN authenticates the grant, not the person.
+
+**The household layer arrives in two stages, and the first one is not a currency.** The PIN's first use is the simplest possible one: granting a batch of horses directly. The founding stock generator (§12.3) mints a private batch into the child's stable, and that batch *is* the reward — no balance, no ledger, no catalogue, no spending. The parent types the PIN and the horses appear.
+
+**Tokens are the second stage**: a stored balance on the account, spent against a product catalogue, built over a PIN that by then already exists, is already rate-limited, and already keeps a log. What that buys players is the ability to save up — several small rewards accumulating into one large purchase — which the direct grant cannot express.
 
 - **Tokens sit on the account, not the stable**, for the same reason actions do.
 - **They do not convert to game currency in either direction.** Two economies that never touch are far easier to reason about than an exchange rate that has to be tuned.
 - **Children cannot transfer tokens to one another.** Best enforced by there being no path that moves them rather than by a rule someone later forgets. It stops tokens being pooled, traded, or extracted by an older sibling. It does not stop a child buying an import and selling the resulting horse for game currency, which is fine — the horse is real and the price is public.
-- **What tokens buy is a catalogue rather than a set of features**, so a future premium idea is a data row rather than a code change. Imports (§12.3) are the first entry; extra stalls, rerolls, name changes and recognised-cross unlocks are all plausible.
+- **What tokens buy is a catalogue rather than a set of features**, so a future premium idea is a data row rather than a code change. Imports (§12.3) are the first entry — the same generator the direct grant already drives, with a price on it; extra stalls, rerolls, name changes and recognised-cross unlocks are all plausible.
 
 **Worth distinguishing what a token actually buys.** Access, cosmetics and capacity let a token buy something the game already contains. Advantage — extra actions, free test results, a thumb on a foal's genetics — buys a shortcut past a constraint the design is resting on. Neither is forbidden, and a chore-earned advantage is a defensible thing to want, but the question is better asked once per item than never.
 
-**The PIN is the one place in this whole design where the threat model is real**, precisely because the adversary is at the kitchen table. Four digits is ten thousand guesses. Rate-limit attempts and log them.
+**The PIN is the one place in this whole design where the threat model is real**, precisely because the adversary is at the kitchen table. Four digits is ten thousand guesses. Rate-limit attempts and log them — globally rather than per child, since a per-account limit can be farmed across a sibling's login, and in real minutes rather than game days, since what is being defended against is a person guessing rather than anything the world clock governs.
 
 ---
 
@@ -68,7 +72,7 @@ Suggested loci:
 
 These interact with real epistasis: `ee` masks agouti entirely, Grey progressively overrides the base coat as the horse ages, Cream is dose-dependent. This is a rules-and-lookup problem — deterministic, testable, and correct biology.
 
-**DMRT3 earns its place because of the breed list (§4).** With two gaited breeds among six, gait is not decoration: it is a single well-characterised mutation that gates eligibility for gaited classes, appears in some breeds and not others, and behaves as a clean teaching example of a discrete trait with an obvious phenotype. It also gives crossbreeding a visible consequence.
+**DMRT3 earns its place because of the breed list (§4).** With two gaited breeds among eight, gait is not decoration: it is a single well-characterised mutation that gates eligibility for gaited classes, appears in some breeds and not others, and behaves as a clean teaching example of a discrete trait with an obvious phenotype. It also gives crossbreeding a visible consequence.
 
 ### 2b. Quantitative traits — polygenic additive
 
@@ -213,7 +217,9 @@ Most of what makes one breed feel different from another is free:
 - **Discipline aptitudes and eligible show classes.**
 - **Characteristic heritable conditions**, which turn out to be one of the strongest identity markers of all.
 
-Roughly how the six sit against each other:
+**These do not all arrive together, and the split is deliberate.** All eight breeds get their founding allele pools with the founding stock generator (§13), because that is the first thing a child chooses and colour is what they are choosing between — a Friesian batch that comes out black and an Icelandic batch that comes out every colour is the whole payoff of having eight pools rather than one. Everything else on the list above is built for the **Quarter Horse** first, alongside the system that reads it — the ideal vector with the first show class, the disease panel with the first health pass — and then folded into the remaining seven in one later stage (§13). Building an ideal vector for a breed before there is a scorer to read it is guessing.
+
+Roughly how the eight sit against each other:
 
 | Breed | Colour genetics | Signature conditions | Role in the set |
 |---|---|---|---|
@@ -244,7 +250,7 @@ The one visible oddity, accepted: a solid foal out of two Paints displays as a Q
 
 Relevant only once generated art exists (§5c), and worth deciding then rather than now.
 
-The breed choices make this cheaper than it would otherwise have been. All six are riding types — no draft, no miniature. The Icelandic is compact and pony-proportioned and the Paso Fino is small and light, but nothing here is a Shire next to a Shetland. One base plus transform profiles may well be sufficient; two (light riding, compact) is the safer starting assumption.
+The breed choices make this cheaper than it would otherwise have been. All eight are riding types — no draft, no miniature. The Icelandic is compact and pony-proportioned and the Paso Fino is small and light, but nothing here is a Shire next to a Shetland. One base plus transform profiles may well be sufficient; two (light riding, compact) is the safer starting assumption.
 
 **Revisit this if:** the transform approach produces breeds that read as obviously the same horse stretched. Test with Arabian and Icelandic before committing.
 
@@ -595,7 +601,7 @@ Cron Triggers give the scheduled world tick natively; the free tier comfortably 
 
 **Alternatives worth knowing you are declining:** a $5/month VPS with SQLite and a real crontab is a simpler mental model with full control, at the cost of maintaining a Linux box. Supabase provides Postgres, real authentication, and pg_cron if hand-rolling accounts turns out to be unwelcome.
 
-**On authentication:** for five family members, pre-created accounts with a password each is likely sufficient. Choosing a stable (§1a) is a selection inside an already-authenticated session, not a second login. The admin PIN behind token grants (§1b) is the exception that needs treating seriously — verified server-side, never sent to the client, rate-limited and logged.
+**On authentication:** for five family members, pre-created accounts with a password each is likely sufficient. Choosing a stable (§1a) is a selection inside an already-authenticated session, not a second login. The parent's PIN behind grants (§1b) is the exception that needs treating seriously — verified server-side, never sent to the client, rate-limited and logged. It is also the one place in the design where a decision is measured against the real clock rather than the world clock: a lockout window has to be counted in the minutes a person is standing there guessing, and a pause must not suspend it.
 
 ### 11b. Building across many sessions
 
@@ -639,16 +645,19 @@ Worth distinguishing toggles that are cleanly reversible from those that leave r
 
 Fresh, unrelated horses entering the game supplement the NPC market as the control on gene pool collapse (§10a). It is the direct lever if COI climbs across the whole game, and at the chosen time scale it will be reached for sooner than it otherwise would.
 
-**Imports cost tokens rather than game currency.** That makes them the anchor of the household layer (§1b) — the thing actually worth earning — and keeps money from being the route to new blood, which NPC stud services (§10f) already cover more cheaply and more realistically.
+**Imports are never bought with game currency.** They are the anchor of the household layer (§1b) — the thing actually worth earning — which keeps money from being the route to new blood, since NPC stud services (§10f) already cover that more cheaply and more realistically.
+
+**What they cost changes as the household layer grows.** The founding batches, and the further batches a parent grants for chores, are free and gated only by the PIN. Token-priced imports arrive with the token catalogue, over the same generator and the same batch-and-claim screens, as a product row with a price on it.
 
 Recommended shape:
 
-- **A rolled batch rather than a blind draw or a standing pool.** A blind draw gives the player nothing to think about. A shared pool means the fastest child takes the best horse every time, which at five players is a race rather than a decision. A private batch of three or four candidates gives a real choice — the flashy chestnut against the plainer mare with the better shoulder — and the ones not taken simply expire.
+- **A rolled batch rather than a blind draw or a standing pool.** A blind draw gives the player nothing to think about. A shared pool means the fastest child takes the best horse every time, which at five players is a race rather than a decision. A private batch of candidates gives a real choice — the flashy chestnut against the plainer mare with the better shoulder — and the ones not taken simply expire.
+- **The player picks the breed, and the pick is final.** The batch is rolled from the pool of whichever breed they choose, which is what makes eight seeded pools worth having and is the decision a nine-year-old will care about most. Committing it before the candidates are visible is what stops the choice being a free reroll against the same seed.
 - **Imports arrive untested.** This is what stops them undercutting §2c. A horse arriving with a clean panel would let tokens buy certainty, which is the one thing the hidden-information mechanic exists to withhold. Untested means the token buys *access to alleles you do not have*, and finding out what you actually got still runs through the vet, the testing economy and the same decision every other horse presents. An import that turns out to be a carrier is both true to life and considerably more interesting than a guaranteed prize.
-- **A low-to-mid quality band, and worth defending.** Imports that outclass bred stock make breeding pointless and turn tokens into the real progression system. An import is a source of genetics, not a shortcut past the work.
+- **A quality band as one parameter, snapshotted onto the batch when it is minted.** Founding batches sit at **mid** — founding stock is the baseline everything afterwards is measured against, and a baseline below average is a moving target nobody can see. Later token-bought imports sit **low-to-mid**, and that is worth defending: by then player-bred stock has selected past the mid band, so an import is a source of alleles you do not have rather than a shortcut past the work. Imports that outclass bred stock make breeding pointless and turn tokens into the real progression system. The bands should overlap heavily in any case, so an unpromising import is still worth a gamble.
 - **One generator for founding stock and imports alike.** An unrelated horse of moderate quality drawn from a breed's allele pool is the same problem in both cases. A quality band parameter and a marker for where the horse came from is the whole of the difference, and it means the founding population is built by the machinery that will still be in use a year later.
 
-Whether imports stay always-on with tokens as the only limiter, or are gated to announced windows, can be settled by observation — a toggle covers both, and tokens already rate-limit them per player without any further mechanism.
+Whether imports stay always-on with tokens as the only limiter, or are gated to announced windows, can be settled by observation — a toggle covers both, and tokens already rate-limit them per player without any further mechanism. Before tokens exist the limiter is the parent: a batch arrives only when someone types the PIN.
 
 ### 12.4 Practical shape
 
@@ -668,21 +677,21 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Genetics core** — genotype and inheritance; structured phenotype output; text description. Two horses, one breeding, a foal described in words.
 
-**Founding stock generator** — an unrelated horse of a given quality band drawn from a breed's allele pool. The same generator serves imports later, so it is worth writing once and parameterising now.
+**Founding stock generator** — an unrelated horse of a given quality band drawn from a breed's allele pool, arriving as a private batch the player claims from. Three things land together here, because they are one screen: the generator, **all eight breeds' founding allele pools** (colour and gait only — §4a), and **the parent's PIN**, gating a grant of a further batch as a chore reward. The same generator serves imports later, so it is worth writing once and parameterising now. This is the point at which the game becomes playable by the people it is for.
 
 **Image slot** — library hosting and the picker (§5b).
 
 **One polygenic trait end to end** — potential, expression, display.
 
-**One show class that scores it.** A playable loop exists here. Worth stopping to actually play it.
+**One show class that scores it** — the Quarter Horse's ideal vector, and the class that judges against it. A playable loop exists here. Worth stopping to actually play it.
 
 **Turns, world tick, upkeep** — with the world clock (§10g) rather than wall-clock calls, the tick slots in local time, and the time scale as config from the first line.
 
-**Tokens** — the account balance, the PIN-gated grant, and the product catalogue, with imports as its first entry over the generator already built.
+**Tokens** — the account balance, the token ledger and the product catalogue, over the PIN and the batch generator already built, with imports as the catalogue's first entry. This stage adds saving-up and spending to a household layer that already works; nothing here is a prerequisite for the reward loop.
 
-**Health, first pass** — the Mendelian conditions for the starting breed, plus genotype testing. Worth doing early rather than late: it is the mechanic that makes §2c matter, and it touches the market, the vet profession and COI, so later systems are better built with it already present.
+**Health, first pass** — the Quarter Horse's Mendelian conditions, plus genotype testing. Worth doing early rather than late: it is the mechanic that makes §2c matter, and it touches the market, the vet profession and COI, so later systems are better built with it already present. The other breeds' panels come with their stage below.
 
-**Remaining colour loci**, one gene at a time, with the colour-linked conditions attached as each gene lands rather than as a separate pass.
+**Remaining colour loci**, one gene at a time, with the colour-linked conditions attached as each gene lands rather than as a separate pass. Each gene also lands in all eight founding allele pools in the same change — a pool that does not list a locus is an error rather than a default — and each is a step towards the breeds in §4a looking like themselves, since blue roan, dun, silver and the pinto patterns are what several of them are actually known for.
 
 **Care state and tack** — the modifiers, wear, and the farrier/vet call as a client action against NPC providers.
 
@@ -698,9 +707,9 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **Professions** — player providers, pricing, inventory, effectiveness, competing against the NPC providers already in place.
 
-**Breeds two through six** — largely data entry: allele pools, ideals, classes, and disease panels.
+**The other seven breeds** — the non-colour half of breed identity, folded in as one stage: ideal vectors, eligible class types and discipline aptitudes, height and weight ranges, and each breed's disease panel. The allele pools already exist from the founding stock generator, and every system these rows feed — the scorer, the health model, the show classes — already exists and has been tuned against the Quarter Horse. Largely data entry against machinery in place, which is exactly why it waits until the machinery is in place.
 
-**Crossbreeding and performance classes**, once more than one breed exists to cross.
+**Performance classes and the cross's niche** — the classes crosses are eligible for (§4c), and the eligibility rules that bar them from breed classes. Crosses themselves are producible from the moment eight pools exist; this is the stage that gives them somewhere to compete.
 
 **Polygenic predispositions**, screening, and the wider health panel.
 
@@ -728,6 +737,6 @@ The common failure is building forty conformation traits and never shipping a sh
 - **Are library images matched to phenotype**, freely chosen, or matched by default with an override?
 - ~~**Recognised crosses** — which pairings, and do they get full breed treatment?~~ **Partly decided 2 Aug 2026, in conversation:** the Paint case — the one that forced the question — is resolved by making Paint a display alias on Quarter Horse rather than a breed (§4, §4c), so no recognised-cross machinery is needed and none is built. Still open for a genuine two-pool cross such as Quarab, if one is ever wanted.
 - **Show cadence**, set against the time scale and action budget together.
-- **Does the founding population arrive as stock players already own**, or as something they choose from and buy into?
+- ~~**Does the founding population arrive as stock players already own**, or as something they choose from and buy into?~~ **Decided 2 Aug 2026, in slice 0005:** a private rolled batch per stable, free, from which the child claims a fixed number — two mares and one stallion out of six candidates — after choosing their breed from the eight. Not a blind draw, which gives the player nothing to think about, and not a shared pool, which at five players is a race the fastest child wins every time. Further batches are granted by the parent behind the PIN (§1b).
 - **Per-horse time advancement** — wanted at all, and if so as training acceleration rather than ageing?
 - **All NPC questions** (§10): how many stables, how far they may outclass players, whether they refuse to sell their best stock. Deferred.

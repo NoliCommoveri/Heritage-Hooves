@@ -10,7 +10,7 @@ Target platform is Cloudflare D1 (SQLite). Consequences that shape everything be
 
 ## 0. Six principles the tables are built around
 
-1. **Time is an integer.** Every date is a game-day integer counted from world start. Nothing stores a wall-clock date except audit trails. This is §10g's world clock taken literally, and it makes pausing free.
+1. **Time is an integer.** Every date is a game-day integer counted from world start. Nothing stores a wall-clock date except audit trails. This is §10g's world clock taken literally, and it makes pausing free. The one *decision* taken against the real clock instead is the PIN lockout window (§2.5), because what it defends against happens in real minutes at a kitchen table.
 2. **Genotype is one versioned blob per horse.** It is the input to the genetics engine, the health model, and eventually the image generator. All three want the whole thing at once.
 3. **Truth and knowledge are separate tables.** What a horse carries is one thing; what a given player has paid to learn is another. This is §2c, and it cannot be retrofitted.
 4. **Durations are snapshotted onto the entity.** §12.1's rule. Gestation length lives on the pregnancy, not in config.
@@ -77,7 +77,7 @@ The date arithmetic uses the platform's own zone database rather than a hardcode
 
 The one real edge case: on the spring-forward morning, 2:00am–3:00am local does not exist. Any tick slot in that hour will not fire that day. Keep the slots away from the small hours and it never comes up.
 
-**Everything else stays UTC.** `real_ts` on the ledger, the audit trail, `pin_attempts`, `last_login_real_ts` — all stored as UTC epochs and rendered through `display_timezone`. These are records of when something happened, not decisions about which day it is, and storing them locally buys nothing while making the November ambiguity permanent.
+**Everything else stays UTC.** `real_ts` on the ledger, the audit trail, `pin_attempts`, `last_login_real_ts` — all stored as UTC epochs and rendered through `display_timezone`. These are records of when something happened, not decisions about which day it is, and storing them locally buys nothing while making the November ambiguity permanent. `pin_attempts.real_ts` is the one of these that is also *read* to decide something (§2.5), and it is a comparison of two instants rather than a question about which day it is — so the rule above holds unchanged: store the epoch, compare epochs, never a local string.
 
 ### 1.3 `config` — single row
 
@@ -138,8 +138,8 @@ Cheap, and it means an old prefix appearing on a twelve-year-old horse can still
 
 - `id`, `username`, `password_hash`, `is_admin`
 - `actions_remaining`, `actions_reset_tick_seq`
-- `token_balance` — denormalized from `token_ledger` (§2.6)
-- `pin_hash` (nullable) — admin accounts only, §2.5
+- `token_balance` — denormalized from `token_ledger` (§2.6); arrives with the tokens stage, not before
+- `pin_hash` (nullable) — admin accounts only, §2.5. Arrives with the founding stock generator, which is the PIN's first use
 - `last_active_stable_id` — convenience for the picker
 - `last_login_real_ts`
 
@@ -160,20 +160,29 @@ Two cheap defences, both recommended, neither structural:
 - **A minimum listing duration** before any sale completes, from config. A horse sitting on the open market for a real day is one a sibling could have bought, which is what makes the sale genuinely public rather than nominally so.
 - **A `same_account` flag computed on the ledger row** when buyer and seller share an account. Costs one column, makes the pattern visible in the audit trail, and means the question can be answered by looking rather than by arguing.
 
-### 2.5 `pin_attempts` and the admin PIN
+### 2.5 `pin_attempts` and the parent's PIN
 
-**Decided in session:** token grants are PIN-gated, so that tokens can be redeemed against a rewards system the parent runs outside the game.
+**Decided in session:** parental grants are PIN-gated, so that what the game hands out can be redeemed against a rewards system the parent runs outside it.
 
 - `pin_hash` on the admin account, verified server-side and never sent to the client
-- `pin_attempts` — `account_id`, `real_ts`, `success` (0/1), for rate limiting
+- `pin_attempts` — `account_id` (nullable, since a failed attempt matches no account), `attempted_by_account_id` (whose session it was typed in), `real_ts`, `success` (0/1), for rate limiting
+
+**These two arrive with the founding stock generator (§10.2), not with tokens.** The PIN's first use is granting a batch of horses directly — no balance, no ledger, no catalogue. The token tables in §2.6–§2.7 are built later over a PIN that already exists and is already rate-limited.
+
+**The PIN authenticates the grant, not the session.** It is typed inside the child's own logged-in session, on the child's own phone, and nothing about that session changes when it verifies. No admin session is created and no other admin capability becomes reachable — which is the shape that stops "PIN verified" ever being reused as a general escalation.
 
 **Rate limiting is not optional here even at this scale.** A four-digit PIN is ten thousand guesses, which is minutes of work for a bored eleven-year-old with a script and considerably less with a sibling's shoulder to look over. Lock after a small number of failures within a window, and log every attempt. This is one of the few places in the whole design where the threat model is real, precisely because the adversary is at the kitchen table.
 
-The grant flow is: the parent enters the PIN on whichever device is in hand, names the account receiving tokens, and the grant is written with both account IDs recorded.
+Two properties of the lockout that follow from who the adversary is:
+
+- **It is global, not per account or per session.** A per-child limit lets a determined eleven-year-old farm attempts across three stables and a sibling's login.
+- **Its window is counted in real seconds against `real_ts`, not in game days.** This is the single deliberate exception to §0's first principle. A lockout on the world clock would stop while the world is paused and jump fifteen game days at a tick, neither of which has anything to do with how long a person has been guessing. It is a security control rather than game logic — nothing about a horse, a pregnancy, a show or a balance depends on it — and the exception should be written into the code where the comparison happens, or a later session will correctly read it as a bug.
+
+The grant flow is: the parent enters the PIN on whichever device is in hand — normally the child's, mid-session — names the stable receiving the grant, and the resulting row records both account IDs.
 
 ### 2.6 `token_ledger` and `token_grants`
 
-**Tokens are a second currency, on the account, non-transferable.**
+**Tokens are a second currency, on the account, non-transferable.** Built at the tokens stage, over the PIN in §2.5 — by which point the PIN, its rate limiting, its attempt log and one PIN-gated action already exist and have been in use.
 
 `token_grants` — the PIN-gated faucet:
 - `id`, `granted_to_account_id`, `granted_by_account_id`, `amount`, `reason`, `real_ts`, `game_day`
@@ -234,6 +243,9 @@ These are the tables that make §12.2 possible. All are small, all are edited ra
 - `height_range`, `weight_range` — JSON
 - `eligible_class_types`, `discipline_aptitudes` — JSON
 - `gaited_typical` — 0/1, documentation only; actual gait comes from DMRT3
+- `colour_display_alias` — JSON (nullable): a phenotype to match and a name to show for it, so Paint is a display alias on the Quarter Horse row rather than a breed of its own (§4). A rule in data, never `if (breed.code === …)` in code.
+
+**The row fills in two passes, and the build order decides which columns exist when.** All eight rows exist with `code`, `name`, `enabled`, `is_recognised_cross`, `gaited_typical` and a **`founding_allele_pool` covering every locus the engine knows about** from the founding stock generator onwards — a pool missing a locus is an error rather than a default, so the migration that adds locus six also updates all eight pools in the same change. The remaining columns are each added by the stage that first reads them, filled in for the Quarter Horse at that point, and filled in for the other seven at the later breeds stage (§12). Writing an ideal vector before a scorer exists to read it is guessing.
 
 ### 3.2 `loci`
 
@@ -581,30 +593,51 @@ Foalings, show results, condition onsets, deaths, sales, service completions. Wi
 
 **Worth noting:** this table grows faster than any other. A retention rule — drop read events older than N game-days — is worth deciding early rather than discovering when a query gets slow.
 
-### 10.2 Imports
+### 10.2 Imports and founding stock
 
-**Decided in session:** imports cost tokens rather than game currency; they roll a batch of candidates from which the player picks one; the horses arrive untested; and the same generator produces both the founding population and every later import.
+**Decided in session:** founding stock and imports roll a batch of candidates the player picks from; the horses arrive untested; and one generator produces both. **Founding batches are free**, granted by an admin or by a parent typing the PIN (§2.5); token-priced imports are the same two tables later, distinguished by `source` and a nullable `token_purchase_id`.
 
-That last point is the one that saves the most work. Founding stock and new blood are the same problem — an unrelated horse of moderate quality drawn from a breed's allele pool — so there is one generator, one quality band parameter, and a `source` marker distinguishing them.
+That single generator is the point that saves the most work. Founding stock and new blood are the same problem — an unrelated horse of a given quality band drawn from a breed's allele pool — so there is one generator, one band parameter, one set of batch-and-claim screens, and a `source` marker distinguishing where the batch came from.
 
 `import_offers` — a rolled batch:
-- `id`, `stable_id`, `account_id`, `token_purchase_id` (nullable — null for founding stock)
-- `source` — founding / token_import / admin_grant
-- `generated_game_day`, `expires_game_day`, `status` (open / claimed / expired)
-- `breed_id`, `quality_band`, `candidate_count`, `rng_seed`
+- `id`, `stable_id`, `account_id` (denormalised from the stable, so a later per-account limit is one query)
+- `source` — founding / chore_grant / admin_grant / token_import
+- `granted_by_account_id` (nullable) — which admin minted it, whether from the admin page or the PIN
+- `token_purchase_id` (nullable — null for everything but a token import)
+- `status` — pending / open / claimed / expired
+- `breed_id` — **nullable, filled when the player chooses their breed**, not at mint
+- `quality_band` (the name, for display) and `polygenic_one_chance` (the number the generator uses) — both **snapshot**
+- `mare_candidates`, `mare_claims`, `stallion_candidates`, `stallion_claims` — **snapshot**
+- `age_min_game_days`, `age_max_game_days` — **snapshot**
+- `granted_game_day`, `generated_game_day` (nullable), `claimed_game_day` (nullable)
+- `expires_game_day` — **nullable; null means never**
+- `rng_seed` — minted at offer creation; every candidate derives from it
+
+**Everything the generator reads is snapshotted onto the offer when the offer is minted**, §0's fourth principle applied to its full extent. Retuning batch sizes, the age range or the quality bands must not change the candidates in a batch a child has not opened yet.
+
+**The three states are the reason `breed_id` is nullable.** An offer is minted `pending` with no breed and no candidates. The player opens it, picks a breed, and the candidates are generated at that moment from the offer's already-stored seed; the offer becomes `open`. Claiming makes it `claimed`. The breed choice is committed before the candidates are visible — otherwise switching breeds is a free reroll of the same seed against a different pool.
+
+**On expiry: default to never.** A chore reward that silently evaporates because a child had a busy week is a family argument rather than a game mechanic. The column exists because token imports will genuinely want it, and it is cheapest to check at claim time against `world.game_day` rather than to sweep on the tick.
 
 `import_candidates`:
-- `id`, `offer_id`, `sex`, `age_days`, `breed_id`
-- `genotype`, `polygenic`, `environmental_noise` — JSON, rolled at generation
-- `rng_seed`, `chosen` (0/1)
+- `id`, `offer_id`, `slot_index` (0-based; the sub-seed label derives from it)
+- `sex`, `age_game_days`
+- `genotype` — JSON, the same versioned blob shape `horses.genotype` uses, Mendelian and polygenic together
+- `origin_prefix`, `name_part` — the two halves of the registered name
+- `rng_seed` — **becomes `horses.rng_seed` unchanged on claim**
+- `chosen` (0/1), `horse_id` (nullable, set on claim)
 
-On claim, the chosen candidate becomes a `horses` row: `sire_id` and `dam_id` null, `generation` 0, `coi` 0, no `horse_ancestors` rows, `breeder_stable_id` null with a synthetic origin label, and — importantly — **no `horse_knowledge` rows at all**.
+The seed passing through untouched mirrors `pregnancies.foal_rng_seed` → `horses.rng_seed`: a claimed horse's entire genetic history stays reconstructible from the offer seed alone.
+
+On claim, each chosen candidate becomes a `horses` row: `sire_id` and `dam_id` null, `generation` 0, `coi` 0, no `horse_ancestors` rows, and — importantly — **no `horse_knowledge` rows at all**. The unchosen candidates are simply left unclaimed.
+
+**A founding horse carries a synthetic origin prefix, not the claiming stable's.** A prefix means *bred by*, so stamping a child's prefix on a horse they did not breed would corrupt the one thing the prefix scheme records. Each candidate arrives fully named from a stable that does not exist in this game: `breeder_prefix` holds the origin prefix, `registered_name` is that prefix plus the generated name, and `breeder_stable_id` stays null.
 
 **Untested arrival is what keeps imports from undercutting the rest of the design.** A token-bought horse that arrived with a full clean panel would let the rewards system buy certainty, which is the one thing §2c is built to withhold. Arriving unknown means the token buys *access to new genetics*, and finding out what you actually got still runs through the vet, the testing economy, and the same decision every other horse presents. It also means an import can turn out to be a carrier, which is both true to life and considerably more interesting than a guaranteed prize.
 
 **The rolled-batch structure is worth the extra table.** A blind draw is cheapest but gives the player nothing to think about; a standing pool lets everyone see and compete for the same stock, which at five players means the fastest child gets the best horse every time. A private batch of N gives a real decision — the flashy chestnut or the plainer mare with better conformation — without a race, and the candidates not chosen simply expire.
 
-Two parameters to expose in config: `candidate_count` and `quality_band`. **Low-to-mid is the right band and worth defending**, because imports that outclass bred stock would make breeding pointless and turn tokens into the real progression system. An import should be a source of alleles you do not have, not a shortcut past the work.
+The parameters to expose in config are the candidate and claim counts, the age range, and the quality bands as a named set — a band being one number, the probability that a given polygenic allele is a `1`, with the bands overlapping heavily so a low-band horse can still be excellent at one trait. **Founding batches sit at mid**, because founding stock is the baseline everything afterwards is measured against. **Token imports sit low-to-mid, and that is worth defending**, because imports that outclass bred stock would make breeding pointless and turn tokens into the real progression system. An import should be a source of alleles you do not have, not a shortcut past the work.
 
 `import_windows` remains available as an optional gate — `opens_game_day`, `closes_game_day`, `announced` — for the case where you want imports to be a periodic event rather than always-on. With tokens as the limiter, a permanent window plus a `flags.imports_open` toggle is probably sufficient, and the windows table can wait.
 
@@ -634,19 +667,20 @@ Mapped against §13, so a session can tell what it needs rather than building th
 |---|---|
 | Foundation | `world`, `config`, `config_audit`, `tick_run`, `accounts`, `stables`, `stable_prefix_history`, stable picker |
 | Genetics core | `loci`, `breeds`, `horses`, `horse_ancestors`, `pregnancies` |
-| Founding stock | `import_offers`, `import_candidates` — the generator, without tokens attached |
+| Founding stock | `import_offers`, `import_candidates` — the generator, without tokens attached; `breeds.founding_allele_pool` for all eight breeds; `accounts.pin_hash` and `pin_attempts` for the parent's grant |
 | Image slot | `horses.image_url` only |
 | One polygenic trait | `quantitative_traits` |
-| One show class | `shows`, `show_classes`, `judges`, `show_entries`, `horse_show_summary` |
-| Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases`, `pin_attempts` |
+| One show class | `shows`, `show_classes`, `judges`, `show_entries`, `horse_show_summary`; `breeds.ideal_vector` for the Quarter Horse |
 | Turns and tick | `ledger`, `events` |
-| Health, first pass | `conditions`, `horse_conditions`, `horse_knowledge`, `services`, `service_calls` |
+| Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases` — over the PIN and attempt log already in place |
+| Health, first pass | `conditions`, `horse_conditions`, `horse_knowledge`, `services`, `service_calls`; the Quarter Horse's panel only |
 | Care and tack | `tack_types`, `tack_items`, `horses.care` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` |
 | Market | `listings`, `buy_offers`, `stud_listings`, `stud_bookings` |
 | Professions | `provider_state`, `provider_inventory` |
 | Registries | `registries`, `registry_inductees` |
+| The other seven breeds | no new tables — the remaining `breeds` columns filled in for every breed but the Quarter Horse, plus their `conditions` rows |
 | Imports as premium | one `token_products` row over the existing generator |
 
 The tables that must exist correctly from the first migration, because retrofitting them is expensive: `world` (everything derives from it), `horses.genotype` and `rng_seed` (unreproducible otherwise), `horses.composition` (wrong forever for horses already born), `horse_ancestors` (must be written at birth), `horse_knowledge` (a knowledge model added later starts empty and every existing horse is silently untested), and `horses.breeder_prefix` plus `registered_name` (a prefix scheme added after horses exist leaves the first generation permanently unmarked, which is precisely the generation whose origin matters most).
@@ -669,4 +703,4 @@ The tables that must exist correctly from the first migration, because retrofitt
 - **Events retention.** §10.1.
 - **Per-tick action budget arithmetic** — whether the daily total holds constant across a change in tick frequency, or deliberately rises.
 - **Disclosure on listings** — the column exists; whether anything reads it is a family-dynamics decision more than a technical one.
-- **Founding population generation** — whether founding horses are rows created by a seeding script or by the same NPC generator, and whether players start with stock or buy it.
+- ~~**Founding population generation** — whether founding horses are rows created by a seeding script or by the same NPC generator, and whether players start with stock or buy it.~~ **Settled 2 Aug 2026, in slice 0005:** one generator drawing from `breeds.founding_allele_pool`, shared with imports (§10.2). Each stable gets a free private batch it claims a fixed number from, after choosing its breed; further batches come from the parent's PIN. Nothing is bought.
