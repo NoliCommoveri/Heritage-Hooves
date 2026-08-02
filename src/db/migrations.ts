@@ -42,6 +42,11 @@ import m0038 from '../../migrations/0038_show_entries.sql';
 import m0039 from '../../migrations/0039_horse_show_summary.sql';
 import m0040 from '../../migrations/0040_npc_show_barn.sql';
 import m0041 from '../../migrations/0041_config_shows.sql';
+import m0042 from '../../migrations/0042_ledger.sql';
+import m0043 from '../../migrations/0043_stables_upkeep.sql';
+import m0044 from '../../migrations/0044_ledger_opening_backfill.sql';
+import m0045 from '../../migrations/0045_show_classes_prizes.sql';
+import m0046 from '../../migrations/0046_config_economy.sql';
 
 export interface MigrationFile {
   name: string;
@@ -100,6 +105,11 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0039_horse_show_summary.sql', sql: m0039 },
   { name: '0040_npc_show_barn.sql', sql: m0040 },
   { name: '0041_config_shows.sql', sql: m0041 },
+  { name: '0042_ledger.sql', sql: m0042 },
+  { name: '0043_stables_upkeep.sql', sql: m0043 },
+  { name: '0044_ledger_opening_backfill.sql', sql: m0044 },
+  { name: '0045_show_classes_prizes.sql', sql: m0045 },
+  { name: '0046_config_economy.sql', sql: m0046 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

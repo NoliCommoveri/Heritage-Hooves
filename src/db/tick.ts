@@ -12,6 +12,7 @@ import { nowUtcSeconds } from '../lib/time';
 import { resolveDueCoverings } from './coverings';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
+import { chargeUpkeep } from './upkeep';
 
 export interface ExecuteTickParams {
   triggerSource: 'cron' | 'manual';
@@ -60,6 +61,11 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // class's own status column), so re-running them against the same newGameDay is a no-op.
       await createDueShows(env, newGameDay, config);
       await judgeDueShowClasses(env, newGameDay, config);
+      // Slice 0009 §4.3: charged from the world clock's game_day, not tick_seq - this stage never
+      // runs on a paused tick (it sits inside this same paused === 0 branch) and re-derives what's
+      // owed from each stable's own last_upkeep_game_day, so a re-fired or missed tick is safe the
+      // same way the stages above are.
+      await chargeUpkeep(env, newGameDay, newTickSeq, config);
     } else {
       status = 'skipped_paused';
     }

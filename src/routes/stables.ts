@@ -1,6 +1,7 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderStablesPicker, renderNewStablePage, renderStableHomePage, renderPrefixPage } from '../render/stables';
+import { renderMoneyPage } from '../render/money';
 import {
   listStablesForAccount,
   countActiveStablesForAccount,
@@ -10,9 +11,11 @@ import {
   type StableRow,
 } from '../db/stables';
 import { setLastActiveStable } from '../db/accounts';
+import { countAliveHorses } from '../db/horses';
 import { validatePrefix, normalizePrefix } from '../lib/prefix';
 import { buildStableCookie } from '../lib/session';
 import { hasWaitingFoundingOffer } from '../db/founding';
+import { getLedgerForStable, withRunningBalance } from '../db/ledger';
 
 export async function stablesPickerRoute(ctx: RequestContext): Promise<Response> {
   const account = ctx.account!;
@@ -85,8 +88,36 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
 export async function stableHomeRoute(ctx: RequestContext, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
-  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
-  return htmlResponse(renderStableHomePage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer }));
+  const [hasFoundingOffer, aliveHorseCount] = await Promise.all([
+    hasWaitingFoundingOffer(ctx.env, stableId),
+    countAliveHorses(ctx.env, stableId),
+  ]);
+  return htmlResponse(
+    renderStableHomePage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      stable,
+      hasFoundingOffer,
+      aliveHorseCount,
+      upkeepPerHorsePerGameDay: ctx.config.values.upkeep_per_horse_per_game_day,
+    })
+  );
+}
+
+/** §7.1: one stable's ledger, newest first, capped at 100 rows - owner-only, no exception for an
+ * admin viewing someone else's stable (the same shape src/routes/horses.ts's image picker uses). */
+export async function stableMoneyRoute(ctx: RequestContext, stableId: number): Promise<Response> {
+  const stable = await loadOwnedStable(ctx, stableId);
+  if (stable instanceof Response) return stable;
+  const [hasFoundingOffer, ledgerNewestFirst] = await Promise.all([
+    hasWaitingFoundingOffer(ctx.env, stableId),
+    getLedgerForStable(ctx.env, stableId, 100),
+  ]);
+  const withBalances = withRunningBalance([...ledgerNewestFirst].reverse());
+  const rows = [...withBalances].reverse();
+  return htmlResponse(
+    renderMoneyPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer, rows })
+  );
 }
 
 export async function stableSelectRoute(ctx: RequestContext, stableId: number): Promise<Response> {

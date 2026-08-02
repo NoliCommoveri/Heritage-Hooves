@@ -124,6 +124,7 @@ The stable owns horses, money, capacity and stock. NPC stables are rows here wit
 - `capacity` — integer, stall limit
 - `profession_code` (nullable) — see the note below
 - `last_processed_tick_seq`
+- `last_upkeep_game_day` — **added in slice 0009.** Upkeep is charged per horse per game day, from the world clock, not from `tick_seq` — a paused world must not accrue board (`CLAUDE.md` §5.3). `last_processed_tick_seq` above is left in place and unused for this purpose; a later stage may still want a genuine per-tick marker.
 - `created_game_day`, `active`
 
 **Prefix uniqueness should be enforced at the database level**, since a prefix is the permanent mark of origin stamped onto every horse the stable breeds. Two stables sharing one makes pedigrees ambiguous forever.
@@ -227,6 +228,8 @@ Append-only. Every game-currency movement. Distinct from `token_ledger`, which n
 - `game_day`, `real_ts`, `description`
 
 **Recommendation: keep both a ledger and a denormalized `balance`.** Balance alone is fast but unanswerable when a child asks where their money went. Ledger alone is honest but requires summing to render every page. Both, with the balance treated as a cache that can be rebuilt from the ledger, costs one column and settles arguments.
+
+**Built in slice 0009, Part A** (`CLAUDE.md` §10/§11), with `kind` narrowed to what actually exists today: `opening` (a stable's founding balance, so the invariant holds with no special case), `upkeep`, `prize`, `adjustment` (`/admin/money`, §7.3 of that slice). The wider list above (`entry_fee`, `sale`, `stud_fee`, `service`, `test`, `tack`, `profession_entry`) arrives kind-by-kind as each of those stages lands — `kind` has a `CHECK` constraint, so adding one is a migration, not a schema rewrite. `src/db/ledger.ts`'s `buildLedgerStatements` is the one function in the whole codebase allowed to write `stables.balance`.
 
 ---
 
