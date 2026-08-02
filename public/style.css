@@ -1,4 +1,42 @@
-/* One stylesheet. Mobile first, large tap targets, readable type, no horizontal scrolling. */
+/* One stylesheet. Mobile first, large tap targets, readable type, no horizontal scrolling.
+   Organized top to bottom: tokens -> base -> header/nav -> subnav -> layout -> forms ->
+   buttons -> tables -> cards -> badges -> collapsibles -> utility. New pages should reuse
+   these custom properties and classes rather than hardcoding colors - see CLAUDE.md §11. */
+
+:root {
+  /* Surfaces */
+  --color-bg: #f6f1e7;
+  --color-surface: #ffffff;
+  --color-surface-alt: #efe8d8;
+  --color-border: #ddd3bd;
+
+  /* Text */
+  --color-text: #262019;
+  --color-text-muted: #6b6152;
+
+  /* Brand */
+  --color-primary: #2f4f3a;
+  --color-primary-dark: #223a2a;
+  --color-accent: #b6802e;
+  --color-accent-dark: #8f6522;
+
+  /* Admin mode gets its own identity so it never reads as a gameplay page */
+  --color-admin: #362f52;
+  --color-admin-dark: #26213c;
+
+  /* Semantic */
+  --color-success: #2f6b3f;
+  --color-success-bg: #e4f0e6;
+  --color-warning: #8a5a00;
+  --color-warning-bg: #faf0d6;
+  --color-danger: #9a2f2f;
+  --color-danger-bg: #f7e5e5;
+  --color-muted-bg: #ece6d8;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow-card: 0 1px 2px rgba(38, 32, 25, 0.08), 0 4px 12px rgba(38, 32, 25, 0.06);
+}
 
 * {
   box-sizing: border-box;
@@ -9,9 +47,11 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 18px;
   line-height: 1.5;
-  color: #1a1a1a;
-  background: #faf7f2;
+  color: var(--color-text);
+  background: var(--color-bg);
 }
+
+/* ---------- Header ---------- */
 
 .site-header {
   display: flex;
@@ -19,9 +59,15 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  background: #2f4f3a;
+  padding: 0.85rem 1.25rem;
+  background: var(--color-primary);
+  background-image: linear-gradient(180deg, var(--color-primary), var(--color-primary-dark));
   color: #fff;
+}
+
+.site-header--admin {
+  background: var(--color-admin);
+  background-image: linear-gradient(180deg, var(--color-admin), var(--color-admin-dark));
 }
 
 .site-header a {
@@ -30,7 +76,14 @@ body {
 
 .game-day {
   font-size: 1rem;
+  letter-spacing: 0.01em;
 }
+
+.game-day .muted {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* ---------- Primary nav ---------- */
 
 .nav {
   display: flex;
@@ -38,14 +91,75 @@ body {
   gap: 1rem;
 }
 
+.nav-spacer {
+  flex: 1 1 auto;
+}
+
+.nav-back {
+  font-weight: 600;
+}
+
+.admin-chip {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.admin-chip:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .nav-logout button {
   background: none;
   border: 1px solid #fff;
   color: #fff;
   padding: 0.4rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 1rem;
 }
+
+/* ---------- Subnav (secondary menu bar) ---------- */
+
+.subnav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.4rem 1rem;
+  background: var(--color-surface-alt);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.subnav-link {
+  display: inline-block;
+  padding: 0.45rem 0.8rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.subnav-link:hover {
+  background: rgba(38, 32, 25, 0.06);
+}
+
+.subnav-link.is-active {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.site-header--admin + .subnav .subnav-link.is-active {
+  background: var(--color-admin);
+}
+
+/* ---------- Banners ---------- */
 
 .banner-paused {
   background: #f4c542;
@@ -55,20 +169,28 @@ body {
   font-weight: bold;
 }
 
+/* ---------- Layout ---------- */
+
 main {
-  max-width: 640px;
+  max-width: 680px;
   margin: 0 auto;
-  padding: 1rem;
+  padding: 1.25rem 1rem 3rem;
 }
 
 h1 {
-  font-size: 1.5rem;
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.75rem;
 }
 
 h2 {
   font-size: 1.2rem;
   margin-top: 2rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid var(--color-border);
 }
+
+/* ---------- Forms ---------- */
 
 form {
   display: flex;
@@ -88,82 +210,251 @@ input[type="text"],
 input[type="password"] {
   font-size: 1rem;
   padding: 0.6rem;
-  border: 1px solid #999;
-  border-radius: 6px;
+  border: 1px solid #b7ac93;
+  border-radius: var(--radius-sm);
   width: 100%;
+  background: var(--color-surface);
+  color: var(--color-text);
 }
+
+input[type="text"]:focus,
+input[type="password"]:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ---------- Buttons ---------- */
 
 button,
 input[type="submit"] {
   font-size: 1rem;
   padding: 0.75rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: none;
-  background: #2f4f3a;
+  background: var(--color-primary);
   color: #fff;
   cursor: pointer;
   min-height: 44px;
+  font-weight: 600;
+}
+
+button:hover {
+  background: var(--color-primary-dark);
 }
 
 button.secondary {
-  background: #6b6b6b;
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+button.secondary:hover {
+  background: var(--color-border);
 }
 
 button.danger {
-  background: #a83232;
+  background: var(--color-danger);
 }
 
-.error {
-  color: #a83232;
-  font-weight: 600;
-}
-
-.notice {
-  color: #2f4f3a;
-  font-weight: 600;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1rem 0;
-}
-
-th,
-td {
-  text-align: left;
-  padding: 0.5rem;
-  border-bottom: 1px solid #ddd;
-  font-size: 0.95rem;
-}
-
-.card {
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  padding: 1rem;
-  margin: 1rem 0;
-  background: #fff;
+button.danger:hover {
+  background: #7a2222;
 }
 
 .card a.button-link,
 a.button-link {
   display: inline-block;
-  background: #2f4f3a;
+  background: var(--color-primary);
   color: #fff;
   padding: 0.75rem 1rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   text-decoration: none;
   min-height: 44px;
+  font-weight: 600;
+}
+
+.card a.button-link:hover,
+a.button-link:hover {
+  background: var(--color-primary-dark);
+}
+
+/* ---------- Messages ---------- */
+
+.error {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.notice {
+  color: var(--color-success);
+  font-weight: 600;
 }
 
 .muted {
-  color: #666;
+  color: var(--color-text-muted);
   font-size: 0.9rem;
 }
 
+/* ---------- Tables ---------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.95rem;
+}
+
+thead th {
+  background: var(--color-surface-alt);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  margin: 1rem 0;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* ---------- Badges / pills ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--color-muted-bg);
+  color: var(--color-text-muted);
+}
+
+.badge-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.badge-danger {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* ---------- Collapsibles ---------- */
+
+details.section-collapse {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  padding: 0.25rem 1rem 0.5rem;
+  margin: 1.5rem 0;
+  box-shadow: var(--shadow-card);
+}
+
+details.section-collapse > summary {
+  cursor: pointer;
+  padding: 0.75rem 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  list-style: none;
+}
+
+details.section-collapse > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.section-collapse > summary::before {
+  content: "\25B8";
+  display: inline-block;
+  margin-right: 0.5rem;
+  transition: transform 0.1s ease;
+}
+
+details.section-collapse[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+details.section-collapse table {
+  box-shadow: none;
+  margin-top: 0;
+}
+
+details.row-actions {
+  display: inline-block;
+  text-align: left;
+}
+
+details.row-actions > summary {
+  cursor: pointer;
+  color: var(--color-primary);
+  font-weight: 600;
+  font-size: 0.9rem;
+  list-style: none;
+  white-space: nowrap;
+}
+
+details.row-actions > summary::-webkit-details-marker {
+  display: none;
+}
+
+details.row-actions[open] {
+  display: block;
+  margin: 0.25rem 0 0.25rem auto;
+  width: max-content;
+  max-width: 220px;
+}
+
+details.row-actions form {
+  margin: 0.6rem 0;
+  gap: 0.4rem;
+}
+
+details.row-actions label {
+  font-size: 0.85rem;
+}
+
+details.row-actions input[type="password"] {
+  width: 160px;
+}
+
+details.row-actions button {
+  padding: 0.5rem 0.75rem;
+  min-height: 36px;
+  font-size: 0.9rem;
+}
+
+/* ---------- Confirm controls ---------- */
+
 .confirm-note {
   font-size: 0.9rem;
-  color: #666;
+  color: var(--color-text-muted);
 }
 
 .confirm-checkbox {

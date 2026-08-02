@@ -1,24 +1,59 @@
 import { html, raw, SafeHtml } from '../lib/html';
 import type { WorldRow } from '../db/world';
 
+/** One link in a subnav bar. `active` marks the current page for styling. */
+export interface NavLink {
+  label: string;
+  href: string;
+  active?: boolean;
+}
+
 export interface ShellParams {
   title: string;
   world: WorldRow;
   loggedIn: boolean;
   isAdmin: boolean;
+  /**
+   * Which header treatment to use. 'player' (the default) is the normal green gameplay header.
+   * 'admin' switches to a visibly different header so an admin page never looks like a gameplay
+   * page - see CLAUDE.md §11, "admin mode is a visibly different place, not an extra nav link".
+   */
+  section?: 'player' | 'admin';
+  /** A row of section-local links rendered as a menu bar under the header, e.g. the admin subpages. */
+  subnav?: NavLink[];
   body: SafeHtml;
 }
 
+function subnavBar(links: NavLink[] | undefined): SafeHtml {
+  if (!links || links.length === 0) return raw('');
+  const items = links.map(
+    (l) => html`<a href="${l.href}" class="${l.active ? 'subnav-link is-active' : 'subnav-link'}">${l.label}</a>`
+  );
+  return html`<nav class="subnav">${items}</nav>`;
+}
+
 export function pageShell(params: ShellParams): SafeHtml {
+  const section = params.section ?? 'player';
   const pausedBanner = params.world.paused ? html`<div class="banner banner-paused">The world is paused.</div>` : raw('');
 
   const nav = params.loggedIn
-    ? html`<nav class="nav">
-        <a href="/stables">Stables</a>
-        ${params.isAdmin ? html`<a href="/admin">Admin</a>` : raw('')}
-        <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
-      </nav>`
+    ? section === 'admin'
+      ? html`<nav class="nav">
+          <a href="/stables" class="nav-back">&larr; Back to your stables</a>
+          <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
+        </nav>`
+      : html`<nav class="nav">
+          <a href="/stables">Stables</a>
+          <span class="nav-spacer"></span>
+          ${params.isAdmin ? html`<a href="/admin" class="admin-chip">Admin</a>` : raw('')}
+          <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>
+        </nav>`
     : raw('');
+
+  const headerLabel =
+    section === 'admin'
+      ? html`<div class="game-day">Admin panel <span class="muted">&middot; game day ${params.world.game_day}</span></div>`
+      : html`<div class="game-day">Game day <strong>${params.world.game_day}</strong></div>`;
 
   return html`<!doctype html>
 <html lang="en">
@@ -29,10 +64,11 @@ export function pageShell(params: ShellParams): SafeHtml {
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header class="site-header">
-  <div class="game-day">Game day <strong>${params.world.game_day}</strong></div>
+<header class="site-header ${section === 'admin' ? 'site-header--admin' : ''}">
+  ${headerLabel}
   ${nav}
 </header>
+${subnavBar(params.subnav)}
 ${pausedBanner}
 <main>
 ${params.body}

@@ -1,7 +1,14 @@
 import { html, raw, SafeHtml } from '../lib/html';
-import { pageShell, errorBox } from './layout';
+import { pageShell, errorBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
+
+function stableSubnav(stableId: number, active: 'overview' | 'prefix'): NavLink[] {
+  return [
+    { label: 'Overview', href: `/stables/${String(stableId)}`, active: active === 'overview' },
+    { label: 'Change prefix', href: `/stables/${String(stableId)}/prefix`, active: active === 'prefix' },
+  ];
+}
 
 export function renderStablesPicker(params: {
   world: WorldRow;
@@ -69,10 +76,16 @@ export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean
       <p><strong>Capacity:</strong> ${String(s.capacity)}</p>
       <p><strong>Founded:</strong> game day ${String(s.created_game_day)}</p>
     </div>
-    <p><a class="button-link" href="/stables/${String(s.id)}/prefix">Change prefix</a></p>
     <p><a href="/stables">Back to your stables</a></p>
   `;
-  return pageShell({ title: s.name, world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({
+    title: s.name,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    subnav: stableSubnav(s.id, 'overview'),
+    body,
+  });
 }
 
 export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; error?: string }): SafeHtml {
@@ -94,5 +107,12 @@ export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; st
       </form>
       <p><a href="/stables/${String(s.id)}">Cancel</a></p>
     `;
-  return pageShell({ title: 'Change prefix', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
+  return pageShell({
+    title: 'Change prefix',
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    subnav: stableSubnav(s.id, 'prefix'),
+    body,
+  });
 }

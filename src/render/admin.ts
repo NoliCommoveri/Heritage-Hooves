@@ -1,13 +1,36 @@
 import { html, raw, SafeHtml } from '../lib/html';
-import { pageShell, errorBox, noticeBox } from './layout';
+import { pageShell, errorBox, noticeBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { AccountRow } from '../db/accounts';
 import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import { formatLocal } from '../lib/time';
 
-function shell(world: WorldRow, body: SafeHtml, title: string): SafeHtml {
-  return pageShell({ title, world, loggedIn: true, isAdmin: true, body });
+function adminSubnav(active: 'home' | 'accounts' | 'config' | 'world' | 'migrations'): NavLink[] {
+  return [
+    { label: 'Admin home', href: '/admin', active: active === 'home' },
+    { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
+    { label: 'Config', href: '/admin/config', active: active === 'config' },
+    { label: 'World clock', href: '/admin/world', active: active === 'world' },
+    { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
+  ];
+}
+
+function shell(
+  world: WorldRow,
+  body: SafeHtml,
+  title: string,
+  active: 'home' | 'accounts' | 'config' | 'world' | 'migrations'
+): SafeHtml {
+  return pageShell({
+    title,
+    world,
+    loggedIn: true,
+    isAdmin: true,
+    section: 'admin',
+    subnav: adminSubnav(active),
+    body,
+  });
 }
 
 export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
@@ -25,7 +48,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;
-  return shell(w, body, 'Admin');
+  return shell(w, body, 'Admin', 'home');
 }
 
 export function renderAccountsPage(params: {
@@ -41,21 +64,24 @@ export function renderAccountsPage(params: {
       <td>${a.display_name}</td>
       <td>${a.is_admin ? 'admin' : 'player'}</td>
       <td>${a.active ? 'active' : 'deactivated'}</td>
-      <td>${a.must_change_password ? 'must change password' : ''}</td>
+      <td>${a.must_change_password ? html`<span class="badge badge-warning">must change password</span>` : ''}</td>
       <td>
-        <form method="post" action="/admin/accounts">
-          <input type="hidden" name="action" value="${a.active ? 'deactivate' : 'reactivate'}">
-          <input type="hidden" name="account_id" value="${String(a.id)}">
-          <button type="submit" class="secondary">${a.active ? 'Deactivate' : 'Reactivate'}</button>
-        </form>
-        <form method="post" action="/admin/accounts">
-          <input type="hidden" name="action" value="reset_password">
-          <input type="hidden" name="account_id" value="${String(a.id)}">
-          <label>New starting password
-            <input type="password" name="starting_password" required>
-          </label>
-          <button type="submit" class="secondary">Reset password</button>
-        </form>
+        <details class="row-actions">
+          <summary>Manage</summary>
+          <form method="post" action="/admin/accounts">
+            <input type="hidden" name="action" value="${a.active ? 'deactivate' : 'reactivate'}">
+            <input type="hidden" name="account_id" value="${String(a.id)}">
+            <button type="submit" class="secondary">${a.active ? 'Deactivate' : 'Reactivate'}</button>
+          </form>
+          <form method="post" action="/admin/accounts">
+            <input type="hidden" name="action" value="reset_password">
+            <input type="hidden" name="account_id" value="${String(a.id)}">
+            <label>New starting password
+              <input type="password" name="starting_password" required>
+            </label>
+            <button type="submit" class="secondary">Reset password</button>
+          </form>
+        </details>
       </td>
     </tr>`
   );
@@ -68,23 +94,24 @@ export function renderAccountsPage(params: {
       <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <h2>Create an account</h2>
-    <form method="post" action="/admin/accounts">
-      <input type="hidden" name="action" value="create">
-      <label>Their name
-        <input type="text" name="display_name" required>
-      </label>
-      <label>Username
-        <input type="text" name="username" required autocapitalize="off">
-      </label>
-      <label>Starting password
-        <input type="password" name="starting_password" required>
-      </label>
-      <button type="submit">Create account</button>
-    </form>
-    <p><a href="/admin">Back to admin home</a></p>
+    <details class="section-collapse" ${params.error ? raw('open') : raw('')}>
+      <summary>Create an account</summary>
+      <form method="post" action="/admin/accounts">
+        <input type="hidden" name="action" value="create">
+        <label>Their name
+          <input type="text" name="display_name" required>
+        </label>
+        <label>Username
+          <input type="text" name="username" required autocapitalize="off">
+        </label>
+        <label>Starting password
+          <input type="password" name="starting_password" required>
+        </label>
+        <button type="submit">Create account</button>
+      </form>
+    </details>
   `;
-  return shell(params.world, body, 'Accounts');
+  return shell(params.world, body, 'Accounts', 'accounts');
 }
 
 export function renderConfigPage(params: { world: WorldRow; config: Config; error?: string; notice?: string }): SafeHtml {
@@ -119,9 +146,8 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
     </form>
     <p class="muted">No feature flags exist yet.</p>
     <p><a href="/admin/config/history">Change history</a></p>
-    <p><a href="/admin">Back to admin home</a></p>
   `;
-  return shell(params.world, body, 'Config');
+  return shell(params.world, body, 'Config', 'config');
 }
 
 interface ConfigAuditRow {
@@ -154,7 +180,7 @@ export function renderConfigHistoryPage(params: { world: WorldRow; rows: ConfigA
     </table>
     <p><a href="/admin/config">Back to config</a></p>
   `;
-  return shell(params.world, body, 'Config history');
+  return shell(params.world, body, 'Config history', 'config');
 }
 
 export function renderWorldPage(params: { world: WorldRow; tickRuns: TickRunRow[]; notice?: string }): SafeHtml {
@@ -194,12 +220,13 @@ export function renderWorldPage(params: { world: WorldRow; tickRuns: TickRunRow[
       <button type="submit" class="secondary">Advance one tick now</button>
     </form>
     <p class="confirm-note">Advancing moves the game day forward by one tick's worth (paused worlds only move the tick sequence). It does not disturb the schedule - the next real tick still fires when it was always going to.</p>
-    <h2>Recent ticks</h2>
-    <table>
-      <thead><tr><th>Seq</th><th>Trigger</th><th>Intended</th><th>Fired</th><th>Date</th><th>Status</th><th>Day</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <p><a href="/admin">Back to admin home</a></p>
+    <details class="section-collapse" open>
+      <summary>Recent ticks</summary>
+      <table>
+        <thead><tr><th>Seq</th><th>Trigger</th><th>Intended</th><th>Fired</th><th>Date</th><th>Status</th><th>Day</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>
   `;
-  return shell(w, body, 'World clock');
+  return shell(w, body, 'World clock', 'world');
 }
