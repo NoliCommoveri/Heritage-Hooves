@@ -202,6 +202,8 @@ This is flagged as an open question in the design documents. It is written here 
 |---|---|---|
 | Foundation | built (2026-08-02) | Repo deploys via Workers Builds + D1 + Cron. Accounts, stables, the world clock, config, and the stable picker all work. No horses yet — see slice 0001. |
 | Genetics core | built (2026-08-02) | Two horses, one breeding, a foal described in words. Five loci (E, A, CR, G, DMRT3), full pedigree + tabular COI, instant foaling (deliberately temporary — see `breedNow` in `src/db/horses.ts`). Admin founder form at `/admin/horses/new`; barn at `/stables/:id/horses`; breeding at `/stables/:id/breed`; horse page at `/horses/:id`. See `docs/slices/0002-genetics-core.md`. |
+| Pregnancy, heat and fertility | specified, not built | Replaces `breedNow`'s instant foaling with booked coverings, a 4-tick oestrous cycle, a conception roll that can fail, real gestation, and rare twins. See `docs/slices/0003-breeding-and-fertility.md`. |
+| Cooled and frozen semen | specified, not built | Blocked on 0003. See `docs/slices/0004-semen-storage.md`. |
 | Founding stock generator | not started | |
 | Image slot | not started | |
 | One polygenic trait | not started | |
