@@ -8,6 +8,7 @@ import type { BreedRow, LocusRow } from '../db/breeds';
 import type { Genotype } from '../engines/genetics/genotype';
 import { LOCI } from '../engines/genetics/loci';
 import { NO_PICTURE_VALUE, type ImageOption } from '../lib/images';
+import type { ConformationDisplayRow } from '../engines/conformation/model';
 
 export function displayNameFor(horse: HorseRow): string {
   if (horse.registered_name) return horse.registered_name;
@@ -30,16 +31,17 @@ export function renderBarnList(params: {
   isAdmin: boolean;
   stable: StableRow;
   hasFoundingOffer: boolean;
-  horses: { horse: HorseRow; description: string; inSeason: boolean }[];
+  horses: { horse: HorseRow; description: string; inSeason: boolean; conformation: ConformationDisplayRow[] }[];
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason }) => html`
+        ({ horse, description, inSeason, conformation }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
             <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')}</h2>
             <p>${description}</p>
+            <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
         </div>`
       )
@@ -155,6 +157,39 @@ function pedigreeCell(slot: PedigreeSlot): SafeHtml {
   return html`<td><a href="/horses/${String(slot.horse.id)}">${displayNameFor(slot.horse)}</a></td>`;
 }
 
+/** One bar per trait - two nested <div>s with an inline width percentage, no JavaScript anywhere in
+ * this codebase (CLAUDE.md §11). "Mature to" reads the extreme the horse's own genetics lean
+ * towards - slice 0006 §2.2/§4.4, never a judgement of which end is wanted. */
+function conformationRow(row: ConformationDisplayRow): SafeHtml {
+  const matureSideLabel = row.matureExpressed >= 50 ? row.highLabel : row.lowLabel;
+  return html`
+    <div class="conformation-row">
+      <div class="meter-labels"><span>${row.lowLabel}</span><strong>${row.name}</strong><span>${row.highLabel}</span></div>
+      <div class="meter"><div class="meter-fill" style="width: ${String(row.expressed)}%"></div></div>
+      <p class="muted">Now ${String(row.expressed)}, will mature to ${String(row.matureExpressed)} - ${matureSideLabel}.</p>
+    </div>`;
+}
+
+/** Slice 0006 §6.1: the horse page's Conformation card. §2.3 is the discipline this function must
+ * never break - no score, no average, no word implying quality. */
+function conformationCard(params: { conformation: ConformationDisplayRow[]; ageYears: number; maturityYears: number; name: string; possessive: string }): SafeHtml {
+  return html`
+    <div class="card">
+      <h2>Conformation</h2>
+      ${params.ageYears < params.maturityYears
+        ? html`<p class="muted">${params.name} hasn't grown into ${params.possessive} frame yet - these numbers will keep settling until around age ${String(params.maturityYears)}.</p>`
+        : raw('')}
+      ${params.conformation.map((row) => conformationRow(row))}
+      <p class="muted">These are measurements, not marks - which end a breed wants arrives with the first show class.</p>
+    </div>`;
+}
+
+/** Slice 0006 §6.3: a compact one-line-per-horse comparison for the barn list, first word of each
+ * trait's name (Neck, Shoulder, Back, Hock) so two horses can be compared without opening either. */
+function conformationCompactLine(conformation: ConformationDisplayRow[]): SafeHtml {
+  return html`${conformation.map((row) => `${row.name.split(' ')[0]} ${String(row.expressed)}`).join(' · ')}`;
+}
+
 export function renderHorsePage(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -180,9 +215,14 @@ export function renderHorsePage(params: {
   genotype?: Genotype;
   loci?: LocusRow[];
   mareStatus?: string;
+  conformation: ConformationDisplayRow[];
+  conformationMaturityYears: number;
+  /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
+  showInbreedingNote: boolean;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
+  const possessive = h.sex === 'mare' ? 'her' : 'his';
 
   const bredByLine = h.breeder_prefix
     ? h.breeder_stable_id
@@ -280,8 +320,12 @@ export function renderHorsePage(params: {
         ? html`<p class="notice">This Friesian is chestnut - a recessive that hides for generations in a closed studbook and occasionally surfaces. It could not be registered as a Friesian.</p>`
         : raw('')}
       <p><strong>Inbreeding coefficient:</strong> ${coiPercent}</p>
+      ${params.showInbreedingNote
+        ? html`<p class="notice">Being this closely bred holds back growth - ${displayNameFor(h)}'s measurements below sit closer to the middle than ${possessive} genetics alone would give.</p>`
+        : raw('')}
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
+    ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     <h2>Pedigree</h2>
     ${pedigreeTable}
     ${nameForm}

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { MIGRATIONS } from '../../src/db/migrations';
 import { LOCI } from '../../src/engines/genetics/loci';
 import { parseAllelePool } from '../../src/engines/founding/pool';
+import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../../src/engines/genetics/polygenic';
+import { TRAIT_CATEGORY, TRAIT_DIRECTION } from '../../src/engines/conformation/traits';
 
 // The test CLAUDE.md §8/§11 asks for: the engine's LOCI constant is the source of truth for
 // iteration order and reproducibility (loci.ts), but a player-facing operator might reword
@@ -62,5 +64,33 @@ describe('every seeded breed pool vs LOCI', () => {
       }
       expect(sum, `${code} locus ${locus.code} sums to ${String(sum)}`).toBeCloseTo(1.0, 6);
     }
+  });
+});
+
+// Slice 0006 §8.6: TRAITS (polygenic.ts) is the source of truth for iteration order and the RNG
+// draw sequence; src/engines/conformation/traits.ts's TRAIT_CATEGORY/TRAIT_DIRECTION maps and
+// migrations/0029_seed_quantitative_traits.sql are both display metadata that must agree with it,
+// exactly as 0015_seed_loci.sql must agree with LOCI above.
+describe('TRAITS vs migrations/0029_seed_quantitative_traits.sql', () => {
+  it('seeds exactly the codes in TRAITS, in the same order, with matching category, direction and locus_count', () => {
+    const migration = MIGRATIONS.find((m) => m.name === '0029_seed_quantitative_traits.sql');
+    expect(migration).toBeDefined();
+
+    const rowPattern =
+      /\('([a-z_]+)',\s*'[^']*',\s*'(conformation|ability|hidden)',\s*'(bidirectional|higher_better)',\s*(?:'[^']*'|NULL),\s*(?:'[^']*'|NULL),\s*(\d+)/g;
+    const seeded: { code: string; category: string; direction: string; locusCount: number }[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = rowPattern.exec(migration!.sql)) !== null) {
+      seeded.push({ code: match[1], category: match[2], direction: match[3], locusCount: Number(match[4]) });
+    }
+
+    expect(seeded.length).toBe(TRAITS.length);
+    expect(seeded.map((s) => s.code)).toEqual([...TRAITS]);
+    seeded.forEach((s) => {
+      const code = s.code as TraitCode;
+      expect(s.category, `${s.code} category`).toBe(TRAIT_CATEGORY[code]);
+      expect(s.direction, `${s.code} direction`).toBe(TRAIT_DIRECTION[code]);
+      expect(s.locusCount, `${s.code} locus_count`).toBe(LOCI_PER_TRAIT);
+    });
   });
 });

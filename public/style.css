@@ -587,3 +587,45 @@ details.row-actions button {
   box-shadow: 0 0 0 3px var(--color-accent);
   border-style: solid;
 }
+
+/* ---------- Conformation (slice 0006) ---------- */
+
+.conformation-row {
+  margin-bottom: 0.9rem;
+}
+
+.conformation-row:last-of-type {
+  margin-bottom: 0;
+}
+
+.meter-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.2rem;
+}
+
+.meter-labels strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.meter {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+}
+
+.conformation-compact {
+  font-size: 0.85rem;
+}

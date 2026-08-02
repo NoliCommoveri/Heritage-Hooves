@@ -140,6 +140,7 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
       rngSeed: pregnancy.foal_rng_seed,
       ancestorRows,
       cycleAnchorTickSeq,
+      conformationNoiseSd: config.values.conformation_noise_sd,
     }),
     // Foal heat (slice 0003 §10.2): resetting to tickSeq + 1 also desynchronises mares whose cycles
     // happened to have lined up.

@@ -278,7 +278,7 @@ Every Mendelian locus — colour, gait, and single-gene disease. One engine, one
 
 ### 3.4 `quantitative_traits`
 
-- `id`, `code`, `name`, `category` (conformation / ability), `locus_count` (8–20 per §2b), `display_unit`, `enabled`
+**Built in slice 0006.** `id`, `code`, `name`, `category` (conformation / ability / hidden - `hidden` added for `fertility`, which is never displayed), `direction` (bidirectional / higher_better - decides the anchor a trait's genetic value realizes towards; forced by slice 0006 §2.2's bidirectional-measurement correction), `low_label`/`high_label` (the two named extremes shown on screen, e.g. "short"/"long"; forced by §2.3's ban on anything that reads as a score), `locus_count` (8–20 per §2b), `teaching_text` (matching `loci`'s precedent), `enabled`, `sort_order`. **`display_unit` is dropped** — these are unitless positions between two labels, and a unit would imply a scale that does not exist.
 
 Breed-specific targets and weights live in `breeds.ideal_vector`, not here — the trait is universal, the ideal is not.
 

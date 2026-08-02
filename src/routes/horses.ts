@@ -24,12 +24,24 @@ import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
+import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
+import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = gameDay - horse.born_game_day;
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
   return describeHorse(phenotype, horse.sex, ageDays / gameDaysPerYear);
+}
+
+/** Slice 0006 §6: the four conformation measurements for one horse, ready to hand to a render
+ * function. Shared by the barn list, the horse page and (via a candidate's own genotype/seed) the
+ * founding screen. */
+function conformationForHorse(horse: HorseRow, ageYears: number, config: RealizationConfig, traitRows: QuantitativeTraitRow[]) {
+  const genotype = parseGenotype(horse.genotype);
+  const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
+  const values = conformationValues(genotype, noise, ageYears, horse.coi, config);
+  return conformationDisplayRows(values, traitRows);
 }
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
@@ -44,7 +56,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
 
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const cfg = ctx.config.values;
-  const horses = await listStableHorses(ctx.env, stableId);
+  const [horses, traitRows] = await Promise.all([listStableHorses(ctx.env, stableId), getConformationTraits(ctx.env)]);
   const rows = horses.map((horse) => ({
     horse,
     description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
@@ -54,6 +66,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       horse.sex === 'mare' &&
       horse.cycle_anchor_tick_seq !== null &&
       isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
+    conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
   }));
 
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
@@ -253,6 +266,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
 
   const mareStatus = horse.sex === 'mare' ? await mareStatusLine(ctx, horse) : undefined;
   const hasFoundingOffer = owner ? await hasWaitingFoundingOffer(ctx.env, ownerStable.id) : false;
+  const traitRows = await getConformationTraits(ctx.env);
+  const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
   // Slice 0005 §5.3/§11: the Friesian pool carries a real recessive red (e at 8%), and a chestnut
   // Friesian is a genuine, if rare, outcome - it just can't be registered as one.
   const unregistrableFriesianChestnut = breed?.code === 'FR' && phenotype.baseColour === 'chestnut';
@@ -279,6 +294,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       genotype: isAdmin ? genotype : undefined,
       loci,
       mareStatus,
+      conformation,
+      conformationMaturityYears: ctx.config.values.conformation_maturity_years,
+      showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
     })
   );
 }

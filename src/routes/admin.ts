@@ -96,7 +96,13 @@ const NUMERIC_CONFIG_KEYS = [
   'starting_stable_capacity',
   'starting_balance',
   'min_password_length',
+  'conformation_noise_sd',
+  'conformation_maturity_years',
 ] as const;
+
+// These two are genuine fractions (0.55, 1.0) rather than whole numbers - CLAUDE.md §5.5/slice 0006
+// §5.3 - so they get their own validation rather than NUMERIC_CONFIG_KEYS's Number.isInteger check.
+const DECIMAL_CONFIG_KEYS = ['conformation_realization_at_birth', 'inbreeding_depression_factor'] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
   if (method === 'GET') {
@@ -117,6 +123,16 @@ export async function adminConfigRoute(ctx: RequestContext, method: string): Pro
     const n = Number(rawValue);
     if (!Number.isFinite(n) || !Number.isInteger(n)) {
       return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a whole number.` }));
+    }
+    values[key] = n;
+  }
+
+  for (const key of DECIMAL_CONFIG_KEYS) {
+    const rawValue = form[key];
+    if (rawValue === undefined) continue;
+    const n = Number(rawValue);
+    if (!Number.isFinite(n)) {
+      return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a number.` }));
     }
     values[key] = n;
   }
@@ -190,6 +206,7 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     rngSeed: seed,
     worldTickSeq: ctx.world.tick_seq,
     estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
+    conformationNoiseSd: ctx.config.values.conformation_noise_sd,
   });
 
   if (!result.ok) {
