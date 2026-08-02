@@ -17,6 +17,9 @@ export interface ConfigValues {
   starting_stable_capacity: number;
   starting_balance: number;
   min_password_length: number;
+  min_breeding_age_game_days: number;
+  mare_recovery_game_days: number;
+  coi_warn_threshold: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

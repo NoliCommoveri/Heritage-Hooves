@@ -148,6 +148,44 @@ minutes, and it's the piece most worth trusting before relying on the site.
 
 ---
 
+## Acceptance checklist: genetics and breeding (slice 0002)
+
+Do this after the steps above, once accounts and a stable already exist.
+
+1. Go to `/admin/migrations` and apply the pending migrations. They all report applied.
+2. From the admin page, click **Create a founding horse**. Make a mare: a Quarter Horse, into a
+   child's stable, aged 4, with Extension `E/e`, Agouti `A/a`, Cream `cr/cr`, Grey `g/g`, Gait
+   `C/C`. Give her a name.
+3. Make a stallion the same way, also `E/e` and `A/a`, and name him.
+4. Log in as the child. Open the barn (**Horses** on the stable page). Both horses are listed,
+   each with a plain-English description - both should read as bay.
+5. Click **Breed**. Choose the mare and the stallion, and press **Check pairing**. It reports a
+   COI of 0% - they're unrelated.
+6. Press **Confirm breeding**. A foal appears immediately, as "Unnamed filly" or "Unnamed colt".
+7. Repeat steps 5-6 a dozen or so times (you'll need to wait for the mare's recovery time, or use
+   a different mare - the admin's "Advance one tick now" button on the World clock page speeds
+   this up). Because both parents carry `E/e`, roughly one foal in four should come out chestnut
+   and the rest bay.
+8. Open a foal's page. It shows its colour, its sire and dam (linked), and a pedigree table.
+9. Register a name for it. The name appears with the stable's prefix stamped on the front, and the
+   naming form disappears for good.
+10. Try to change that stable's prefix now (**Change prefix**). It's refused - the stable has bred
+    a horse, so the prefix is permanent.
+11. Breed a filly foal back to her own sire. **Check pairing first** - it should report 25% and
+    warn you it's a close pairing. Confirm anyway; the foal's page shows a COI of 25%, and her
+    pedigree table shows her sire appearing twice.
+12. Try to breed the same mare again straight away. Refused, with a sentence explaining she's just
+    foaled and needs to recover.
+13. Create a horse with Grey `G/g`, aged 0, from the admin page. It's described by its base
+    colour. Advance the world repeatedly (each press is ten game days) and watch the description
+    move through "greying" to "light grey" and eventually "white grey". Thirty-six presses is one
+    game year.
+
+Step 11 is the one worth doing carefully - it's the only step that confirms the pedigree, the COI
+preview, and the COI the foal is actually born with all agree with each other.
+
+---
+
 ## For developers
 
 - `npm install` — install dependencies.
