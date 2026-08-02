@@ -1,13 +1,20 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderAdminHomePage, renderAccountsPage, renderConfigPage, renderConfigHistoryPage, renderWorldPage } from '../render/admin';
+import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
+import { listAllStables } from '../db/stables';
+import { getBreeds, getLoci } from '../db/breeds';
+import { createFoundingHorse } from '../db/horses';
 import { hashPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
 import { listConfigAudit } from '../db/configAudit';
 import { setPaused } from '../db/world';
 import { listRecentTickRuns } from '../db/tickRuns';
 import { runManualTick } from '../tick';
+import { validateHorseNamePart } from '../lib/validation';
+import { LOCI } from '../engines/genetics/loci';
+import { sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -108,6 +115,66 @@ export async function adminConfigRoute(ctx: RequestContext, method: string): Pro
 export async function adminConfigHistoryRoute(ctx: RequestContext): Promise<Response> {
   const rows = await listConfigAudit(ctx.env);
   return htmlResponse(renderConfigHistoryPage({ world: ctx.world, rows }));
+}
+
+export async function adminHorseNewRoute(ctx: RequestContext, method: string): Promise<Response> {
+  const [stables, breeds, loci] = await Promise.all([listAllStables(ctx.env), getBreeds(ctx.env), getLoci(ctx.env)]);
+
+  if (method === 'GET') {
+    return htmlResponse(renderAdminHorseNewPage({ world: ctx.world, stables, breeds, loci }));
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const stableId = Number(form.stable_id);
+  const sex = form.sex === 'stallion' ? 'stallion' : 'mare';
+  const breedId = Number(form.breed_id);
+  const namePart = (form.name ?? '').trim();
+  const ageYears = Number(form.age_years);
+
+  const stable = stables.find((s) => s.id === stableId);
+  const breed = breeds.find((b) => b.id === breedId);
+  const nameValidation = validateHorseNamePart(namePart);
+
+  if (!stable || !breed || !nameValidation.ok || !Number.isFinite(ageYears) || ageYears < 0) {
+    return htmlResponse(
+      renderAdminHorseNewPage({
+        world: ctx.world,
+        stables,
+        breeds,
+        loci,
+        error: !nameValidation.ok ? nameValidation.error : 'Choose a stable and a breed, and give a valid, non-negative age.',
+        form,
+      })
+    );
+  }
+
+  const mendelian: Record<string, AllelePair> = {};
+  for (const locus of LOCI) {
+    const a1 = form[`locus_${locus.code}_1`] ?? locus.wildType;
+    const a2 = form[`locus_${locus.code}_2`] ?? locus.wildType;
+    mendelian[locus.code] = sortAllelePair(locus.code, a1, a2);
+  }
+
+  const bornGameDay = ctx.world.game_day - Math.round(ageYears * ctx.config.values.game_days_per_year);
+
+  const result = await createFoundingHorse(ctx.env, {
+    stableId,
+    sex,
+    breedId,
+    breedCode: breed.code,
+    name: namePart,
+    bornGameDay,
+    mendelian,
+  });
+
+  if (!result.ok) {
+    return htmlResponse(
+      renderAdminHorseNewPage({ world: ctx.world, stables, breeds, loci, error: 'That name is already registered to another horse.', form })
+    );
+  }
+
+  return redirect(`/horses/${String(result.horseId)}`);
 }
 
 export async function adminWorldRoute(ctx: RequestContext, method: string): Promise<Response> {

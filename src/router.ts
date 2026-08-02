@@ -8,15 +8,18 @@ import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
 import { accountPasswordRoute } from './routes/account';
 import { stablesPickerRoute, stablesNewRoute, stableHomeRoute, stableSelectRoute, stablePrefixRoute } from './routes/stables';
+import { stableHorsesRoute, stableBreedRoute, horsePageRoute, horseNameRoute, horseBarnNameRoute } from './routes/horses';
 import {
   adminHomeRoute,
   adminAccountsRoute,
   adminConfigRoute,
   adminConfigHistoryRoute,
   adminWorldRoute,
+  adminHorseNewRoute,
 } from './routes/admin';
 
-const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix)?$/;
+const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name)?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -63,6 +66,18 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (!sub && method === 'GET') return withReissuedCookie(ctx, await stableHomeRoute(ctx, stableId));
     if (sub === '/select' && method === 'POST') return withReissuedCookie(ctx, await stableSelectRoute(ctx, stableId));
     if (sub === '/prefix') return withReissuedCookie(ctx, await stablePrefixRoute(ctx, method, stableId));
+    if (sub === '/horses' && method === 'GET') return withReissuedCookie(ctx, await stableHorsesRoute(ctx, stableId));
+    if (sub === '/breed') return withReissuedCookie(ctx, await stableBreedRoute(ctx, method, stableId));
+    return notFound();
+  }
+
+  const horseMatch = path.match(HORSE_ROUTE);
+  if (horseMatch) {
+    const horseId = Number(horseMatch[1]);
+    const sub = horseMatch[2];
+    if (!sub && method === 'GET') return withReissuedCookie(ctx, await horsePageRoute(ctx, horseId));
+    if (sub === '/name' && method === 'POST') return withReissuedCookie(ctx, await horseNameRoute(ctx, horseId));
+    if (sub === '/barn-name' && method === 'POST') return withReissuedCookie(ctx, await horseBarnNameRoute(ctx, horseId));
     return notFound();
   }
 
@@ -73,6 +88,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/config') return withReissuedCookie(ctx, await adminConfigRoute(ctx, method));
     if (path === '/admin/config/history' && method === 'GET') return withReissuedCookie(ctx, await adminConfigHistoryRoute(ctx));
     if (path === '/admin/world') return withReissuedCookie(ctx, await adminWorldRoute(ctx, method));
+    if (path === '/admin/horses/new') return withReissuedCookie(ctx, await adminHorseNewRoute(ctx, method));
     return notFound();
   }
 

@@ -10,6 +10,13 @@ import m0006 from '../../migrations/0006_stables.sql';
 import m0007 from '../../migrations/0007_stable_prefix_history.sql';
 import m0008 from '../../migrations/0008_seed_world.sql';
 import m0009 from '../../migrations/0009_seed_config.sql';
+import m0010 from '../../migrations/0010_breeds.sql';
+import m0011 from '../../migrations/0011_loci.sql';
+import m0012 from '../../migrations/0012_horses.sql';
+import m0013 from '../../migrations/0013_horse_ancestors.sql';
+import m0014 from '../../migrations/0014_seed_breeds.sql';
+import m0015 from '../../migrations/0015_seed_loci.sql';
+import m0016 from '../../migrations/0016_config_breeding.sql';
 
 export interface MigrationFile {
   name: string;
@@ -36,6 +43,13 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0007_stable_prefix_history.sql', sql: m0007 },
   { name: '0008_seed_world.sql', sql: m0008 },
   { name: '0009_seed_config.sql', sql: m0009 },
+  { name: '0010_breeds.sql', sql: m0010 },
+  { name: '0011_loci.sql', sql: m0011 },
+  { name: '0012_horses.sql', sql: m0012 },
+  { name: '0013_horse_ancestors.sql', sql: m0013 },
+  { name: '0014_seed_breeds.sql', sql: m0014 },
+  { name: '0015_seed_loci.sql', sql: m0015 },
+  { name: '0016_config_breeding.sql', sql: m0016 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

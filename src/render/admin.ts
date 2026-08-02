@@ -45,6 +45,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/accounts">Accounts</a></p>
     <p><a class="button-link" href="/admin/config">Config</a></p>
     <p><a class="button-link" href="/admin/world">World clock</a></p>
+    <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;

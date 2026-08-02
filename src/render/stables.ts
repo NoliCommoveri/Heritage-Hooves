@@ -3,9 +3,13 @@ import { pageShell, errorBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
 
-function stableSubnav(stableId: number, active: 'overview' | 'prefix'): NavLink[] {
+export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix';
+
+export function stableSubnav(stableId: number, active: StableSubnavPage): NavLink[] {
   return [
     { label: 'Overview', href: `/stables/${String(stableId)}`, active: active === 'overview' },
+    { label: 'Horses', href: `/stables/${String(stableId)}/horses`, active: active === 'horses' },
+    { label: 'Breed', href: `/stables/${String(stableId)}/breed`, active: active === 'breed' },
     { label: 'Change prefix', href: `/stables/${String(stableId)}/prefix`, active: active === 'prefix' },
   ];
 }
@@ -76,6 +80,8 @@ export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean
       <p><strong>Capacity:</strong> ${String(s.capacity)}</p>
       <p><strong>Founded:</strong> game day ${String(s.created_game_day)}</p>
     </div>
+    <p><a class="button-link" href="/stables/${String(s.id)}/horses">Horses</a></p>
+    <p><a class="button-link" href="/stables/${String(s.id)}/breed">Breed</a></p>
     <p><a href="/stables">Back to your stables</a></p>
   `;
   return pageShell({

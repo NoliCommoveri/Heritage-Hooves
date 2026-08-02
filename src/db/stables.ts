@@ -36,6 +36,12 @@ export async function listStablesForAccount(env: Env, accountId: number): Promis
   return result.results ?? [];
 }
 
+/** Every active stable, player and NPC alike - the admin founder-creation form's "owning stable" select. */
+export async function listAllStables(env: Env): Promise<StableRow[]> {
+  const result = await env.DB.prepare('SELECT * FROM stables WHERE active = 1 ORDER BY name ASC').all<StableRow>();
+  return result.results ?? [];
+}
+
 export async function getStableById(env: Env, id: number): Promise<StableRow | null> {
   return env.DB.prepare('SELECT * FROM stables WHERE id = ?').bind(id).first<StableRow>();
 }
