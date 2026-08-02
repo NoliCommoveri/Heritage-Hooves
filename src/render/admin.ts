@@ -2,27 +2,27 @@ import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell, errorBox, noticeBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { AccountRow } from '../db/accounts';
+import type { StableRow } from '../db/stables';
 import type { Config } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
+import type { ImportOfferRow } from '../db/founding';
 import { formatLocal } from '../lib/time';
 
-function adminSubnav(active: 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'migrations'): NavLink[] {
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'migrations';
+
+function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
     { label: 'Admin home', href: '/admin', active: active === 'home' },
     { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
     { label: 'Config', href: '/admin/config', active: active === 'config' },
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
     { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
+    { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
   ];
 }
 
-function shell(
-  world: WorldRow,
-  body: SafeHtml,
-  title: string,
-  active: 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'migrations'
-): SafeHtml {
+function shell(world: WorldRow, body: SafeHtml, title: string, active: AdminSubnavPage): SafeHtml {
   return pageShell({
     title,
     world,
@@ -48,6 +48,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/world">World clock</a></p>
     <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
     <p><a class="button-link" href="/admin/breeding">Breeding</a></p>
+    <p><a class="button-link" href="/admin/founding">Founding stock</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
   `;
@@ -287,4 +288,64 @@ export function renderBreedingAdminPage(params: { world: WorldRow; config: Confi
     </div>
   `;
   return shell(params.world, body, 'Breeding', 'breeding');
+}
+
+/**
+ * Slice 0005 §11/§13: mint a founding-stock batch into any stable, and see recent offers. This is
+ * the whole grant path until §7 (the PIN, typed on a child's own phone) lands as a follow-up slice
+ * - until then, a chore-reward batch still means an admin logged in and using this form.
+ */
+export function renderFoundingAdminPage(params: {
+  world: WorldRow;
+  stables: StableRow[];
+  qualityBands: Record<string, number>;
+  defaultBand: string;
+  recentOffers: (ImportOfferRow & { stableName: string })[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const stableOptions = html`${params.stables.map((s) => html`<option value="${String(s.id)}">${s.name}</option>`)}`;
+  const bandOptions = html`${Object.keys(params.qualityBands).map(
+    (band) =>
+      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
+  )}`;
+
+  const offerRows = params.recentOffers.map(
+    (o) => html`
+    <tr>
+      <td>${o.stableName}</td>
+      <td>${o.source}</td>
+      <td>${o.status}</td>
+      <td>${o.quality_band}</td>
+      <td>${String(o.granted_game_day)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Founding stock</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Grant a batch</h2>
+      <form method="post" action="/admin/founding">
+        <input type="hidden" name="action" value="mint">
+        <label>Stable
+          <select name="stable_id" required>${stableOptions}</select>
+        </label>
+        <label>Quality band
+          <select name="band" required>${bandOptions}</select>
+        </label>
+        <button type="submit">Grant batch</button>
+      </form>
+      <p class="muted">The child opens it from their stable page and picks a breed themselves - the batch says nothing about which breed until they do.</p>
+    </div>
+    <div class="card">
+      <h2>Recent offers</h2>
+      <table>
+        <thead><tr><th>Stable</th><th>Source</th><th>Status</th><th>Band</th><th>Granted (game day)</th></tr></thead>
+        <tbody>${offerRows}</tbody>
+      </table>
+    </div>
+  `;
+  return shell(params.world, body, 'Founding stock', 'founding');
 }

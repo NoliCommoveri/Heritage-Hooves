@@ -38,6 +38,19 @@ export interface ConfigValues {
   gestation_days_sd: number;
   twin_double_ovulation_rate: number;
   twin_both_continue_rate: number;
+  /** Slice 0005 §2.3/§4: a founding batch's shape and the age range its candidates arrive in. */
+  founding_mare_candidates: number;
+  founding_mare_claims: number;
+  founding_stallion_candidates: number;
+  founding_stallion_claims: number;
+  /** The band name a fresh founding batch mints at by default - see quality_bands below. */
+  founding_quality_band: string;
+  /** Band name -> polygenic_one_chance (the probability any given polygenic allele is a '1'). */
+  quality_bands: Record<string, number>;
+  founding_age_min_game_days: number;
+  founding_age_max_game_days: number;
+  /** 0 means never (slice 0005 §6.2) - no tick stage sweeps offers yet; checked at claim time only. */
+  founding_offer_expiry_game_days: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

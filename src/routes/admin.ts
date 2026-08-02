@@ -1,11 +1,20 @@
 import type { RequestContext } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
-import { renderAdminHomePage, renderAccountsPage, renderConfigPage, renderConfigHistoryPage, renderWorldPage, renderBreedingAdminPage } from '../render/admin';
+import {
+  renderAdminHomePage,
+  renderAccountsPage,
+  renderConfigPage,
+  renderConfigHistoryPage,
+  renderWorldPage,
+  renderBreedingAdminPage,
+  renderFoundingAdminPage,
+} from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
-import { listAllStables } from '../db/stables';
+import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci } from '../db/breeds';
 import { createFoundingHorse } from '../db/horses';
+import { mintOffer, listRecentOffers } from '../db/founding';
 import { hashPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
 import { listConfigAudit } from '../db/configAudit';
@@ -14,7 +23,9 @@ import { listRecentTickRuns } from '../db/tickRuns';
 import { runManualTick } from '../tick';
 import { validateHorseNamePart } from '../lib/validation';
 import { LOCI } from '../engines/genetics/loci';
-import { sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
+import { sortAllelePair, GENOTYPE_VERSION, type AllelePair, type Genotype } from '../engines/genetics/genotype';
+import { generateFounderPolygenic } from '../engines/genetics/polygenic';
+import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -158,6 +169,14 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
 
   const bornGameDay = ctx.world.game_day - Math.round(ageYears * ctx.config.values.game_days_per_year);
 
+  // Slice 0005 §6.6: the polygenic draw moves out here, where the pure-engine/thin-database split
+  // (CLAUDE.md §5.1) actually belongs - db/horses.ts no longer does any genetics of its own. A
+  // flat 50/50 draw is right for a deliberately-constructed test horse; the band-weighted draw the
+  // founding-stock generator uses lives in src/engines/founding/generate.ts instead.
+  const seed = randomSeed();
+  const polygenicRng = makeRng(deriveSeed(seed, 'founder_polygenic'));
+  const genotype: Genotype = { v: GENOTYPE_VERSION, mendelian, polygenic: generateFounderPolygenic(polygenicRng) };
+
   const result = await createFoundingHorse(ctx.env, {
     stableId,
     sex,
@@ -165,7 +184,8 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     breedCode: breed.code,
     name: namePart,
     bornGameDay,
-    mendelian,
+    genotype,
+    rngSeed: seed,
     worldTickSeq: ctx.world.tick_seq,
     estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,
   });
@@ -227,4 +247,67 @@ export async function adminBreedingRoute(ctx: RequestContext, method: string): P
   }
 
   return notFound();
+}
+
+/**
+ * Mint a founding-stock batch into any stable (slice 0005 §11) - the whole grant path until §7's
+ * PIN lands as a follow-up slice. source is 'admin_grant' regardless of which admin does this;
+ * granted_by_account_id records who.
+ */
+export async function adminFoundingRoute(ctx: RequestContext, method: string): Promise<Response> {
+  const stables = await listAllStables(ctx.env);
+
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('granted') ? 'Batch granted.' : undefined;
+    const offers = await listRecentOffers(ctx.env, 20);
+    const stableNameById = new Map(stables.map((s) => [s.id, s.name]));
+    const recentOffers = offers.map((o) => ({ ...o, stableName: stableNameById.get(o.stable_id) ?? `Stable #${String(o.stable_id)}` }));
+    return htmlResponse(
+      renderFoundingAdminPage({
+        world: ctx.world,
+        stables,
+        qualityBands: ctx.config.values.quality_bands,
+        defaultBand: ctx.config.values.founding_quality_band,
+        recentOffers,
+        notice,
+      })
+    );
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action !== 'mint') return notFound();
+
+  const stableId = Number(form.stable_id);
+  const band = form.band ?? '';
+  const stable = await getStableById(ctx.env, stableId);
+
+  if (!stable || ctx.config.values.quality_bands[band] === undefined) {
+    const offers = await listRecentOffers(ctx.env, 20);
+    const stableNameById = new Map(stables.map((s) => [s.id, s.name]));
+    const recentOffers = offers.map((o) => ({ ...o, stableName: stableNameById.get(o.stable_id) ?? `Stable #${String(o.stable_id)}` }));
+    return htmlResponse(
+      renderFoundingAdminPage({
+        world: ctx.world,
+        stables,
+        qualityBands: ctx.config.values.quality_bands,
+        defaultBand: ctx.config.values.founding_quality_band,
+        recentOffers,
+        error: 'Choose a stable and a quality band.',
+      })
+    );
+  }
+
+  await mintOffer(ctx.env, {
+    stableId,
+    accountId: stable.account_id,
+    source: 'admin_grant',
+    grantedByAccountId: ctx.account!.id,
+    gameDay: ctx.world.game_day,
+    config: ctx.config,
+    band,
+  });
+
+  return redirect('/admin/founding?granted=1');
 }

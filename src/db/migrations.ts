@@ -22,6 +22,10 @@ import m0018 from '../../migrations/0018_coverings.sql';
 import m0019 from '../../migrations/0019_pregnancies.sql';
 import m0020 from '../../migrations/0020_config_fertility.sql';
 import m0021 from '../../migrations/0021_backfill_cycle_anchor.sql';
+import m0022 from '../../migrations/0022_import_offers.sql';
+import m0023 from '../../migrations/0023_import_candidates.sql';
+import m0024 from '../../migrations/0024_seed_breed_pools.sql';
+import m0025 from '../../migrations/0025_config_founding.sql';
 
 export interface MigrationFile {
   name: string;
@@ -60,6 +64,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0019_pregnancies.sql', sql: m0019 },
   { name: '0020_config_fertility.sql', sql: m0020 },
   { name: '0021_backfill_cycle_anchor.sql', sql: m0021 },
+  { name: '0022_import_offers.sql', sql: m0022 },
+  { name: '0023_import_candidates.sql', sql: m0023 },
+  { name: '0024_seed_breed_pools.sql', sql: m0024 },
+  { name: '0025_config_founding.sql', sql: m0025 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

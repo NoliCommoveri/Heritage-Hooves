@@ -12,6 +12,7 @@ import {
 import { setLastActiveStable } from '../db/accounts';
 import { validatePrefix, normalizePrefix } from '../lib/prefix';
 import { buildStableCookie } from '../lib/session';
+import { hasWaitingFoundingOffer } from '../db/founding';
 
 export async function stablesPickerRoute(ctx: RequestContext): Promise<Response> {
   const account = ctx.account!;
@@ -84,7 +85,8 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
 export async function stableHomeRoute(ctx: RequestContext, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
-  return htmlResponse(renderStableHomePage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable }));
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
+  return htmlResponse(renderStableHomePage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer }));
 }
 
 export async function stableSelectRoute(ctx: RequestContext, stableId: number): Promise<Response> {
@@ -100,9 +102,10 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
   const isAdmin = ctx.account!.is_admin === 1;
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET' || stable.prefix_locked) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer }));
   }
   if (method !== 'POST') return notFound();
 
@@ -110,13 +113,13 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const prefixInput = form.prefix ?? '';
   const validation = validatePrefix(prefixInput);
   if (!validation.ok) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, error: validation.error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, error: validation.error }));
   }
 
   const result = await renamePrefix(ctx.env, { stableId, newPrefix: normalizePrefix(prefixInput), gameDay: ctx.world.game_day });
   if (!result.ok) {
     const error = result.error === 'locked' ? 'This prefix is locked and can no longer change.' : 'That prefix is already taken. Try another.';
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, error }));
   }
 
   return redirect(`/stables/${stableId}`);

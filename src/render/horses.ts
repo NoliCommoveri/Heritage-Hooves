@@ -18,6 +18,7 @@ export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
   stable: StableRow;
+  hasFoundingOffer: boolean;
   horses: { horse: HorseRow; description: string; inSeason: boolean }[];
 }): SafeHtml {
   const rows = params.horses.length
@@ -40,7 +41,7 @@ export function renderBarnList(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
-    subnav: stableSubnav(params.stable.id, 'horses'),
+    subnav: stableSubnav(params.stable.id, 'horses', params.hasFoundingOffer),
     body,
   });
 }
@@ -69,6 +70,7 @@ export function renderBreedPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   stable: StableRow;
+  hasFoundingOffer: boolean;
   mares: HorseRow[];
   stallions: HorseRow[];
   describe: (h: HorseRow) => string;
@@ -124,7 +126,7 @@ export function renderBreedPage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
-    subnav: stableSubnav(params.stable.id, 'breed'),
+    subnav: stableSubnav(params.stable.id, 'breed', params.hasFoundingOffer),
     body,
   });
 }
@@ -144,12 +146,16 @@ export function renderHorsePage(params: {
   isAdmin: boolean;
   owner: boolean;
   ownerStable: StableRow;
+  hasFoundingOffer: boolean;
   horse: HorseRow;
   description: string;
   ageYears: number;
   breed: BreedRow | undefined;
   gaited: boolean;
   breederStableName: string | null;
+  /** Bred by a Friesian pool but came out chestnut - the recessive e is real in the studbook and
+   * unregistrable (slice 0005 §5.3). */
+  unregistrableFriesianChestnut: boolean;
   pedigree: { sire: HorseRow | null; dam: HorseRow | null; sireSire: HorseRow | null; sireDam: HorseRow | null; damSire: HorseRow | null; damDam: HorseRow | null };
   canRegisterName: boolean;
   nameError?: string;
@@ -160,6 +166,12 @@ export function renderHorsePage(params: {
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
+
+  const bredByLine = h.breeder_prefix
+    ? h.breeder_stable_id
+      ? html`${h.breeder_prefix}${params.breederStableName ? ` (${params.breederStableName})` : ''}`
+      : html`${h.breeder_prefix} <span class="muted">(a founding stable, not one in this game)</span>`
+    : html`a founding stable (unbred stock)`;
 
   const nameForm = params.canRegisterName
     ? html`
@@ -232,7 +244,10 @@ export function renderHorsePage(params: {
       <p>${params.description}</p>
       <p><strong>Sex:</strong> ${h.sex} &middot; <strong>Age:</strong> ${params.ageYears < 1 ? 'under a year' : `${Math.floor(params.ageYears)} years`}</p>
       <p><strong>Breed:</strong> ${params.breed ? params.breed.name : h.is_cross ? 'Cross' : 'Unknown'} ${params.gaited ? html`<span class="badge badge-success">gaited</span>` : raw('')}</p>
-      <p><strong>Bred by:</strong> ${h.breeder_prefix ? html`${h.breeder_prefix}${params.breederStableName ? ` (${params.breederStableName})` : ''}` : 'a founding stable (unbred stock)'}</p>
+      <p><strong>Bred by:</strong> ${bredByLine}</p>
+      ${params.unregistrableFriesianChestnut
+        ? html`<p class="notice">This Friesian is chestnut - a recessive that hides for generations in a closed studbook and occasionally surfaces. It could not be registered as a Friesian.</p>`
+        : raw('')}
       <p><strong>Inbreeding coefficient:</strong> ${coiPercent}</p>
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
@@ -248,7 +263,7 @@ export function renderHorsePage(params: {
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
-    subnav: params.owner ? stableSubnav(params.ownerStable.id, 'horses') : undefined,
+    subnav: params.owner ? stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer) : undefined,
     body,
   });
 }
