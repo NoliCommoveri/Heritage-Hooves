@@ -13,6 +13,9 @@ export interface StableRow {
   balance: number;
   capacity: number;
   last_processed_tick_seq: number;
+  /** Slice 0009 §2.2/§4.3. Game days, never tick_seq - upkeep is charged against this, from the
+   * world clock, so a paused world never accrues board. */
+  last_upkeep_game_day: number;
   created_game_day: number;
   created_real_ts: number;
   active: number;
@@ -63,6 +66,16 @@ export type CreateStableResult = { ok: true; stableId: number } | { ok: false; e
  * the history insert's unique-constraint failure rolls the whole batch back, so no stable row is
  * left behind either. This achieves the guarantee slice §7.1.5 asks for (insert-and-catch, no
  * prior SELECT) without needing stable_prefix_history.stable_id to be nullable.
+ *
+ * Slice 0009 §4.5: the starting balance is also recorded as an 'opening' ledger row, so the
+ * balance-equals-sum-of-ledger invariant (src/db/ledger.ts) holds with no special case for a
+ * brand-new stable. This does not go through buildLedgerStatements - that function pairs every
+ * ledger row with a *relative* balance update, which would double the starting balance here, since
+ * the stables INSERT above already establishes it as the row's initial value. The ledger row is
+ * written directly instead, referencing the just-inserted stable the same way the ancestor rows in
+ * buildFoalInsertStatements do - "SELECT id FROM stables ORDER BY id DESC LIMIT 1" rather than
+ * last_insert_rowid(), which is already stale by this point (clobbered by the prefix-history
+ * insert immediately above it in this same batch).
  */
 export async function createStableWithPrefix(env: Env, params: CreateStableParams): Promise<CreateStableResult> {
   const config = await getConfig(env);
@@ -73,8 +86,8 @@ export async function createStableWithPrefix(env: Env, params: CreateStableParam
     results = await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO stables
-           (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts)
-         VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`
+           (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, last_upkeep_game_day, created_game_day, created_real_ts)
+         VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)`
       ).bind(
         params.accountId,
         params.name,
@@ -83,12 +96,17 @@ export async function createStableWithPrefix(env: Env, params: CreateStableParam
         config.values.starting_balance,
         config.values.starting_stable_capacity,
         params.gameDay,
+        params.gameDay,
         nowSeconds
       ),
       env.DB.prepare(
         `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
          VALUES (last_insert_rowid(), ?, ?, NULL, ?, ?)`
       ).bind(params.prefix, params.gameDay, params.accountId, nowSeconds),
+      env.DB.prepare(
+        `INSERT INTO ledger (stable_id, amount, kind, reference_type, reference_id, description, game_day, created_real_ts)
+         VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, 'opening', NULL, NULL, 'Starting balance.', ?, ?)`
+      ).bind(config.values.starting_balance, params.gameDay, nowSeconds),
     ]);
   } catch (err) {
     if (isUniqueConstraintError(err)) return { ok: false, error: 'prefix_taken' };

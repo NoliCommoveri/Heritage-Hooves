@@ -24,6 +24,7 @@ import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
+import { canTakeOnCost } from '../lib/money';
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
@@ -133,6 +134,13 @@ function conceptionReasons(breakdown: ConceptionBreakdown, mareAgeYears: number,
 }
 
 async function validateBooking(ctx: RequestContext, stable: StableRow, mare: HorseRow, stallion: HorseRow): Promise<string | undefined> {
+  // Slice 0009 §2.4/§4.6: debt blocks expansion (booking adds a horse, and therefore adds cost),
+  // never competing - see the comment on enterHorseInClass in src/db/shows.ts for the show side of
+  // this rule. Checked here, and nowhere else in this slice.
+  if (!canTakeOnCost(stable.balance)) {
+    return `${stable.name} is ${String(Math.abs(stable.balance))} in the red. Win a show, or ask a grown-up to add money, before breeding again.`;
+  }
+
   if (stallion.sex === 'gelding') return 'Geldings cannot breed.';
   if (mare.sex !== 'mare' || stallion.sex !== 'stallion') return 'Breeding needs one mare and one stallion.';
 

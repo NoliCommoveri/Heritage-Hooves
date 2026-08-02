@@ -3,7 +3,7 @@ import { pageShell, errorBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
 
-export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix' | 'founding';
+export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix' | 'founding' | 'money';
 
 /** hasFoundingOffer (slice 0005 §11): "New horses" only appears while there is something waiting -
  * a pending breed choice or an open batch to claim - not once it's been claimed. */
@@ -12,6 +12,7 @@ export function stableSubnav(stableId: number, active: StableSubnavPage, hasFoun
     { label: 'Overview', href: `/stables/${String(stableId)}`, active: active === 'overview' },
     { label: 'Horses', href: `/stables/${String(stableId)}/horses`, active: active === 'horses' },
     { label: 'Breed', href: `/stables/${String(stableId)}/breed`, active: active === 'breed' },
+    { label: 'Money', href: `/stables/${String(stableId)}/money`, active: active === 'money' },
     { label: 'Change prefix', href: `/stables/${String(stableId)}/prefix`, active: active === 'prefix' },
   ];
   if (hasFoundingOffer) {
@@ -76,17 +77,35 @@ export function renderNewStablePage(params: {
   return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
 }
 
-export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; hasFoundingOffer: boolean }): SafeHtml {
+export function renderStableHomePage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  stable: StableRow;
+  hasFoundingOffer: boolean;
+  aliveHorseCount: number;
+  upkeepPerHorsePerGameDay: number;
+}): SafeHtml {
   const s = params.stable;
   const foundingCallout = params.hasFoundingOffer
     ? html`<p class="notice">New horses are waiting. <a href="/stables/${String(s.id)}/founding">Take a look</a>.</p>`
     : raw('');
+  const dailyCost = params.aliveHorseCount * params.upkeepPerHorsePerGameDay;
+  const upkeepLine =
+    params.aliveHorseCount > 0
+      ? html`<p class="muted">${String(params.aliveHorseCount)} horse${params.aliveHorseCount === 1 ? '' : 's'}, ${String(dailyCost)} a day to keep.</p>`
+      : html`<p class="muted">No horses yet, so nothing costs anything to keep.</p>`;
+  const balanceLine =
+    s.balance < 0
+      ? html`<p class="error"><strong>Balance:</strong> ${String(s.balance)} - this stable is in the red.</p>`
+      : html`<p><strong>Balance:</strong> ${String(s.balance)}</p>`;
   const body = html`
     <h1>${s.name}</h1>
     ${foundingCallout}
     <div class="card">
       <p><strong>Prefix:</strong> ${s.prefix} ${s.prefix_locked ? raw('<span class="muted">(locked)</span>') : html``}</p>
-      <p><strong>Balance:</strong> ${String(s.balance)}</p>
+      ${balanceLine}
+      ${upkeepLine}
+      <p><a href="/stables/${String(s.id)}/money">See the money history</a></p>
       <p><strong>Capacity:</strong> ${String(s.capacity)}</p>
       <p><strong>Founded:</strong> game day ${String(s.created_game_day)}</p>
     </div>

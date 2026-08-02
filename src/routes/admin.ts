@@ -11,6 +11,7 @@ import {
   renderBreedsAdminPage,
   renderResetPage,
   renderShowsAdminPage,
+  renderMoneyAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
@@ -22,6 +23,7 @@ import { createFoundingHorse, countAliveHorses } from '../db/horses';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
+import { buildLedgerStatements, listStableBalancesForAdmin, listRecentAdjustments } from '../db/ledger';
 import { hashPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
 import { listConfigAudit } from '../db/configAudit';
@@ -110,6 +112,7 @@ const NUMERIC_CONFIG_KEYS = [
   'show_max_entries_per_stable',
   'show_conformation_min_age_game_days',
   'npc_show_barn_size',
+  'upkeep_per_horse_per_game_day',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -471,4 +474,56 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
   }
 
   return notFound();
+}
+
+/**
+ * §7.3: adding or removing money by hand, the relief valve for §2.4's debt rule. Guarded by the
+ * `required` checkbox pattern the world-clock page uses, re-checked here rather than trusted from
+ * the form. One kind = 'adjustment' ledger row per submission, written through
+ * buildLedgerStatements (src/db/ledger.ts) like every other movement in the game - referenceType
+ * 'account'/referenceId the admin account that did it, so a later reader can trace who.
+ */
+export async function adminMoneyRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [stables, recentAdjustments] = await Promise.all([listStableBalancesForAdmin(ctx.env), listRecentAdjustments(ctx.env, 20)]);
+    return htmlResponse(renderMoneyAdminPage({ world: ctx.world, stables, recentAdjustments, error, notice }));
+  }
+
+  if (method === 'GET') {
+    const notice = new URL(ctx.request.url).searchParams.get('applied') ? 'Adjustment applied.' : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action !== 'adjust') return notFound();
+
+  if (form.confirm !== 'yes') return page('Tick the box to confirm before applying this adjustment.');
+
+  const stableId = Number(form.stable_id);
+  const amount = Number(form.amount);
+  const reason = (form.reason ?? '').trim();
+
+  if (!Number.isFinite(stableId)) return page('Choose a stable.');
+  if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount === 0) return page('Amount must be a non-zero whole number.');
+  if (!reason) return page('A reason is required.');
+
+  const stable = await getStableById(ctx.env, stableId);
+  if (!stable) return page('Choose a stable.');
+
+  await ctx.env.DB.batch(
+    buildLedgerStatements(ctx.env, [
+      {
+        stableId,
+        amount,
+        kind: 'adjustment',
+        referenceType: 'account',
+        referenceId: ctx.account!.id,
+        description: reason,
+        gameDay: ctx.world.game_day,
+      },
+    ])
+  );
+
+  return redirect('/admin/money?applied=1');
 }

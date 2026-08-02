@@ -9,10 +9,11 @@ import type { TickRunRow } from '../db/tickRuns';
 import type { ImportOfferRow } from '../db/founding';
 import type { TableCount } from '../db/reset';
 import type { AdminShowSummary } from '../db/shows';
+import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'migrations' | 'reset';
+type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'migrations' | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -24,6 +25,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
     { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
     { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
+    { label: 'Money', href: '/admin/money', active: active === 'money' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -58,6 +60,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/founding">Founding stock</a></p>
     <p><a class="button-link" href="/admin/breeds">Breeds</a></p>
     <p><a class="button-link" href="/admin/shows">Shows</a></p>
+    <p><a class="button-link" href="/admin/money">Money</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -197,8 +200,14 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="npc_show_barn_size" value="${String(v.npc_show_barn_size)}">
       </label>
       <p class="muted">The five class-shaping numbers above (noise, falloff, field size, entry cap, minimum age) are copied onto each class the moment it's created - changing them here only affects shows created afterwards, never one already scheduled or judged.</p>
+      <h2>Money</h2>
+      <label>Upkeep per horse, per game day
+        <input type="text" inputmode="numeric" name="upkeep_per_horse_per_game_day" value="${String(v.upkeep_per_horse_per_game_day)}">
+      </label>
+      <p class="muted">Kept deliberately gentle - prize money from one show a real day is the only income in the game until the market stage lands. Worth revisiting once selling a horse becomes a second way to earn.</p>
       <button type="submit">Save changes</button>
     </form>
+    <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
     <p class="muted">No feature flags exist yet.</p>
     <p><a href="/admin/config/history">Change history</a></p>
   `;
@@ -581,4 +590,70 @@ export function renderShowsAdminPage(params: {
     </div>
   `;
   return shell(params.world, body, 'Shows', 'shows');
+}
+
+/**
+ * §7.3, asked for directly - the relief valve for §2.4's debt rule: adding money to a stable by
+ * hand, since nothing in the game itself can get a stable out of the red except winning a show.
+ * Negative amounts are allowed too (this both gives and takes, so a mistake can be undone), and a
+ * reason is required - it becomes the ledger row's description, so a child reading their Money page
+ * sees "Chore reward from Dad" rather than an unexplained number. Guarded the same
+ * `required`-checkbox way the world-clock page's advance control is.
+ */
+export function renderMoneyAdminPage(params: {
+  world: WorldRow;
+  stables: StableBalanceForAdmin[];
+  recentAdjustments: AdjustmentRow[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const stableOptions = html`${params.stables.map(
+    (s) =>
+      html`<option value="${String(s.id)}">${s.name}${s.is_npc ? ' (NPC)' : s.owner_username ? ` (${s.owner_username})` : ''} - balance ${String(s.balance)}</option>`
+  )}`;
+
+  const adjustmentRows = params.recentAdjustments.map(
+    (a) => html`
+    <tr>
+      <td>${a.stable_name}</td>
+      <td>${a.amount >= 0 ? '+' : ''}${String(a.amount)}</td>
+      <td>${a.description}</td>
+      <td>${String(a.game_day)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Money</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Add or remove money by hand</h2>
+      <p class="muted">This is the way a stable that has gone into the red gets out, until the game itself gives it a second way to earn.</p>
+      <form method="post" action="/admin/money">
+        <input type="hidden" name="action" value="adjust">
+        <label>Stable
+          <select name="stable_id" required>${stableOptions}</select>
+        </label>
+        <label>Amount (negative to take money away)
+          <input type="text" inputmode="numeric" name="amount" required>
+        </label>
+        <label>Reason
+          <input type="text" name="reason" required placeholder="e.g. Chore reward from Dad">
+        </label>
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, apply this adjustment.
+        </label>
+        <button type="submit">Apply</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Recent adjustments</h2>
+      <table>
+        <thead><tr><th>Stable</th><th>Amount</th><th>Reason</th><th>Game day</th></tr></thead>
+        <tbody>${adjustmentRows.length ? adjustmentRows : html`<tr><td colspan="4" class="muted">None yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+  return shell(params.world, body, 'Money', 'money');
 }

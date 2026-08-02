@@ -220,6 +220,7 @@ export function renderEntryResultPage(params: {
   horseName: string;
   judge: JudgeRow | undefined;
   placing: number;
+  prizePaid: number;
   traits: { name: string; expressed: number; target: number; weight: number; traitScore: number }[];
   weightSum: number;
   rawScore: number;
@@ -237,9 +238,11 @@ export function renderEntryResultPage(params: {
     </tr>`
   );
 
+  const prizeSentence = params.prizePaid > 0 ? html` - paid <strong>${String(params.prizePaid)}</strong>` : raw('');
+
   const body = html`
     <h1>${params.horseName} at ${params.show.name}</h1>
-    <p><strong>${placingText(params.placing)}</strong>, judged by ${params.judge?.name ?? 'an unnamed judge'}.</p>
+    <p><strong>${placingText(params.placing)}</strong>${prizeSentence}, judged by ${params.judge?.name ?? 'an unnamed judge'}.</p>
     <div class="card">
       <h2>How the score was reached</h2>
       <table>

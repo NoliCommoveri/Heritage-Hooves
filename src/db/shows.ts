@@ -20,6 +20,7 @@ import { getHorse, listStableHorses, type HorseRow } from './horses';
 import { getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getShowBarnStable } from './npc';
+import { buildLedgerStatements, type LedgerEntry } from './ledger';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -59,6 +60,9 @@ export interface ShowClassRow {
   status: 'scheduled' | 'judged';
   judged_game_day: number | null;
   rng_seed: number;
+  /** Slice 0009 §4.4. JSON array, index 0 = first place - snapshotted from config.values.show_prize_schedule
+   * at creation (CLAUDE.md §5.5), never re-read from config at judging. */
+  prize_schedule: string;
 }
 
 export interface ShowEntryRow {
@@ -75,6 +79,9 @@ export interface ShowEntryRow {
   score_breakdown: string | null;
   placing: number | null;
   scored_game_day: number | null;
+  /** Slice 0009 §4.4. What was actually paid, snapshotted at judging - 0 if this entry didn't place
+   * within the class's prize_schedule. */
+  prize_paid: number;
 }
 
 export interface HorseShowSummaryRow {
@@ -317,7 +324,14 @@ export async function checkHorseEligibilityForClass(
 
 export type EnterHorseResult = { ok: true } | { ok: false; reason: EligibilityReason | 'class_closed' | 'not_found' };
 
-/** §6.3: entries close when the tick judges the show - there is no separate deadline. */
+/**
+ * §6.3: entries close when the tick judges the show - there is no separate deadline.
+ *
+ * Deliberately does not check canTakeOnCost (src/lib/money.ts) the way the breeding route does.
+ * Slice 0009 §2.4/§4.6: shows are currently the only way a stable in the red earns its way back
+ * out, so debt blocks expansion (booking a covering) but must never block competing. If a future
+ * slice adds a real entry fee here, re-read that section before wiring a debt check into this path.
+ */
 export async function enterHorseInClass(
   env: Env,
   params: { classId: number; horseId: number; gameDay: number; gameDaysPerYear: number; conformationConfig: RealizationConfig }
@@ -394,6 +408,8 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
     ).bind(name, venue, scheduledGameDay, scheduledGameDay, seed, gameDay, nowSeconds),
   ];
 
+  const prizeSchedule = JSON.stringify(config.values.show_prize_schedule);
+
   eligibleBreeds.forEach((breed, index) => {
     const ordinal = index + 1;
     const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
@@ -404,10 +420,10 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
         `INSERT INTO show_classes (
            show_id, name, class_type, breed_id, discipline_code, min_age_game_days, max_age_game_days,
            sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
-           judge_id, ideal_vector, ideal_falloff, noise_sd, status, judged_game_day, rng_seed
+           judge_id, ideal_vector, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
          ) VALUES (
            (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'breed_conformation', ?, NULL, ?, NULL,
-           NULL, 0, 0, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?
+           NULL, 0, 0, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?, ?
          )`
       ).bind(
         `${breed.name} Conformation`,
@@ -419,7 +435,8 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
         breed.ideal_vector,
         config.values.show_ideal_falloff,
         config.values.show_noise_sd,
-        classSeed
+        classSeed,
+        prizeSchedule
       )
     );
   });
@@ -558,6 +575,25 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const summaryByHorseId = new Map<number, HorseShowSummaryRow | null>();
   allHorseIds.forEach((id, i) => summaryByHorseId.set(id, summaryResults[i].results[0] ?? null));
 
+  // Slice 0009 §4.4: prize money is paid inside this same batch, so a class can never be judged
+  // without the money that placing earned landing in the same breath. A player-entered row's id is
+  // already known (existingEntries); an NPC row's id is not, since it's inserted below - rather
+  // than relying on statement adjacency (last_insert_rowid() goes stale after the first insert that
+  // follows it, per the note on buildFoalInsertStatements in src/db/horses.ts) each NPC entry is
+  // given an explicit id, pre-allocated from the table's current max, so the prize ledger rows
+  // built later in this function can reference it directly. Safe because nothing else inserts into
+  // show_entries in the time between this read and the batch below committing - the same
+  // single-invocation assumption the ancestor-row subquery pattern elsewhere in this codebase
+  // already relies on.
+  const maxEntryIdRow = await env.DB.prepare('SELECT COALESCE(MAX(id), 0) AS maxId FROM show_entries').first<{ maxId: number }>();
+  let nextEntryId = (maxEntryIdRow?.maxId ?? 0) + 1;
+  const entryIdByHorseId = new Map<number, number>();
+  const stableIdByHorseId = new Map<number, number>();
+  for (const entry of existingEntries) {
+    entryIdByHorseId.set(entry.horse_id, entry.id);
+    stableIdByHorseId.set(entry.horse_id, entry.entered_by_stable_id);
+  }
+
   const statements = [];
 
   for (const horse of npcHorses) {
@@ -565,13 +601,17 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     if (!s) continue;
     const placing = placingByHorseId.get(horse.id)!;
     const snapshot = conformationSnapshot(horse, gameDay, conformationConfig, gameDaysPerYear);
+    const entryId = nextEntryId++;
+    entryIdByHorseId.set(horse.id, entryId);
+    stableIdByHorseId.set(horse.id, horse.owner_stable_id);
     statements.push(
       env.DB.prepare(
         `INSERT INTO show_entries (
-           class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, conformation_snapshot,
+           id, class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, conformation_snapshot,
            raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day
-         ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
+        entryId,
         cls.id,
         horse.id,
         horse.owner_stable_id,
@@ -620,12 +660,58 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     );
   }
 
+  // Slice 0009 §4.4: pays to show_entries.entered_by_stable_id, which is the show barn's own stable
+  // id for an NPC entry - it is paid like anyone else (§3.7), even though nothing reads its balance.
+  // A placing beyond the end of the schedule, or a schedule entry of 0, pays nothing.
+  const show = await getShow(env, cls.show_id);
+  const prizeSchedule = JSON.parse(cls.prize_schedule) as number[];
+  const ledgerEntries: LedgerEntry[] = [];
+  for (const horseId of allHorseIds) {
+    const placing = placingByHorseId.get(horseId);
+    if (placing === undefined) continue;
+    const prize = prizeSchedule[placing - 1];
+    if (!prize) continue;
+    const entryId = entryIdByHorseId.get(horseId);
+    const stableId = stableIdByHorseId.get(horseId);
+    if (entryId === undefined || stableId === undefined) continue;
+
+    statements.push(env.DB.prepare('UPDATE show_entries SET prize_paid = ? WHERE id = ?').bind(prize, entryId));
+    ledgerEntries.push({
+      stableId,
+      amount: prize,
+      kind: 'prize',
+      referenceType: 'show_entry',
+      referenceId: entryId,
+      description: `${ordinalPlacing(placing)} place, ${show?.name ?? 'the show'}.`,
+      gameDay,
+    });
+  }
+  statements.push(...buildLedgerStatements(env, ledgerEntries));
+
   statements.push(
     env.DB.prepare(`UPDATE show_classes SET status = 'judged', judged_game_day = ? WHERE id = ? AND status = 'scheduled'`).bind(gameDay, cls.id)
   );
   statements.push(closeShowIfAllClassesJudgedStatement(env, cls.show_id));
 
   await env.DB.batch(statements);
+}
+
+/** "1st", "2nd", "3rd", "11th"... - the prize-ledger description's placing word. Kept local to this
+ * file rather than shared with render/shows.ts's own copy (used for the ribbon line, a different
+ * purpose in a different layer). */
+function ordinalPlacing(n: number): string {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${String(n)}th`;
+  switch (n % 10) {
+    case 1:
+      return `${String(n)}st`;
+    case 2:
+      return `${String(n)}nd`;
+    case 3:
+      return `${String(n)}rd`;
+    default:
+      return `${String(n)}th`;
+  }
 }
 
 /**

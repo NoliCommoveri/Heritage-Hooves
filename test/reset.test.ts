@@ -19,6 +19,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   horse_ancestors: ['horses'],
   horses: ['breeds', 'horses', 'stables'],
   stable_prefix_history: ['stables'],
+  ledger: ['stables'],
   stables: ['accounts'],
   tick_run: [],
 };

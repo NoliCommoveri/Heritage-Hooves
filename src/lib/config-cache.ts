@@ -82,6 +82,11 @@ export interface ConfigValues {
   /** Slice 0008 §5.8/§8.2. Live - read only when an admin stocks the NPC show barn. */
   npc_show_barn_quality_band: string;
   npc_show_barn_size: number;
+  /** Slice 0009 §2.2/§4.3/§4.7. Live - read fresh by the tick's upkeep stage every time it runs. */
+  upkeep_per_horse_per_game_day: number;
+  /** Slice 0009 §4.4. JSON array, index 0 = first place. Snapshotted onto show_classes at creation
+   * (CLAUDE.md §5.5) - changing this only affects classes created afterwards. */
+  show_prize_schedule: number[];
 }
 
 export type ConfigFlags = Record<string, boolean>;

@@ -46,8 +46,14 @@ const HORSE_TABLES = [
   'horses',
 ] as const;
 
-/** Emptied by a full world reset only. Still children-before-parents: prefixes point at stables. */
-const WORLD_ONLY_TABLES = ['stable_prefix_history', 'stables', 'tick_run'] as const;
+/**
+ * Emptied by a full world reset only. Still children-before-parents: prefixes and ledger rows both
+ * point at stables. A horses-only reset deliberately leaves `ledger` alone (slice 0009 §4.5/§9) -
+ * that scope keeps a stable's balance, so its ledger history must stay too, or the
+ * balance-equals-sum-of-ledger invariant in src/db/ledger.ts would break the moment a horses-only
+ * reset ran.
+ */
+const WORLD_ONLY_TABLES = ['stable_prefix_history', 'ledger', 'stables', 'tick_run'] as const;
 
 export const RESET_TABLES = [...HORSE_TABLES, ...WORLD_ONLY_TABLES] as const;
 
@@ -66,6 +72,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   horse_ancestors: 'Pedigree links',
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',
+  ledger: 'Money history',
   stables: 'Stables',
   tick_run: 'Tick history',
 };
