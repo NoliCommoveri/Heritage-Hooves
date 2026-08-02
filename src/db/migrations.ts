@@ -17,6 +17,11 @@ import m0013 from '../../migrations/0013_horse_ancestors.sql';
 import m0014 from '../../migrations/0014_seed_breeds.sql';
 import m0015 from '../../migrations/0015_seed_loci.sql';
 import m0016 from '../../migrations/0016_config_breeding.sql';
+import m0017 from '../../migrations/0017_horses_cycle_anchor.sql';
+import m0018 from '../../migrations/0018_coverings.sql';
+import m0019 from '../../migrations/0019_pregnancies.sql';
+import m0020 from '../../migrations/0020_config_fertility.sql';
+import m0021 from '../../migrations/0021_backfill_cycle_anchor.sql';
 
 export interface MigrationFile {
   name: string;
@@ -50,6 +55,11 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0014_seed_breeds.sql', sql: m0014 },
   { name: '0015_seed_loci.sql', sql: m0015 },
   { name: '0016_config_breeding.sql', sql: m0016 },
+  { name: '0017_horses_cycle_anchor.sql', sql: m0017 },
+  { name: '0018_coverings.sql', sql: m0018 },
+  { name: '0019_pregnancies.sql', sql: m0019 },
+  { name: '0020_config_fertility.sql', sql: m0020 },
+  { name: '0021_backfill_cycle_anchor.sql', sql: m0021 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

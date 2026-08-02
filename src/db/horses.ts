@@ -1,18 +1,14 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
-import { getStableById } from './stables';
 import {
-  parseGenotype,
   serializeGenotype,
   GENOTYPE_VERSION,
   type Genotype,
   type AllelePair,
 } from '../engines/genetics/genotype';
-import { combine } from '../engines/genetics/inheritance';
 import { generateFounderPolygenic } from '../engines/genetics/polygenic';
-import { buildAncestorRows, coefficientOfInbreeding, type AncestorEdge, type PedigreeHorse } from '../engines/genetics/pedigree';
-import { foalComposition } from '../engines/genetics/composition';
+import { coefficientOfInbreeding, type AncestorEdge, type PedigreeHorse } from '../engines/genetics/pedigree';
 
 export interface HorseRow {
   id: number;
@@ -37,6 +33,8 @@ export interface HorseRow {
   created_real_ts: number;
   genotype: string;
   rng_seed: number;
+  /** Slice 0003 §3.2. Mares only; null for stallions, geldings, and mares not yet backfilled. */
+  cycle_anchor_tick_seq: number | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -73,8 +71,8 @@ export async function loadAncestorEdges(env: Env, horseId: number): Promise<Ance
 /**
  * The two-query load (slice 0002 §8): every ancestor id either parent has (one query), then those
  * horses' own (id, sire_id, dam_id, coi) rows plus the parents' own rows (a second query). Used
- * identically by the breeding preview and by breedNow, which is what guarantees the number shown
- * before confirming is the number the foal actually gets.
+ * identically by the breeding preview and by the tick's conception roll (slice 0003 §4.6), which
+ * is what guarantees the number shown before booking is the number the foal actually gets.
  */
 export async function loadPedigreeContext(env: Env, sireId: number, damId: number): Promise<Map<number, PedigreeHorse>> {
   const ancestorIdRows = await env.DB.prepare('SELECT DISTINCT ancestor_id FROM horse_ancestors WHERE descendant_id IN (?, ?)')
@@ -111,6 +109,9 @@ export interface CreateFoundingHorseInput {
   name: string;
   bornGameDay: number;
   mendelian: Record<string, AllelePair>;
+  /** Only consulted for mares - slice 0003 §3.2 rolls a founding mare's cycle slot at creation. */
+  worldTickSeq: number;
+  estrousCycleTicks: number;
 }
 
 export type CreateFoundingHorseResult = { ok: true; horseId: number } | { ok: false; error: 'name_taken' };
@@ -127,16 +128,31 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
   const genotype: Genotype = { v: GENOTYPE_VERSION, mendelian: input.mendelian, polygenic: generateFounderPolygenic(polygenicRng) };
   const composition = JSON.stringify({ [input.breedCode]: 1 });
   const nowSeconds = nowUtcSeconds();
+  // Slice 0003 §3.2: rolled once from the horse's own seed, not the shared world seed, so it's
+  // reproducible from this row alone the same way every other draw in the game is.
+  const cycleAnchorTickSeq =
+    input.sex === 'mare' ? input.worldTickSeq + makeRng(deriveSeed(seed, 'cycle_slot')).int(input.estrousCycleTicks) : null;
 
   try {
     const result = await env.DB.prepare(
       `INSERT INTO horses (
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
-         born_game_day, status, created_real_ts, genotype, rng_seed
-       ) VALUES (?, ?, NULL, NULL, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?)`
+         born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq
+       ) VALUES (?, ?, NULL, NULL, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?)`
     )
-      .bind(input.sex, input.name, input.breedId, composition, input.stableId, input.bornGameDay, nowSeconds, serializeGenotype(genotype), seed)
+      .bind(
+        input.sex,
+        input.name,
+        input.breedId,
+        composition,
+        input.stableId,
+        input.bornGameDay,
+        nowSeconds,
+        serializeGenotype(genotype),
+        seed,
+        cycleAnchorTickSeq
+      )
       .run();
     return { ok: true, horseId: result.meta.last_row_id };
   } catch (err) {
@@ -145,94 +161,79 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
   }
 }
 
-export interface BreedNowInput {
-  stableId: number;
+export interface FoalInsertInput {
+  sex: 'mare' | 'stallion';
   sireId: number;
   damId: number;
-  gameDay: number;
-}
-
-export interface BreedNowResult {
-  foalId: number;
+  ownerStableId: number;
+  breederStableId: number;
+  breederPrefix: string;
+  breedId: number | null;
+  isCross: boolean;
+  composition: Record<string, number>;
+  generation: number;
+  coi: number;
+  bornGameDay: number;
+  genotype: Genotype;
+  rngSeed: number;
+  ancestorRows: AncestorEdge[];
+  /** Rolled by the caller the same way createFoundingHorse rolls one (slice 0003 §3.2) - null for colts. */
+  cycleAnchorTickSeq: number | null;
 }
 
 /**
- * §2.4: this is a stand-in for conception-plus-gestation. Press the button, the foal exists
- * immediately - there is no pregnancies row and no tick involved. The real version creates a
- * pregnancies row and lets the tick foal it; everything from the genotype downward (this
- * function's body from the seed mint on) is meant to be reusable as-is when that lands. Only the
- * "when does the foal row get inserted" question should need rewriting.
+ * Builds (but does not run) the statements that insert a foal's horses row plus its
+ * horse_ancestors rows. Shared by the tick's foaling stage (slice 0003 §10) - the genotype, coi
+ * and ancestor rows are already resolved by the caller (rolled at conception, per slice 0003 §3.9)
+ * so this is purely "write the row down". Slice 0002's breedNow() used to do this and the insert
+ * inline in one step; slice 0003 §3.11 deletes breedNow and moves its body here so both the
+ * genotype-rolling (now at conception) and the row-insert (now at foaling) sides can reuse it.
  *
- * Caller has already validated the pairing (both alive, owned, correct sexes, age, mare recovery,
- * capacity) - this function assumes a valid pairing and just builds the foal.
+ * Caller must run these in one env.DB.batch() immediately after any other statements that also
+ * need the just-inserted foal's id, since the ancestor-row inserts below find it via
+ * "SELECT id FROM horses ORDER BY id DESC LIMIT 1" - see the comment on that pattern below.
  */
-export async function breedNow(env: Env, input: BreedNowInput): Promise<BreedNowResult> {
-  const [sire, dam, stable] = await Promise.all([getHorse(env, input.sireId), getHorse(env, input.damId), getStableById(env, input.stableId)]);
-  if (!sire || !dam || !stable) throw new Error('breedNow: sire, dam or stable not found');
-
-  const [sireEdges, damEdges, pedigreeHorses] = await Promise.all([
-    loadAncestorEdges(env, input.sireId),
-    loadAncestorEdges(env, input.damId),
-    loadPedigreeContext(env, input.sireId, input.damId),
-  ]);
-
-  const foalSeed = randomSeed();
-  const genotype = combine(parseGenotype(sire.genotype), parseGenotype(dam.genotype), foalSeed);
-  const sex = makeRng(deriveSeed(foalSeed, 'sex')).pick(['mare', 'stallion'] as const);
-  const generation = Math.max(sire.generation, dam.generation) + 1;
-  // Computed from the same loaded map the preview used, before the insert - the number shown at
-  // "Check pairing" is the number the foal gets (slice 0002 §2.6, §6.4).
-  const coi = coefficientOfInbreeding(input.sireId, input.damId, pedigreeHorses);
-  const comp = foalComposition(
-    { composition: JSON.parse(sire.composition), isCross: sire.is_cross === 1, breedId: sire.breed_id },
-    { composition: JSON.parse(dam.composition), isCross: dam.is_cross === 1, breedId: dam.breed_id }
-  );
-  const ancestorRows = buildAncestorRows(input.sireId, input.damId, sireEdges, damEdges);
+export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1PreparedStatement[] {
   const nowSeconds = nowUtcSeconds();
 
-  const statements = [
+  return [
     env.DB.prepare(
       `INSERT INTO horses (
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
-         born_game_day, status, created_real_ts, genotype, rng_seed
-       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?)`
+         born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq
+       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?)`
     ).bind(
-      sex,
-      stable.prefix,
-      comp.breedId,
-      comp.isCross ? 1 : 0,
-      JSON.stringify(comp.composition),
+      input.sex,
+      input.breederPrefix,
+      input.breedId,
+      input.isCross ? 1 : 0,
+      JSON.stringify(input.composition),
       input.sireId,
       input.damId,
-      generation,
-      coi,
-      input.stableId,
-      input.stableId,
-      input.gameDay,
+      input.generation,
+      input.coi,
+      input.ownerStableId,
+      input.breederStableId,
+      input.bornGameDay,
       nowSeconds,
-      serializeGenotype(genotype),
-      foalSeed
+      serializeGenotype(input.genotype),
+      input.rngSeed,
+      input.cycleAnchorTickSeq
     ),
     // Each ancestor row references the foal via a fresh subquery rather than last_insert_rowid(),
     // because last_insert_rowid() reflects the single most recent insert on this connection and
-    // would go stale after the FIRST horse_ancestors row if reused for the rest. All of this runs
-    // inside one D1 batch (one transaction), so no other writer can insert into horses in between -
-    // "the highest id in horses" stays correctly the foal's id for every statement below.
-    ...ancestorRows.map((row) =>
+    // would go stale after the FIRST horse_ancestors row if reused for the rest. This relies on the
+    // caller running these statements inside one D1 batch (one transaction) immediately after the
+    // insert above, with nothing else inserting into horses in between - "the highest id in horses"
+    // then stays correctly the foal's id for every statement below.
+    ...input.ancestorRows.map((row) =>
       env.DB.prepare(
         `INSERT INTO horse_ancestors (descendant_id, ancestor_id, depth, path_count)
          VALUES ((SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, ?, ?)`
       ).bind(row.ancestorId, row.depth, row.pathCount)
     ),
-    env.DB.prepare('UPDATE horses SET last_foaled_game_day = ? WHERE id = ?').bind(input.gameDay, input.damId),
-    // The breeding slice is what sets prefix_locked=1 (slice 0001 built the column and said so).
-    // Set unconditionally - it's already 1 or it's about to be.
-    env.DB.prepare('UPDATE stables SET prefix_locked = 1 WHERE id = ?').bind(input.stableId),
   ];
-
-  const results = await env.DB.batch(statements);
-  return { foalId: results[0].meta.last_row_id };
 }
 
 export type RegisterNameResult = { ok: true } | { ok: false; error: 'taken' } | { ok: false; error: 'already_named' };

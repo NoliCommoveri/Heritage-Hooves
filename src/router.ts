@@ -16,6 +16,7 @@ import {
   adminConfigHistoryRoute,
   adminWorldRoute,
   adminHorseNewRoute,
+  adminBreedingRoute,
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed)?$/;
@@ -89,6 +90,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/config/history' && method === 'GET') return withReissuedCookie(ctx, await adminConfigHistoryRoute(ctx));
     if (path === '/admin/world') return withReissuedCookie(ctx, await adminWorldRoute(ctx, method));
     if (path === '/admin/horses/new') return withReissuedCookie(ctx, await adminHorseNewRoute(ctx, method));
+    if (path === '/admin/breeding') return withReissuedCookie(ctx, await adminBreedingRoute(ctx, method));
     return notFound();
   }
 

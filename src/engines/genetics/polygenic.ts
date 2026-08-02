@@ -21,6 +21,13 @@ export const TRAITS = [
   'jump_scope',
   'speed',
   'trainability',
+  // Added in slice 0003 §4.3. A horse born before this trait existed has no 'fertility' key and
+  // must NOT be read via getPolygenicString/potential() for it - that reads missing traits as all
+  // zeros (the bottom of the range), which is right for a conformation trait and would make every
+  // pre-existing horse read as very nearly sterile here. Use fertilityPotential() in
+  // src/engines/breeding/fertility.ts instead, which gives legacy horses a stable, well-distributed
+  // score derived from their own rng_seed rather than a guess.
+  'fertility',
 ] as const;
 
 export type TraitCode = (typeof TRAITS)[number];
