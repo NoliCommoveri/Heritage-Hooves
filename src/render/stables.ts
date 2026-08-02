@@ -3,15 +3,21 @@ import { pageShell, errorBox, type NavLink } from './layout';
 import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
 
-export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix';
+export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix' | 'founding';
 
-export function stableSubnav(stableId: number, active: StableSubnavPage): NavLink[] {
-  return [
+/** hasFoundingOffer (slice 0005 §11): "New horses" only appears while there is something waiting -
+ * a pending breed choice or an open batch to claim - not once it's been claimed. */
+export function stableSubnav(stableId: number, active: StableSubnavPage, hasFoundingOffer: boolean): NavLink[] {
+  const links: NavLink[] = [
     { label: 'Overview', href: `/stables/${String(stableId)}`, active: active === 'overview' },
     { label: 'Horses', href: `/stables/${String(stableId)}/horses`, active: active === 'horses' },
     { label: 'Breed', href: `/stables/${String(stableId)}/breed`, active: active === 'breed' },
     { label: 'Change prefix', href: `/stables/${String(stableId)}/prefix`, active: active === 'prefix' },
   ];
+  if (hasFoundingOffer) {
+    links.push({ label: 'New horses', href: `/stables/${String(stableId)}/founding`, active: active === 'founding' });
+  }
+  return links;
 }
 
 export function renderStablesPicker(params: {
@@ -70,10 +76,14 @@ export function renderNewStablePage(params: {
   return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, body });
 }
 
-export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow }): SafeHtml {
+export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; hasFoundingOffer: boolean }): SafeHtml {
   const s = params.stable;
+  const foundingCallout = params.hasFoundingOffer
+    ? html`<p class="notice">New horses are waiting. <a href="/stables/${String(s.id)}/founding">Take a look</a>.</p>`
+    : raw('');
   const body = html`
     <h1>${s.name}</h1>
+    ${foundingCallout}
     <div class="card">
       <p><strong>Prefix:</strong> ${s.prefix} ${s.prefix_locked ? raw('<span class="muted">(locked)</span>') : html``}</p>
       <p><strong>Balance:</strong> ${String(s.balance)}</p>
@@ -89,12 +99,12 @@ export function renderStableHomePage(params: { world: WorldRow; isAdmin: boolean
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
-    subnav: stableSubnav(s.id, 'overview'),
+    subnav: stableSubnav(s.id, 'overview', params.hasFoundingOffer),
     body,
   });
 }
 
-export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; error?: string }): SafeHtml {
+export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; stable: StableRow; hasFoundingOffer: boolean; error?: string }): SafeHtml {
   const s = params.stable;
   const body = s.prefix_locked
     ? html`
@@ -118,7 +128,7 @@ export function renderPrefixPage(params: { world: WorldRow; isAdmin: boolean; st
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
-    subnav: stableSubnav(s.id, 'prefix'),
+    subnav: stableSubnav(s.id, 'prefix', params.hasFoundingOffer),
     body,
   });
 }

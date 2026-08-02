@@ -21,6 +21,7 @@ import { getActivePregnancyForMare, type PregnancyRow } from '../db/pregnancies'
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
+import { hasWaitingFoundingOffer } from '../db/founding';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -53,7 +54,8 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
   }));
 
-  return htmlResponse(renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, horses: rows }));
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
+  return htmlResponse(renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, stable, hasFoundingOffer, horses: rows }));
 }
 
 function coiWarning(coi: number, threshold: number): string | undefined {
@@ -126,9 +128,10 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const allHorses = await listStableHorses(ctx.env, stableId);
   const mares = allHorses.filter((h) => h.sex === 'mare');
   const stallions = allHorses.filter((h) => h.sex === 'stallion');
+  const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET') {
-    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, stable, mares, stallions, describe }));
+    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, mares, stallions, describe }));
   }
   if (method !== 'POST') return notFound();
 
@@ -140,7 +143,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
 
   if (!mare || !stallion) {
     return htmlResponse(
-      renderBreedPage({ world: ctx.world, isAdmin, stable, mares, stallions, describe, error: 'Choose a mare and a stallion from this stable.' })
+      renderBreedPage({ world: ctx.world, isAdmin, stable, hasFoundingOffer, mares, stallions, describe, error: 'Choose a mare and a stallion from this stable.' })
     );
   }
 
@@ -166,6 +169,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         world: ctx.world,
         isAdmin,
         stable,
+        hasFoundingOffer,
         mares,
         stallions,
         describe,
@@ -184,6 +188,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
           world: ctx.world,
           isAdmin,
           stable,
+          hasFoundingOffer,
           mares,
           stallions,
           describe,
@@ -245,6 +250,10 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   if (isAdmin) loci = await getLoci(ctx.env);
 
   const mareStatus = horse.sex === 'mare' ? await mareStatusLine(ctx, horse) : undefined;
+  const hasFoundingOffer = owner ? await hasWaitingFoundingOffer(ctx.env, ownerStable.id) : false;
+  // Slice 0005 §5.3/§11: the Friesian pool carries a real recessive red (e at 8%), and a chestnut
+  // Friesian is a genuine, if rare, outcome - it just can't be registered as one.
+  const unregistrableFriesianChestnut = breed?.code === 'FR' && phenotype.baseColour === 'chestnut';
 
   return htmlResponse(
     renderHorsePage({
@@ -252,12 +261,14 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       isAdmin,
       owner,
       ownerStable,
+      hasFoundingOffer,
       horse,
       description,
       ageYears,
       breed,
       gaited: phenotype.gaited,
       breederStableName: breederStable ? breederStable.name : null,
+      unregistrableFriesianChestnut,
       pedigree: { sire, dam, sireSire, sireDam, damSire, damDam },
       canRegisterName: owner && horse.registered_name === null,
       nameError,
