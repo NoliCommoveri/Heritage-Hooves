@@ -10,6 +10,7 @@ import type { StableRow } from '../db/stables';
 import type { BreedRow } from '../db/breeds';
 import type { ImportOfferRow, ImportCandidateRow } from '../db/founding';
 import type { ConformationDisplayRow } from '../engines/conformation/model';
+import { originStableFullName } from '../engines/founding/names';
 
 /** One plain sentence per breed, for the breed picker (slice 0005 §11) - not stored on the breeds
  * row because it's display copy, not data anything else reads. Keep in sync with the breed pools
@@ -84,7 +85,7 @@ export function renderFoundingPage(params: {
           ${candidate.origin_prefix} ${candidate.name_part}
           ${gaited ? html`<span class="badge badge-success">gaited</span>` : raw('')}
         </h2>
-        <p class="muted">${candidateSexLabel(candidate.sex)}</p>
+        <p class="muted">${candidateSexLabel(candidate.sex)}${originStableFullName(candidate.origin_prefix) ? html` · bred by ${originStableFullName(candidate.origin_prefix)}` : raw('')}</p>
         <p>${description}</p>
         <p class="muted conformation-compact">${html`${conformation.map((row) => `${row.name}: ${String(row.expressed)}`).join(' · ')}`}</p>
         <label>
@@ -92,8 +93,8 @@ export function renderFoundingPage(params: {
           Claim this one
         </label>
         <label>
-          Call ${candidate.sex === 'mare' ? 'her' : 'him'} (optional)
-          <input type="text" name="barn_name_${String(candidate.slot_index)}" maxlength="60" placeholder="${candidate.origin_prefix} ${candidate.name_part}">
+          Name this one (optional) - "${candidate.origin_prefix} ___"
+          <input type="text" name="name_part_${String(candidate.slot_index)}" maxlength="40" placeholder="${candidate.name_part}">
         </label>
       </div>`
     );
@@ -101,7 +102,7 @@ export function renderFoundingPage(params: {
       <h1>New horses</h1>
       ${errorBox(params.error)}
       <p>Choose ${String(offer.mare_claims)} mare${offer.mare_claims === 1 ? '' : 's'} and ${String(offer.stallion_claims)} stallion${offer.stallion_claims === 1 ? '' : 's'} from the ${String(offer.mare_candidates + offer.stallion_candidates)} below. The rest won't be seen again.</p>
-      <p class="muted">Each horse's registered name stays as shown - that's their record of where they came from. But you can give any of them a barn name here, right now, instead of picking one later.</p>
+      <p class="muted">Each horse's registered name starts with a short stamp for the stable that bred it - not yours, since you didn't breed this one - but you can type your own name for the part after it.</p>
       <form method="post" action="/stables/${String(s.id)}/founding">
         <input type="hidden" name="action" value="claim">
         ${rows}

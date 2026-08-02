@@ -13,6 +13,7 @@ import type { HorseShowSummaryRow } from '../db/shows';
 import { placingText } from './shows';
 import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
+import { originStableFullName } from '../engines/founding/names';
 
 export const displayNameFor = horseDisplayName;
 
@@ -386,10 +387,11 @@ export function renderHorsePage(params: {
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
   const possessive = h.sex === 'mare' ? 'her' : 'his';
 
+  const originStableName = h.breeder_stable_id ? undefined : originStableFullName(h.breeder_prefix ?? '');
   const bredByLine = h.breeder_prefix
     ? h.breeder_stable_id
       ? html`${h.breeder_prefix}${params.breederStableName ? ` (${params.breederStableName})` : ''}`
-      : html`${h.breeder_prefix} <span class="muted">(a founding stable, not one in this game)</span>`
+      : html`${h.breeder_prefix}${originStableName ? ` — ${originStableName}` : ''} <span class="muted">(a founding stable, not one in this game)</span>`
     : html`a founding stable (unbred stock)`;
 
   const nameForm = params.canRegisterName

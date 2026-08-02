@@ -19,6 +19,7 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
 import { conformationValues, conformationDisplayRows, rollEnvironmentalNoise } from '../engines/conformation/model';
+import { validateHorseNamePart } from '../lib/validation';
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
   const stable = await getStableById(ctx.env, stableId);
@@ -38,6 +39,8 @@ function claimErrorMessage(result: Extract<ClaimOfferResult, { ok: false }>): st
       return 'This batch has expired.';
     case 'not_open':
       return 'This batch is not ready to claim yet.';
+    case 'name_taken':
+      return 'One of the names you typed is already registered to another horse - try something else.';
   }
 }
 
@@ -116,10 +119,19 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
 
     const candidates = await getCandidatesForOffer(ctx.env, offer.id);
     const chosenCandidateIds = candidates.filter((c) => form[`chosen_${String(c.slot_index)}`] === 'yes').map((c) => c.id);
-    const barnNames = new Map<number, string | null>();
+
+    // Only the name word after the auto-assigned origin prefix is ever player-typed (see
+    // resolveUniqueName's comment in db/founding.ts) - validated with the same rule the "register
+    // a name" form on a horse's own page already uses, before any database write is attempted.
+    const nameOverrides = new Map<number, string>();
     for (const c of candidates) {
-      const typed = (form[`barn_name_${String(c.slot_index)}`] ?? '').trim();
-      barnNames.set(c.id, typed.length ? typed : null);
+      const typed = (form[`name_part_${String(c.slot_index)}`] ?? '').trim();
+      if (!typed.length) continue;
+      const validation = validateHorseNamePart(typed);
+      if (!validation.ok) {
+        return renderPage(ctx, stable, offer, { error: validation.error ?? 'Invalid name.' });
+      }
+      nameOverrides.set(c.id, typed);
     }
 
     const result = await claimOffer(ctx.env, {
@@ -128,7 +140,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       stableName: stable.name,
       stableCapacity: stable.capacity,
       chosenCandidateIds,
-      barnNames,
+      nameOverrides,
       gameDay: ctx.world.game_day,
       worldTickSeq: ctx.world.tick_seq,
       estrousCycleTicks: ctx.config.values.estrous_cycle_ticks,

@@ -164,12 +164,6 @@ export interface FoundingHorseInsertInput {
   /** Null for the admin founder form (nobody bred this horse); an origin prefix for claimed
    * founding stock (slice 0005 §6.5 - a prefix means "bred by", never the claiming stable's own). */
   breederPrefix: string | null;
-  /** What the claiming stable typed for this horse at claim time (founding stock only) - the
-   * barn name, never the registered name (CLAUDE.md §12: registered names are permanent and, for
-   * founding stock, belong to the synthetic origin stable per slice 0005 §6.5). Null/empty means
-   * the horse displays under its generated registered name until an owner sets one later via the
-   * existing barn-name form. */
-  barnName?: string | null;
   bornGameDay: number;
   genotype: Genotype;
   rngSeed: number;
@@ -223,11 +217,10 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
          born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
          environmental_noise, natural_death_game_day
-       ) VALUES (?, ?, ?, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
       input.registeredName,
-      input.barnName ?? null,
       input.breederPrefix,
       input.breedId,
       composition,
