@@ -95,7 +95,8 @@ Two edges of that line that are decided, not open:
 - **A stable's balance is public; its ledger is not.** The operator asked to see each other's money,
   and a balance is one number that makes the world legible. The ledger is a list of every decision
   somebody made, and reading it is a different thing entirely. `/stables/:id/money` stays owner-only
-  with no admin exception, exactly as it is today.
+  with no admin exception, exactly as it is today. (An **NPC** stable's balance is a different case
+  and is not shown at all — see §6.2.1.)
 - **COI is owner-only even though pedigree is public.** A determined player could compute it from
   the pedigree, which is why this is a judgement call rather than a rule — but "measured numbers are
   the owner's" is a line a child can understand, and putting one measured number on the public page
@@ -275,6 +276,11 @@ theirs — and it is the cheapest countermeasure available to the escalation ris
 on, because it removes the wall of NPC results a child would otherwise measure themselves against
 every month.
 
+It also gets larger, not smaller, from here. `judgeOneClass`'s field top-up still draws only from
+Fair Meadow today, but slice 0015 Part B generalises it to every NPC stable — three of them now that
+Part A has seeded Cedar Hollow and Willow Creek Barrels. Build this filter before that lands and the
+extra NPC entries never become extra noise on the results page.
+
 ---
 
 ## 6. Part C — `/world`: everyone's stables, and a public page per horse
@@ -313,12 +319,30 @@ One row per stable from `listAllStables` (already `active = 1`, player and NPC a
 - Stable name and prefix.
 - Who runs it: the owning account's `display_name`, or **"Run by the game"** for `is_npc = 1`.
 - Living horse count (`countAliveHorses`).
-- **Balance.** Asked for explicitly (§2.2).
+- **Balance — for player stables only.** Asked for explicitly (§2.2), but see §6.2.1.
 - A marker on your own stables — *"yours"* — so the list reads as a world rather than a leaderboard.
 
-Sort by stable name. Do the account-name lookup as **one join, not a query per row**; the same goes
-for the horse counts (`GROUP BY owner_stable_id` on living horses). This page is five to ten rows
-today and it should still be two queries at a hundred.
+Sort player stables first, then NPC stables, each group by name. Do the account-name lookup as **one
+join, not a query per row**; the same goes for the horse counts (`GROUP BY owner_stable_id` on living
+horses). This page is five to ten rows today and it should still be two queries at a hundred.
+
+#### 6.2.1 Two things slice 0015 Part A changed under this page
+
+Part A landed after this document was first drafted (migrations `0083`-`0086`, `CLAUDE.md` §10), and
+it changed two facts this page depends on. Both were checked against `origin/main`, not assumed.
+
+- **An NPC stable's balance is no longer a comparable number.** `chargeUpkeep` now skips
+  `is_npc = 1`, and migration `0086` zeroed every NPC balance to correct what Fair Meadow had already
+  accrued. So an NPC stable earns prize money and pays nothing, and its balance is a one-way counter
+  measuring nothing a player's balance measures. **Render "Run by the game" in the money column for
+  an NPC stable rather than the number.** Showing 0 would read as poverty and showing a growing pile
+  would read as an opponent getting rich; neither is true, and the operator asked to see *each
+  other's* money — which is the player stables.
+- **Two of the three NPC stables have no horses and no way to get any.** Cedar Hollow and Willow
+  Creek Barrels are seeded, real and empty; the control that stocks them is slice 0015 Part B, which
+  is not built. List them anyway, with *"no horses yet"* where the count goes — inventing a rule that
+  hides empty stables would hide a player's own empty stable too, on the one day they most need to
+  see that it exists.
 
 Add a plain sentence at the top saying what is and is not shown — *"You can see what everyone keeps
 and what they're worth. What a horse measures, what it has been tested for, and how each stable
@@ -564,9 +588,13 @@ per `CLAUDE.md` §8 — an import plus a list entry, in order, or `/admin/migrat
 
 | File | What |
 |---|---|
-| `0083_accounts_pin_hash.sql` | `ALTER TABLE accounts ADD COLUMN pin_hash TEXT` |
-| `0084_pin_attempts.sql` | The attempt log, plus an index on `real_ts` (the lockout query's only filter) |
-| `0085_config_admin_and_ui.sql` | The six tunables in §10.2 |
+| `0087_accounts_pin_hash.sql` | `ALTER TABLE accounts ADD COLUMN pin_hash TEXT` |
+| `0088_pin_attempts.sql` | The attempt log, plus an index on `real_ts` (the lockout query's only filter) |
+| `0089_config_admin_and_ui.sql` | The six tunables in §10.2 |
+
+**Check the highest number in `migrations/` before writing these.** `0083`-`0086` were taken by
+slice 0015 Part A after this document was first drafted, and these three were renumbered to match.
+Another slice may land in between and take `0087` too.
 
 No index is added for §5.2's or §7.1's queries. `show_entries` already has `UNIQUE (class_id, horse_id)`,
 which serves the `EXISTS` lookups, and the stables/accounts joins are on primary keys. Add one later
