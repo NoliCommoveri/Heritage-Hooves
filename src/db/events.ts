@@ -22,6 +22,10 @@ import { nowUtcSeconds } from '../lib/time';
 // horse_died stays as it is and keeps meaning "died of a condition" - old age gets its own kind
 // rather than a branch on payload, because horse_died's render arm is written in the voice of a
 // foal dying and would have to become a conditional to serve both (§7.6).
+//
+// Slice 0013 §7.4 adds one more, same no-migration-needed reasoning - a stable-level event
+// (subject_horse_id is NULL), one per stable per tick, never one per horse:
+//   care_due -> {"v":1,"farrier_count":3,"wellness_count":1}
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -30,7 +34,8 @@ export type EventKind =
   | 'condition_signs'
   | 'horse_died'
   | 'horse_failing'
-  | 'horse_died_old_age';
+  | 'horse_died_old_age'
+  | 'care_due';
 
 export interface EventRow {
   id: number;

@@ -148,6 +148,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       accountId: stable.account_id,
       lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
       lifespanConfig: ctx.config.values,
+      careStartAgeGameDays: ctx.config.values.care_start_age_game_days,
     });
 
     if (!result.ok) {

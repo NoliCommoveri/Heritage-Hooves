@@ -59,6 +59,15 @@ describe('scoreEntry', () => {
     expect(result.finalScore).toBeCloseTo(result.rawScore + 3.5, 6);
   });
 
+  // Slice 0013 §10 test 10: a regression test that nobody has "helpfully" moved the care modifier
+  // to the wrong side of the noise addition - this function itself does not change with care.
+  it('careModifier: 0.95 produces exactly rawScore * 0.95 + noise', () => {
+    const withoutCare = scoreEntry({ expressed: ASH, ideal: QH_IDEAL, judgeWeights: BALANCED, falloff: 2.0, noise: 2.0 });
+    const withCare = scoreEntry({ expressed: ASH, ideal: QH_IDEAL, judgeWeights: BALANCED, falloff: 2.0, noise: 2.0, careModifier: 0.95 });
+    expect(withCare.rawScore).toBeCloseTo(withoutCare.rawScore, 10);
+    expect(withCare.finalScore).toBeCloseTo(withCare.rawScore * 0.95 + 2.0, 10);
+  });
+
   // §4.6's worked example, checked against the formula in §4.4 rather than trusted from the design
   // document's prose - slice 0006 §4.4 shipped a worked example whose prose disagreed with its own
   // formula, and the fix there was to implement the formula and flag it. Same discipline here: if

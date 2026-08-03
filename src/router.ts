@@ -15,6 +15,8 @@ import {
   stableSelectRoute,
   stablePrefixRoute,
   stableMoneyRoute,
+  stableCareRoute,
+  stableFeedRoute,
 } from './routes/stables';
 import {
   stableHorsesRoute,
@@ -27,6 +29,7 @@ import {
   horseEnterShowRoute,
   horseTestRoute,
   horseRetireRoute,
+  horseCareRoute,
 } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
@@ -45,10 +48,11 @@ import {
   adminMoneyRoute,
   adminHealthRoute,
   adminAgeingRoute,
+  adminCareRoute,
 } from './routes/admin';
 
-const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire)?$/;
+const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -102,6 +106,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (sub === '/founding') return withReissuedCookie(ctx, await stableFoundingRoute(ctx, method, stableId));
     if (sub === '/money' && method === 'GET') return withReissuedCookie(ctx, await stableMoneyRoute(ctx, stableId));
     if (sub === '/past' && method === 'GET') return withReissuedCookie(ctx, await stablePastHorsesRoute(ctx, stableId));
+    if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await stableCareRoute(ctx, stableId));
+    if (sub === '/feed' && method === 'POST') return withReissuedCookie(ctx, await stableFeedRoute(ctx, stableId));
     return notFound();
   }
 
@@ -116,6 +122,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (sub === '/enter-show' && method === 'POST') return withReissuedCookie(ctx, await horseEnterShowRoute(ctx, horseId));
     if (sub === '/test') return withReissuedCookie(ctx, await horseTestRoute(ctx, method, horseId));
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
+    if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
     return notFound();
   }
 
@@ -146,6 +153,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (path === '/admin/money') return withReissuedCookie(ctx, await adminMoneyRoute(ctx, method));
     if (path === '/admin/health' && method === 'GET') return withReissuedCookie(ctx, await adminHealthRoute(ctx));
     if (path === '/admin/ageing') return withReissuedCookie(ctx, await adminAgeingRoute(ctx, method));
+    if (path === '/admin/care') return withReissuedCookie(ctx, await adminCareRoute(ctx, method));
     return notFound();
   }
 

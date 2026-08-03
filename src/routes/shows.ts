@@ -224,6 +224,12 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
   const judge = await getJudgeById(ctx.env, cls.judge_id);
   // Slice 0012 §9.1: an old row with no "kind" key reads as conformation (there is no such row
   // after the world reset, but the fallback costs nothing and matches the migration's own note).
+  interface CareBreakdown {
+    modifier: number;
+    farrier_status: string;
+    wellness_status: string;
+  }
+
   const breakdown = JSON.parse(entry.score_breakdown) as
     | {
         kind?: 'conformation';
@@ -232,6 +238,7 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
         raw_score: number;
         noise: number;
         final_score: number;
+        care?: CareBreakdown;
       }
     | {
         kind: 'ability';
@@ -240,7 +247,20 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
         raw_score: number;
         noise: number;
         final_score: number;
+        care?: CareBreakdown;
       };
+
+  // Slice 0013 §8.4: named from the breakdown's own snapshot, not recomputed - a horse's care state
+  // keeps moving after judging, and the whole point of the snapshot is that this note never changes.
+  function careNoteFor(care: CareBreakdown): string | undefined {
+    const notes: string[] = [];
+    if (care.farrier_status === 'overdue') notes.push('shoes overdue');
+    else if (care.farrier_status === 'fresh') notes.push('shoes freshly done');
+    if (care.wellness_status === 'overdue') notes.push('wellness overdue');
+    else if (care.wellness_status === 'fresh') notes.push('wellness freshly done');
+    return notes.length ? notes.join(', ') : undefined;
+  }
+  const careNote = breakdown.care ? careNoteFor(breakdown.care) : undefined;
 
   const traitRows = breakdown.kind === 'ability' ? await getAbilityTraits(ctx.env) : await getConformationTraits(ctx.env);
   const traits: EntryResultTraitRow[] =
@@ -277,6 +297,8 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
       rawScore: breakdown.raw_score,
       noise: breakdown.noise,
       finalScore: breakdown.final_score,
+      careModifierApplied: entry.care_modifier_applied,
+      careNote,
     })
   );
 }

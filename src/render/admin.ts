@@ -12,10 +12,25 @@ import type { AdminShowSummary } from '../db/shows';
 import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import type { ConditionCensusRow } from '../db/health';
 import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
+import type { CareAdminData } from '../db/care';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
-type AdminSubnavPage = 'home' | 'accounts' | 'config' | 'world' | 'breeding' | 'founding' | 'breeds' | 'shows' | 'money' | 'health' | 'ageing' | 'migrations' | 'reset';
+type AdminSubnavPage =
+  | 'home'
+  | 'accounts'
+  | 'config'
+  | 'world'
+  | 'breeding'
+  | 'founding'
+  | 'breeds'
+  | 'shows'
+  | 'money'
+  | 'health'
+  | 'ageing'
+  | 'care'
+  | 'migrations'
+  | 'reset';
 
 function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
@@ -30,6 +45,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Money', href: '/admin/money', active: active === 'money' },
     { label: 'Health', href: '/admin/health', active: active === 'health' },
     { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
+    { label: 'Care', href: '/admin/care', active: active === 'care' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -70,6 +86,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/money">Money</a></p>
     <p><a class="button-link" href="/admin/health">Health (horses)</a></p>
     <p><a class="button-link" href="/admin/ageing">Ageing</a></p>
+    <p><a class="button-link" href="/admin/care">Care</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -260,10 +277,51 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="barn_shows_ended_game_days" value="${String(v.barn_shows_ended_game_days)}">
       </label>
       <p class="muted">A dead or retired-away horse drops out of the barn list after this many game days, but stays reachable forever from a stable's Past horses page.</p>
+      <h2>Care</h2>
+      <label>Care starts at age (game days)
+        <input type="text" inputmode="numeric" name="care_start_age_game_days" value="${String(v.care_start_age_game_days)}">
+      </label>
+      <label>Farrier interval (game days)
+        <input type="text" inputmode="numeric" name="farrier_interval_game_days" value="${String(v.farrier_interval_game_days)}">
+      </label>
+      <label>Farrier fully overdue at (game days)
+        <input type="text" inputmode="numeric" name="farrier_overdue_game_days" value="${String(v.farrier_overdue_game_days)}">
+      </label>
+      <label>Farrier bonus (fresh)
+        <input type="text" inputmode="decimal" name="farrier_bonus" value="${String(v.farrier_bonus)}">
+      </label>
+      <label>Farrier penalty (fully overdue)
+        <input type="text" inputmode="decimal" name="farrier_penalty" value="${String(v.farrier_penalty)}">
+      </label>
+      <label>Farrier cost, one visit
+        <input type="text" inputmode="numeric" name="farrier_cost" value="${String(v.farrier_cost)}">
+      </label>
+      <label>Wellness interval (game days)
+        <input type="text" inputmode="numeric" name="vet_wellness_interval_game_days" value="${String(v.vet_wellness_interval_game_days)}">
+      </label>
+      <label>Wellness fully overdue at (game days)
+        <input type="text" inputmode="numeric" name="vet_wellness_overdue_game_days" value="${String(v.vet_wellness_overdue_game_days)}">
+      </label>
+      <label>Wellness bonus (fresh)
+        <input type="text" inputmode="decimal" name="vet_wellness_bonus" value="${String(v.vet_wellness_bonus)}">
+      </label>
+      <label>Wellness penalty (fully overdue)
+        <input type="text" inputmode="decimal" name="vet_wellness_penalty" value="${String(v.vet_wellness_penalty)}">
+      </label>
+      <label>Wellness cost, one visit
+        <input type="text" inputmode="numeric" name="vet_wellness_cost" value="${String(v.vet_wellness_cost)}">
+      </label>
+      <label>Care modifier floor
+        <input type="text" inputmode="decimal" name="care_modifier_min" value="${String(v.care_modifier_min)}">
+      </label>
+      <label>Care modifier ceiling
+        <input type="text" inputmode="decimal" name="care_modifier_max" value="${String(v.care_modifier_max)}">
+      </label>
+      <p class="muted">All ten are live - retuning any of them only changes the modifier computed on the next read, never a horse's own stored dates (last_farrier_game_day, last_vet_game_day). Watch /admin/care after a change.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
-    <p class="muted">No feature flags exist yet.</p>
+    <p class="muted">Feed levels (feed_levels) are JSON too, for the same reason - edit them from D1's console. The one on/off feature flag that exists (whether the tick writes an overdue-care notice at all) is a button on /admin/care, not a field here.</p>
     <p><a href="/admin/config/history">Change history</a></p>
   `;
   return shell(params.world, body, 'Config', 'config');
@@ -841,4 +899,73 @@ export function renderAgeingAdminPage(params: {
     </div>
   `;
   return shell(params.world, body, 'Ageing', 'ageing');
+}
+
+/**
+ * /admin/care (slice 0013 §8.5) - read-only except for one testing control. Counts across every
+ * living player-owned horse for each timer, the distribution of care modifiers in ten buckets (so
+ * the operator can see at a glance whether the band is being used or everyone sits at 1.00), each
+ * stable's feed level and what it is paying in board, and "Make every horse overdue" - the same
+ * bring-forward-for-testing shape /admin/ageing's own control uses, for the same reason: §11's
+ * verification steps are otherwise several real days away.
+ */
+export function renderCareAdminPage(params: { world: WorldRow; data: CareAdminData; noticeEnabled: boolean; error?: string; notice?: string }): SafeHtml {
+  const d = params.data;
+  const timerRows = (rows: { status: string; count: number }[]) => rows.map((r) => html`<tr><td>${r.status}</td><td>${String(r.count)}</td></tr>`);
+
+  const bucketRows = d.modifierBuckets.map((b) => html`<tr><td>${b.rangeLabel}</td><td>${String(b.count)}</td></tr>`);
+
+  const stableRows = d.stables.map(
+    (s) => html`
+    <tr>
+      <td>${s.name}</td>
+      <td>${s.feedLevelName}</td>
+      <td>${String(s.boardPerDay)}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Care</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Farrier</h2>
+      <table><thead><tr><th>Status</th><th>Horses</th></tr></thead><tbody>${timerRows(d.farrier)}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Wellness</h2>
+      <table><thead><tr><th>Status</th><th>Horses</th></tr></thead><tbody>${timerRows(d.wellness)}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Care modifier distribution</h2>
+      <p class="muted">Ten buckets spanning the whole band - if everyone sits in the middle bucket, the mechanic isn't doing anything yet.</p>
+      <table><thead><tr><th>Range</th><th>Horses</th></tr></thead><tbody>${bucketRows}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Feed by stable</h2>
+      <table><thead><tr><th>Stable</th><th>Feed</th><th>Board per game day</th></tr></thead><tbody>${stableRows.length ? stableRows : html`<tr><td colspan="3" class="muted">No player stables yet.</td></tr>`}</tbody></table>
+    </div>
+    <div class="card">
+      <h2>Overdue notices</h2>
+      <p class="muted">Whether the tick writes a "N horses are due for the farrier" event when a horse newly crosses into overdue. On by default - this is the one mechanic most likely to need turning off after a week, per CLAUDE.md's own care entry.</p>
+      <p><strong>Currently:</strong> ${params.noticeEnabled ? 'on' : 'off'}</p>
+      <form method="post" action="/admin/care">
+        <input type="hidden" name="action" value="toggle_notice">
+        <button type="submit" class="secondary">Turn notices ${params.noticeEnabled ? 'off' : 'on'}</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Make every horse overdue</h2>
+      <p class="muted">Testing control - moves every player-owned, care-eligible horse's farrier and wellness dates back far enough to trigger the full penalty on both, so the mechanic can be seen working without waiting several real days. A horse too young for care yet is left untouched.</p>
+      <form method="post" action="/admin/care">
+        <input type="hidden" name="action" value="make_overdue">
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, move every eligible horse's care dates back to fully overdue.
+        </label>
+        <button type="submit" class="secondary">Make every horse overdue</button>
+      </form>
+    </div>
+  `;
+  return shell(params.world, body, 'Care', 'care');
 }

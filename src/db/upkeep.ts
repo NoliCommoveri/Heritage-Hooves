@@ -6,10 +6,12 @@ import type { Env } from '../types';
 import type { Config } from '../lib/config-cache';
 import { computeUpkeep } from '../lib/upkeep';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
+import { feedUpkeepMultiplier } from './care';
 
 interface StableForUpkeep {
   id: number;
   last_upkeep_game_day: number;
+  feed_level: string;
 }
 
 /**
@@ -26,7 +28,7 @@ interface StableForUpkeep {
  */
 export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number, config: Config): Promise<void> {
   const rate = config.values.upkeep_per_horse_per_game_day;
-  const stablesResult = await env.DB.prepare('SELECT id, last_upkeep_game_day FROM stables WHERE active = 1').all<StableForUpkeep>();
+  const stablesResult = await env.DB.prepare('SELECT id, last_upkeep_game_day, feed_level FROM stables WHERE active = 1').all<StableForUpkeep>();
   const stables = stablesResult.results ?? [];
   if (stables.length === 0) return;
 
@@ -40,17 +42,21 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
   stables.forEach((stable, i) => {
     const daysOwed = newGameDay - stable.last_upkeep_game_day;
     const aliveHorses = countResults[i].results[0]?.n ?? 0;
-    const charge = computeUpkeep({ daysOwed, aliveHorses, ratePerHorsePerGameDay: rate });
+    // Slice 0013 §2.5/§7.1: feed multiplies the existing charge rather than creating a second one -
+    // feed *is* board.
+    const feedMultiplier = feedUpkeepMultiplier(stable.feed_level, config.values);
+    const charge = computeUpkeep({ daysOwed, aliveHorses, ratePerHorsePerGameDay: rate, feedMultiplier });
     if (!charge.advanceMarker) return;
 
     if (charge.amount !== 0) {
+      const feedNote = stable.feed_level !== 'standard' ? ` (${config.values.feed_levels.levels[stable.feed_level]?.name.toLowerCase() ?? stable.feed_level} feed)` : '';
       ledgerEntries.push({
         stableId: stable.id,
         amount: charge.amount,
         kind: 'upkeep',
         referenceType: 'tick',
         referenceId: tickSeq,
-        description: `Board for ${String(aliveHorses)} horse${aliveHorses === 1 ? '' : 's'}, ${String(daysOwed)} day${daysOwed === 1 ? '' : 's'}.`,
+        description: `Board for ${String(aliveHorses)} horse${aliveHorses === 1 ? '' : 's'}, ${String(daysOwed)} day${daysOwed === 1 ? '' : 's'}${feedNote}.`,
         gameDay: newGameDay,
       });
     }

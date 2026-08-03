@@ -14,6 +14,8 @@ import { placingText } from './shows';
 import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
 import { originStableFullName } from '../engines/founding/names';
+import type { CareCardView, CareLineView } from '../db/care';
+import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 
 export const displayNameFor = horseDisplayName;
 
@@ -47,6 +49,119 @@ function ageStateBarnBadge(state: AgeState): SafeHtml {
   return raw('');
 }
 
+/** Slice 0013 §8.2: the barn list's small care badge - one word, the same visual weight as the
+ * health and failing badges (never louder). Absent for a horse too young to need care, or one
+ * already fresh on both timers. */
+function careBarnBadge(care: CareCardView | null): SafeHtml {
+  if (!care || care.tooYoung) return raw('');
+  if (care.needsFarrier || care.needsWellness) return html`<span class="badge badge-warning">Care due</span>`;
+  return raw('');
+}
+
+const CARE_STATUS_LABEL: Record<CareStatus, string> = {
+  not_yet: 'Not yet',
+  fresh: 'Fresh',
+  due_soon: 'Due soon',
+  due: 'Due',
+  overdue: 'Overdue',
+};
+
+/** Slice 0013 §8.1: "next due in 12 days" / "overdue by 30 days" - daysUntilDue's own sign tells
+ * which. 'due' reads as "due now" rather than "next due in 0 days". */
+function careDueSentence(line: CareLineView): string {
+  if (line.status === 'due') return 'due now';
+  if (line.daysUntilDue >= 0) return `next due in ${String(line.daysUntilDue)} day${line.daysUntilDue === 1 ? '' : 's'}`;
+  const overdueBy = Math.abs(line.daysUntilDue);
+  return `overdue by ${String(overdueBy)} day${overdueBy === 1 ? '' : 's'}`;
+}
+
+/** Slice 0013 §8.1: the Care card, between Health and Show record. §2.3's discipline applies here
+ * too - this card never touches the Conformation card's numbers, only its own modifier line. */
+function careCard(params: { care: CareCardView | null; feedLevelName: string; horseId: number; canManage: boolean; careError?: string; careNotice?: string }): SafeHtml {
+  const c = params.care;
+  if (!c) return raw('');
+
+  if (c.tooYoung) {
+    return html`
+      <div class="card">
+        <h2>Care</h2>
+        ${errorBox(params.careError)}
+        ${noticeBox(params.careNotice)}
+        <p class="muted">Too young to need the farrier yet - care starts at three.</p>
+      </div>`;
+  }
+
+  const modifierLine =
+    c.modifier === 1
+      ? raw('')
+      : html`<p>Currently placing ${c.modifier > 1 ? 'slightly above' : 'slightly below'} normal (${c.modifier.toFixed(2)}).</p>`;
+
+  const callButton = (service: 'farrier' | 'wellness', label: string, cost: number) =>
+    params.canManage
+      ? html`
+        <form method="post" action="/horses/${String(params.horseId)}/care">
+          <input type="hidden" name="service" value="${service}">
+          <button type="submit" class="secondary">${label} — ${String(cost)}</button>
+        </form>`
+      : raw('');
+
+  return html`
+    <div class="card">
+      <h2>Care</h2>
+      ${errorBox(params.careError)}
+      ${noticeBox(params.careNotice)}
+      <p><strong>Shoes:</strong> ${CARE_STATUS_LABEL[c.farrier.status]} — ${careDueSentence(c.farrier)}</p>
+      ${callButton('farrier', 'Call the farrier', c.farrier.cost)}
+      <p><strong>Wellness:</strong> ${CARE_STATUS_LABEL[c.wellness.status]} — ${careDueSentence(c.wellness)}</p>
+      ${callButton('wellness', 'Book a visit', c.wellness.cost)}
+      <p><strong>Feed:</strong> ${params.feedLevelName} <span class="muted">(set for the whole barn)</span></p>
+      ${modifierLine}
+    </div>`;
+}
+
+/** Slice 0013 §8.2: the barn page's feed selector and the two round buttons, plus a one-line
+ * summary ("3 due for the farrier · 1 due for a wellness visit") or nothing when the barn is
+ * current. One click does the whole barn (§2.2) - no JavaScript anywhere in this codebase, so the
+ * feed selector is a plain select-and-Save form, not an auto-submitting one. */
+function careBarnControls(params: {
+  stableId: number;
+  feedLevels: Record<string, FeedLevelDefinition>;
+  currentFeedLevel: string;
+  careSummary: { farrierDue: number; wellnessDue: number };
+  careError?: string;
+  careNotice?: string;
+}): SafeHtml {
+  const parts: string[] = [];
+  if (params.careSummary.farrierDue > 0) parts.push(`${String(params.careSummary.farrierDue)} due for the farrier`);
+  if (params.careSummary.wellnessDue > 0) parts.push(`${String(params.careSummary.wellnessDue)} due for a wellness visit`);
+  const summaryLine = parts.length ? html`<p class="muted">${parts.join(' · ')}</p>` : raw('');
+
+  const feedOptions = html`${Object.entries(params.feedLevels).map(
+    ([key, def]) => html`<option value="${key}" ${key === params.currentFeedLevel ? raw('selected') : raw('')}>${def.name}</option>`
+  )}`;
+
+  return html`
+    <div class="card">
+      ${errorBox(params.careError)}
+      ${noticeBox(params.careNotice)}
+      ${summaryLine}
+      <form method="post" action="/stables/${String(params.stableId)}/care">
+        <input type="hidden" name="service" value="farrier">
+        <button type="submit" class="secondary">Farrier round</button>
+      </form>
+      <form method="post" action="/stables/${String(params.stableId)}/care">
+        <input type="hidden" name="service" value="wellness">
+        <button type="submit" class="secondary">Wellness round</button>
+      </form>
+      <form method="post" action="/stables/${String(params.stableId)}/feed">
+        <label>Feed
+          <select name="feed_level">${feedOptions}</select>
+        </label>
+        <button type="submit">Save</button>
+      </form>
+    </div>`;
+}
+
 export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -61,15 +176,20 @@ export function renderBarnList(params: {
     showSummary: HorseShowSummaryRow | null;
     visibleConditions: ConditionRow[];
     ageState: AgeState;
+    care: CareCardView | null;
   }[];
+  feedLevels: Record<string, FeedLevelDefinition>;
+  careSummary: { farrierDue: number; wellnessDue: number };
+  careNotice?: string;
+  careError?: string;
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, care }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${careBarnBadge(care)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -79,6 +199,14 @@ export function renderBarnList(params: {
 
   const body = html`
     <h1>${params.stable.name}'s horses</h1>
+    ${careBarnControls({
+      stableId: params.stable.id,
+      feedLevels: params.feedLevels,
+      currentFeedLevel: params.stable.feed_level,
+      careSummary: params.careSummary,
+      careError: params.careError,
+      careNotice: params.careNotice,
+    })}
     ${rows}
     <p><a href="/stables/${String(params.stable.id)}/breed">Breed two horses</a></p>
     <p><a href="/stables/${String(params.stable.id)}/past">Past horses</a></p>
@@ -375,6 +503,11 @@ export function renderHorsePage(params: {
   enterShowNotice?: string;
   /** Slice 0010 §8: the Health card's rows, already resolved to what this viewer is entitled to see. */
   health: HealthConditionDisplay[];
+  /** Slice 0013 §8.1: null for an ended horse - the whole Care card is omitted for one. */
+  care: CareCardView | null;
+  careError?: string;
+  careNotice?: string;
+  feedLevelName: string;
   /** Slice 0011 §4.3/§8.1: this living horse's own Veteran/Failing/young/adult state - never
    * consulted for an ended horse (the status badge below covers that case instead). */
   ageState: AgeState;
@@ -516,6 +649,7 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id })}
+    ${careCard({ care: params.care, feedLevelName: params.feedLevelName, horseId: h.id, canManage: params.canManage, careError: params.careError, careNotice: params.careNotice })}
     ${showRecordCard({
       summary: params.showSummary,
       recentResults: params.recentShowResults,

@@ -49,6 +49,14 @@ export interface HorseRow {
   /** Slice 0011 §5.1/§7.2. The day the "failing" event fired, null until it has - its own
    * idempotency marker, not rendered anywhere. */
   frailty_notice_game_day: number | null;
+  /** Slice 0013 §4.1. Null means never called - the care modifier's ramp then runs from this
+   * horse's own care-start age instead of from birth. */
+  last_farrier_game_day: number | null;
+  last_vet_game_day: number | null;
+  /** Slice 0013 §7.2. The tick's own idempotency marker for the once-per-crossing overdue notice -
+   * null until this horse is newly overdue, cleared back to null the moment either service is
+   * called. Not rendered anywhere. */
+  care_notice_game_day: number | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -184,6 +192,17 @@ export interface FoundingHorseInsertInput {
    * show barn) already shares for horse_conditions rows, so it is also the one place this needs
    * wiring in. */
   lifespanConfig: LifespanRollConfig;
+  /** Slice 0013 §5.2's reasoning, applied at creation rather than only at deploy: a founding horse
+   * (or an admin-created one) can arrive already older than care_start_age_game_days - founding
+   * candidates are minted at 4-8 game years, well past the 3-year care start age. Without this, a
+   * newly claimed horse would read as fully overdue on the day a child claims it, for care nobody
+   * has ever had the chance to give. When the horse is already past care-start age at birth, both
+   * timers start current (the game day it comes into being) rather than null; a genuine foal is
+   * always below that age at creation and is untouched by this - it stays null, per §4.2. */
+  careStartAgeGameDays: number;
+  /** The game day this horse comes into being - world.game_day at the moment of the insert, not
+   * bornGameDay (which for founding stock is already in the past). */
+  currentGameDay: number;
 }
 
 /**
@@ -209,6 +228,9 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
   // Slice 0011 §4.2/§7.1: a new sub-seed label, independent of every stream that already derives
   // from this horse's rng_seed - rolled once here and never rerolled.
   const naturalDeathGameDay = input.bornGameDay + rollLifespanGameDays(makeRng(deriveSeed(input.rngSeed, 'lifespan')), input.lifespanConfig);
+  // Slice 0013 §5.2 applied at creation - see this input's own comment.
+  const startsCurrentCare = input.currentGameDay - input.bornGameDay >= input.careStartAgeGameDays;
+  const initialCareGameDay = startsCurrentCare ? input.currentGameDay : null;
 
   return [
     env.DB.prepare(
@@ -216,8 +238,8 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
          sex, registered_name, barn_name, breeder_prefix, breed_id, is_cross, composition,
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
          born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
-         environmental_noise, natural_death_game_day
-       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?, ?)`
+         environmental_noise, natural_death_game_day, last_farrier_game_day, last_vet_game_day
+       ) VALUES (?, ?, NULL, ?, ?, 0, ?, NULL, NULL, 0, 0, ?, NULL, ?, 'alive', ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
       input.registeredName,
@@ -231,7 +253,9 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
       input.rngSeed,
       cycleAnchorTickSeq,
       environmentalNoise,
-      naturalDeathGameDay
+      naturalDeathGameDay,
+      initialCareGameDay,
+      initialCareGameDay
     ),
     ...buildHorseConditionStatements(env, {
       genotype: input.genotype,
@@ -268,6 +292,9 @@ export interface CreateFoundingHorseInput {
    * barn (slice 0010 §6.3). */
   accountId: number | null;
   lifespanConfig: LifespanRollConfig;
+  /** Slice 0013 §5.2 applied at creation - see buildFoundingHorseInsertStatements' own comment. */
+  careStartAgeGameDays: number;
+  currentGameDay: number;
 }
 
 export type CreateFoundingHorseResult = { ok: true; horseId: number } | { ok: false; error: 'name_taken' };
@@ -293,6 +320,8 @@ export async function createFoundingHorse(env: Env, input: CreateFoundingHorseIn
     lethalFoalDeathGameDays: input.lethalFoalDeathGameDays,
     accountId: input.accountId,
     lifespanConfig: input.lifespanConfig,
+    careStartAgeGameDays: input.careStartAgeGameDays,
+    currentGameDay: input.currentGameDay,
   });
 
   try {

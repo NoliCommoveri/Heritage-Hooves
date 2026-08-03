@@ -8,10 +8,13 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 
-// 'vet' added by slice 0010 §5.5/§7.1 - genotype test purchases. The ledger table's own CHECK
-// constraint was widened in the same migration (0057_ledger_add_vet_kind.sql); this union must
-// keep matching it exactly, the same way the schema's CHECK and this type always have.
-export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet';
+// 'vet' added by slice 0010 §5.5/§7.1 - genotype test purchases. 'farrier' added by slice 0013
+// §5.4 - a farrier call or round. Wellness visits ride on 'vet' and feed rides on 'upkeep' (both
+// existing kinds), so neither needed a widening of their own. The ledger table's own CHECK
+// constraint was widened in the matching migration each time (0057_ledger_add_vet_kind.sql,
+// 0070_ledger_add_farrier_kind.sql); this union must keep matching it exactly, the same way the
+// schema's CHECK and this type always have.
+export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier';
 
 export interface LedgerEntry {
   stableId: number;

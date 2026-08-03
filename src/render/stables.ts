@@ -73,6 +73,19 @@ export function eventSentence(row: EventRow): AwayEvent {
     }
     // Slice 0011 §2.1/§7.7: short, warm, no euphemism and no drama - drafted now rather than at the
     // point of failure, per slice 0010 §5.6's own reasoning for the GBED wording.
+    // Slice 0013 §7.4/§7.5: one line per crossing, for the whole barn - drafted deliberately
+    // unalarming (§7.5's own reasoning: the farrier being late is not an emergency and should never
+    // read as one). Names the count for whichever service(s) are newly overdue; the barn list has
+    // the button to fix it.
+    case 'care_due': {
+      const farrierCount = typeof payload.farrier_count === 'number' ? payload.farrier_count : 0;
+      const wellnessCount = typeof payload.wellness_count === 'number' ? payload.wellness_count : 0;
+      const parts: string[] = [];
+      if (farrierCount > 0) parts.push(`${String(farrierCount)} for the farrier`);
+      if (wellnessCount > 0) parts.push(`${String(wellnessCount)} for a wellness visit`);
+      sentence = `${parts.join(' and ')} - not urgent, but placing a little below their best until it's done. You can do the whole barn at once from your barn page.`;
+      break;
+    }
     case 'horse_died_old_age': {
       const name = str('horse_name', 'A horse');
       const age = typeof payload.age_years === 'number' ? String(payload.age_years) : 'old age';

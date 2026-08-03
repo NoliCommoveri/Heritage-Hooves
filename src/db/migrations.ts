@@ -67,6 +67,12 @@ import m0063 from '../../migrations/0063_seed_disciplines.sql';
 import m0064 from '../../migrations/0064_show_classes_discipline.sql';
 import m0065 from '../../migrations/0065_show_entries_trait_snapshot.sql';
 import m0066 from '../../migrations/0066_config_disciplines.sql';
+import m0067 from '../../migrations/0067_horses_care.sql';
+import m0068 from '../../migrations/0068_horses_care_backfill.sql';
+import m0069 from '../../migrations/0069_stables_feed_level.sql';
+import m0070 from '../../migrations/0070_ledger_add_farrier_kind.sql';
+import m0071 from '../../migrations/0071_show_entries_care_modifier.sql';
+import m0072 from '../../migrations/0072_config_care.sql';
 
 export interface MigrationFile {
   name: string;
@@ -150,6 +156,12 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0064_show_classes_discipline.sql', sql: m0064 },
   { name: '0065_show_entries_trait_snapshot.sql', sql: m0065 },
   { name: '0066_config_disciplines.sql', sql: m0066 },
+  { name: '0067_horses_care.sql', sql: m0067 },
+  { name: '0068_horses_care_backfill.sql', sql: m0068 },
+  { name: '0069_stables_feed_level.sql', sql: m0069 },
+  { name: '0070_ledger_add_farrier_kind.sql', sql: m0070 },
+  { name: '0071_show_entries_care_modifier.sql', sql: m0071 },
+  { name: '0072_config_care.sql', sql: m0072 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

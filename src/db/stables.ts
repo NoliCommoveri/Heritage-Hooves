@@ -19,6 +19,8 @@ export interface StableRow {
   created_game_day: number;
   created_real_ts: number;
   active: number;
+  /** Slice 0013 §2.5. Barn-wide, not per horse - a key into config.values.feed_levels. */
+  feed_level: string;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -153,4 +155,13 @@ export async function renamePrefix(
 
 export async function lockPrefix(env: Env, stableId: number): Promise<void> {
   await env.DB.prepare('UPDATE stables SET prefix_locked = 1 WHERE id = ?').bind(stableId).run();
+}
+
+/** Slice 0013 §2.5/§6.1: sets the whole barn's feed level. Free, costs no turn, takes effect from
+ * the next tick's board charge. The caller validates feedLevel against config.values.feed_levels'
+ * own keys before calling this - an unrecognised value would still read as 'standard' everywhere
+ * it's used (src/engines/care/modifier.ts's feedLevelDefinition), but there is no reason to let one
+ * be stored in the first place. */
+export async function setFeedLevel(env: Env, stableId: number, feedLevel: string): Promise<void> {
+  await env.DB.prepare('UPDATE stables SET feed_level = ? WHERE id = ?').bind(feedLevel, stableId).run();
 }

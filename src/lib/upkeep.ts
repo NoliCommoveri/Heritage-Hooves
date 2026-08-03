@@ -16,10 +16,14 @@ export interface UpkeepCharge {
   advanceMarker: boolean;
 }
 
-export function computeUpkeep(params: { daysOwed: number; aliveHorses: number; ratePerHorsePerGameDay: number }): UpkeepCharge {
+export function computeUpkeep(params: { daysOwed: number; aliveHorses: number; ratePerHorsePerGameDay: number; feedMultiplier?: number }): UpkeepCharge {
   if (params.daysOwed <= 0) return { amount: 0, advanceMarker: false };
-  const owed = params.aliveHorses * params.daysOwed * params.ratePerHorsePerGameDay;
-  // owed === 0 (no horses) would otherwise negate to -0, which is a legal but confusing number to
-  // store or compare - JS's own -(0) is -0, and Object.is(-0, 0) is false.
+  const feedMultiplier = params.feedMultiplier ?? 1;
+  // Money is always an integer (CLAUDE.md §7) - rounded once, after every factor is applied, per
+  // slice 0013 §7.1.
+  const owed = Math.round(params.aliveHorses * params.daysOwed * params.ratePerHorsePerGameDay * feedMultiplier);
+  // owed === 0 (no horses, or a days/rate combination that rounds to zero) would otherwise negate
+  // to -0, which is a legal but confusing number to store or compare - JS's own -(0) is -0, and
+  // Object.is(-0, 0) is false.
   return { amount: owed === 0 ? 0 : -owed, advanceMarker: true };
 }
