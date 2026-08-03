@@ -22,10 +22,15 @@ import { getKnowledgeForHorse } from './health';
 import { getShowSummary } from './shows';
 import { conformationValues, noiseFor } from '../engines/conformation/model';
 import { parseGenotype } from '../engines/genetics/genotype';
+import { expressPhenotype } from '../engines/genetics/expression';
+import { hiddenColourAlleleCount } from '../engines/genetics/inference';
+import { displayColourName } from '../render/colour';
 import { parseIdealVector } from '../engines/showing/score';
 import { appraise, type Appraisal, type AppraiseConfig, type KnownResult } from '../engines/market/appraise';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { ConfigValues } from '../lib/config-cache';
+
+const LOCUS_KNOWLEDGE_PREFIX = 'locus:';
 
 export type ListingStatus = 'open' | 'sold' | 'withdrawn' | 'expired';
 
@@ -398,12 +403,21 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
 
   const ageGameDays = gameDay - horse.born_game_day;
   const ageYears = ageGameDays / config.game_days_per_year;
-  const values = conformationValues(parseGenotype(horse.genotype), noiseFor(horse.rng_seed, horse.environmental_noise), ageYears, horse.coi, config);
+  const genotype = parseGenotype(horse.genotype);
+  const values = conformationValues(genotype, noiseFor(horse.rng_seed, horse.environmental_noise), ageYears, horse.coi, config);
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
 
   const placings = summary ? (JSON.parse(summary.placings) as Record<string, number>) : {};
   const topThree = (placings['1'] ?? 0) + (placings['2'] ?? 0) + (placings['3'] ?? 0);
+
+  // Amendment 0017a §4.7: colour never reads horses.genotype for this term - only the expressed
+  // phenotype (public, the same "a stranger at a show can see it" rule health's visible-affected
+  // check already uses) and this stable's own locus: knowledge rows.
+  const phenotype = expressPhenotype(genotype, ageGameDays, config.game_days_per_year);
+  const colourKnowledge = knowledge.filter((k) => k.kind === 'genotype' && k.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX));
+  const testedLocusCodes = colourKnowledge.map((k) => k.subject_code.slice(LOCUS_KNOWLEDGE_PREFIX.length));
+  const creamTested = testedLocusCodes.includes('CR');
 
   return appraise({
     expressed,
@@ -414,9 +428,11 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
     // never horses.natural_death_game_day, which is the rolled lifespan and is never rendered in any
     // form. Do not "improve" this by reading the death day.
     isFailing: horse.frailty_notice_game_day !== null,
-    knownResults: knowledge.filter((k) => k.kind === 'genotype').map((k) => k.result as KnownResult),
+    knownResults: knowledge.filter((k) => k.kind === 'genotype' && !k.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX)).map((k) => k.result as KnownResult),
     wins: summary?.wins ?? 0,
     topThree,
+    visibleColour: displayColourName(phenotype.visibleColour, creamTested),
+    knownHiddenColourAlleleCount: hiddenColourAlleleCount(phenotype, testedLocusCodes),
     params: config as AppraiseConfig,
   });
 }

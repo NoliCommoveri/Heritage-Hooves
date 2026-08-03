@@ -9,6 +9,7 @@ import {
   renderBreedingAdminPage,
   renderFoundingAdminPage,
   renderBreedsAdminPage,
+  type BreedReadiness,
   renderResetPage,
   renderShowsAdminPage,
   renderMoneyAdminPage,
@@ -16,6 +17,7 @@ import {
   renderAgeingAdminPage,
   renderCareAdminPage,
   renderNpcAdminPage,
+  renderConsignmentAdminPage,
   renderAdminSecurityPage,
   renderAdminUnlockPage,
   renderAdminHorseSearchPage,
@@ -40,8 +42,17 @@ import { setPinHash, recordPinAttempt, listRecentPinAttempts, listRecentPinAttem
 import { decidePinAttempt } from '../lib/pin';
 import { nowUtcSeconds } from '../lib/time';
 import { listAllStables, getStableById } from '../db/stables';
-import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
-import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
+import { getBreeds, getBreedsInPlay, setBreedEnabled, getLoci, updateBreedImageCounts, type BreedRow } from '../db/breeds';
+import {
+  nextConsignmentDueGameDay,
+  listStandingConsignmentListings,
+  listQueuedInjections,
+  listInjectionHistory,
+  queueInjection,
+  cancelInjection,
+} from '../db/consignment';
+import { createFoundingHorse, countAliveHorses, countAliveHorsesByBreed, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
+import { parseAllelePool } from '../engines/founding/pool';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn, stockNpcStable } from '../db/npc';
@@ -322,7 +333,9 @@ export async function adminConfigHistoryRoute(ctx: RequestContext): Promise<Resp
 }
 
 export async function adminHorseNewRoute(ctx: RequestContext, method: string): Promise<Response> {
-  const [stables, breeds, loci] = await Promise.all([listAllStables(ctx.env), getBreeds(ctx.env), getLoci(ctx.env)]);
+  // Amendment 0017a §6.2: the admin "create a horse" form is gated on `enabled` - one of the five
+  // admission points a disabled breed is closed to.
+  const [stables, breeds, loci] = await Promise.all([listAllStables(ctx.env), getBreedsInPlay(ctx.env), getLoci(ctx.env)]);
 
   if (method === 'GET') {
     return htmlResponse(renderAdminHorseNewPage({ world: ctx.world, stables, breeds, loci }));
@@ -516,25 +529,65 @@ export async function adminFoundingRoute(ctx: RequestContext, method: string): P
 /** Slice 0007 §6.4: grows the image library by count, not by upload - the Worker has no write path
  * to static assets (§4.5). Rejects a non-whole-number or out-of-range count with a sentence naming
  * the breed, the same shape as /admin/config's numeric validation. */
+/** Amendment 0017a §6.3: "Ideal vector?"/"Allele pool?"/"Images?"/"Horses alive" - the columns that
+ * answer "which of these can I safely turn on?", built fresh on every render rather than stored. */
+async function breedsAdminReadiness(ctx: RequestContext, breeds: BreedRow[]): Promise<Map<number, BreedReadiness>> {
+  const aliveByBreed = await countAliveHorsesByBreed(ctx.env);
+  const map = new Map<number, BreedReadiness>();
+  for (const b of breeds) {
+    let poolOk = true;
+    try {
+      parseAllelePool(b.founding_allele_pool);
+    } catch {
+      poolOk = false;
+    }
+    map.set(b.id, { hasIdealVector: b.ideal_vector !== null, poolOk, aliveCount: aliveByBreed.get(b.id) ?? 0 });
+  }
+  return map;
+}
+
 export async function adminBreedsRoute(ctx: RequestContext, method: string): Promise<Response> {
   const breeds = await getBreeds(ctx.env);
 
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const readiness = await breedsAdminReadiness(ctx, breeds);
+    return htmlResponse(renderBreedsAdminPage({ world: ctx.world, breeds, readiness, error, notice }));
+  }
+
   if (method === 'GET') {
     const notice = new URL(ctx.request.url).searchParams.get('saved') ? 'Changes saved.' : undefined;
-    return htmlResponse(renderBreedsAdminPage({ world: ctx.world, breeds, notice }));
+    return page(undefined, notice);
   }
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
+
+  // Amendment 0017a §6.3: the In play toggle - a separate action from the image-count save below,
+  // since it carries its own two refusals (§6.3's guards) rather than a numeric validation error.
+  if (form.action === 'set_enabled') {
+    const breedId = Number(form.breed_id);
+    const enabled = form.enabled === '1';
+    const breed = breeds.find((b) => b.id === breedId);
+    if (!breed) return notFound();
+
+    const result = await setBreedEnabled(ctx.env, breedId, enabled, ctx.account!.id, ctx.world.game_day);
+    if (!result.ok) {
+      const message =
+        result.error === 'last_enabled'
+          ? `${breed.name} can't be taken out of play - at least one breed has to stay in play, or founding offers and the consignment dealer have nothing to offer.`
+          : `${breed.name} can't be brought into play yet - its allele pool is missing the ${result.locusCode} locus.`;
+      return page(message);
+    }
+    return redirect('/admin/breeds?saved=1');
+  }
+
   const counts: { breedId: number; imageCount: number }[] = [];
   for (const breed of breeds) {
     const rawValue = form[`count_${String(breed.id)}`];
     if (rawValue === undefined) continue;
     const parsed = parseImageCount(rawValue.trim());
     if (parsed === null) {
-      return htmlResponse(
-        renderBreedsAdminPage({ world: ctx.world, breeds, error: `${breed.name}'s count must be a whole number from 0 to 99.` })
-      );
+      return page(`${breed.name}'s count must be a whole number from 0 to 99.`);
     }
     counts.push({ breedId: breed.id, imageCount: parsed });
   }
@@ -788,10 +841,13 @@ export async function adminCareRoute(ctx: RequestContext, method: string): Promi
  */
 export async function adminNpcRoute(ctx: RequestContext, method: string): Promise<Response> {
   async function page(error?: string, notice?: string): Promise<Response> {
+    // Amendment 0017a §6.2: a new npc_policy.target_breed_id is one of the five admission points a
+    // disabled breed is closed to - existing policies targeting a since-disabled breed are untouched
+    // (this only feeds the "found a new stable" dropdown, per renderNpcAdminPage's own use of it).
     const [stables, ceilingSchedule, breeds, disciplines] = await Promise.all([
       listNpcStablesForAdmin(ctx.env),
       listNpcCeilingSchedule(ctx.env),
-      getBreeds(ctx.env),
+      getBreedsInPlay(ctx.env),
       getDisciplines(ctx.env),
     ]);
     return htmlResponse(
@@ -898,6 +954,64 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
       band,
     });
     return redirect('/admin/npc?stocked=1');
+  }
+
+  return notFound();
+}
+
+/** Amendment 0017a §5.5: /admin/consignment - a form and a table, not a polished UI (CLAUDE.md §13). */
+export async function adminConsignmentRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [nextCycleGameDay, standingListings, queued, history] = await Promise.all([
+      nextConsignmentDueGameDay(ctx.env, ctx.config),
+      listStandingConsignmentListings(ctx.env),
+      listQueuedInjections(ctx.env),
+      listInjectionHistory(ctx.env),
+    ]);
+    return htmlResponse(
+      renderConsignmentAdminPage({
+        world: ctx.world,
+        nextCycleGameDay: nextCycleGameDay ?? ctx.world.game_day,
+        standingListings,
+        queued,
+        history,
+        error,
+        notice,
+      })
+    );
+  }
+
+  if (method === 'GET') return page();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+
+  if (form.action === 'cancel') {
+    const id = Number(form.id);
+    if (Number.isFinite(id)) await cancelInjection(ctx.env, id);
+    return redirect('/admin/consignment?saved=1');
+  }
+
+  if (form.action === 'queue') {
+    const [locusCode, allele] = (form.locus_allele ?? '').split(':');
+    const zygosity = form.zygosity === 'hom' ? 'hom' : 'het';
+    const appliesTo = form.applies_to === 'all' ? 'all' : 'one';
+    const sexPreference = form.sex_preference === 'stallion' || form.sex_preference === 'mare' ? form.sex_preference : 'any';
+    const note = (form.note ?? '').trim() || null;
+
+    if (!locusCode || !allele) return page('Choose a locus and allele.');
+
+    const result = await queueInjection(ctx.env, {
+      locusCode,
+      allele,
+      zygosity,
+      appliesTo,
+      sexPreference,
+      note,
+      gameDay: ctx.world.game_day,
+    });
+    if (!result.ok) return page("That locus/allele combination isn't recognised.");
+    return redirect('/admin/consignment?saved=1');
   }
 
   return notFound();

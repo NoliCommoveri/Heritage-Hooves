@@ -502,6 +502,10 @@ export interface BreedPreview {
    * results - never computed from a genotype directly (see the route for where that boundary is
    * enforced). */
   healthWarnings: string[];
+  /** Amendment 0017a §4.5 point 1: foalColourPossibilities, already turned into sentences - the
+   * certain split first, then one sentence per untested locus explaining what testing it could
+   * unlock. Never computed from either horse's genotype directly - same boundary as healthWarnings. */
+  colourNotes: string[];
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -541,6 +545,7 @@ export function renderBreedPage(params: {
         <p><strong>Inbreeding coefficient of a foal from this pairing:</strong> ${preview.coiPercent}</p>
         ${preview.warning ? html`<p class="notice">${preview.warning}</p>` : raw('')}
         ${preview.healthWarnings.map((w) => html`<p class="notice">${w}</p>`)}
+        ${preview.colourNotes.map((w) => html`<p class="muted">${w}</p>`)}
         <p><strong>Estimated chance this covering takes:</strong> ${preview.conceptionPercent}</p>
         ${conceptionReasonsBlock}
         <form method="post" action="/stables/${String(params.stable.id)}/breed">
@@ -675,6 +680,24 @@ function healthCard(params: { canSeeFullHealth: boolean; canTest: boolean; rows:
     </div>`;
 }
 
+/** Amendment 0017a §4.5 point 2: what this horse can pass on, per colour/gait locus - "untested"
+ * shown as loudly as a result, the same rule slice 0017 §2.3 applies to health knowledge. */
+export interface ColourInferenceRow {
+  code: string;
+  name: string;
+  summary: string;
+}
+
+function colourCard(params: { rows: ColourInferenceRow[]; canTest: boolean; horseId: number }): SafeHtml {
+  if (params.rows.length === 0) return raw('');
+  return html`
+    <div class="card">
+      <h2>Colour and gait</h2>
+      ${params.rows.map((row) => html`<p><strong>${row.name}:</strong> ${row.summary}</p>`)}
+      ${params.canTest ? html`<p><a class="button-link" href="/horses/${String(params.horseId)}/test">Test</a></p>` : raw('')}
+    </div>`;
+}
+
 /** Slice 0008 §8.1: "a small ribbon count or best-placing badge per horse" for the barn list -
  * kept to one glanceable thing, since the barn list is already dense (slice 0006's own comment on
  * this file makes the same call for its compact conformation line). Nothing shown for a horse with
@@ -775,6 +798,9 @@ export function renderHorsePage(params: {
   enterShowNotice?: string;
   /** Slice 0010 §8: the Health card's rows, already resolved to what this viewer is entitled to see. */
   health: HealthConditionDisplay[];
+  /** Amendment 0017a §4.5 point 2: empty for a non-owner, non-admin viewer - the whole card omits
+   * itself the same way health's does. */
+  colour: ColourInferenceRow[];
   /** Slice 0013 §8.1: null for an ended horse - the whole Care card is omitted for one. */
   care: CareCardView | null;
   careError?: string;
@@ -948,6 +974,7 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
+    ${colourCard({ rows: params.colour, canTest: params.canManage, horseId: h.id })}
     ${careCard({
       care: params.care,
       feedLevelName: params.feedLevelName,
@@ -1007,6 +1034,17 @@ export interface TestConditionOption {
   price: number | null;
 }
 
+/** Amendment 0017a §4.5 point 4: the colour panel's own row shape - `known` is the stored pair
+ * string ("Cr/cr"), not a clear/carrier/affected status, since a colour locus has no severity. */
+export interface ColourLocusOption {
+  code: string;
+  name: string;
+  teachingText: string;
+  known: string | null;
+  testedGameDay: number | null;
+  price: number | null;
+}
+
 /** Slice 0010 §7.1: /horses/:id/test, owner-only. Lists every enabled condition, what is already
  * known (with its tested date) or what it costs, then either a per-condition Test button or (if
  * everything is already known) a plain sentence saying so - never a button with nothing behind it. */
@@ -1021,6 +1059,10 @@ export function renderTestPage(params: {
   rows: TestConditionOption[];
   untestedCount: number;
   panelPrice: number;
+  /** Amendment 0017a §4.5 point 4: the colour panel, rendered as a second section on this same page. */
+  colourRows: ColourLocusOption[];
+  untestedColourCount: number;
+  colourPanelPrice: number;
   error?: string;
 }): SafeHtml {
   const h = params.horse;
@@ -1061,13 +1103,47 @@ export function renderTestPage(params: {
 
   const nothingLeft = params.untestedCount === 0 ? html`<p>Nothing is left to test - ${displayNameFor(h)} has a known result for every condition on this panel.</p>` : raw('');
 
+  // Amendment 0017a §4.5 point 4: a second panel, same page, same mechanism - a locus result shown
+  // as its stored pair rather than a clear/carrier/affected badge, since colour has no severity.
+  const colourRows = params.colourRows.map((row) => html`
+    <div class="health-row">
+      <p><strong>${row.name}:</strong> ${row.known !== null ? html`<span>${row.known}</span>` : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
+      <p class="muted">${row.teachingText}</p>
+      ${row.price !== null
+        ? html`
+          <form method="post" action="/horses/${String(h.id)}/test">
+            <input type="hidden" name="locus_code" value="${row.code}">
+            <button type="submit">Test for ${row.name} (${String(row.price)})</button>
+          </form>`
+        : raw('')}
+    </div>`);
+
+  const colourPanelBlock =
+    params.untestedColourCount > 1
+      ? html`
+        <div class="card">
+          <form method="post" action="/horses/${String(h.id)}/test">
+            <input type="hidden" name="action" value="colour_panel">
+            <button type="submit">Test every colour/gait locus still unknown, all ${String(params.untestedColourCount)} (${String(params.colourPanelPrice)})</button>
+          </form>
+        </div>`
+      : raw('');
+
+  const colourNothingLeft =
+    params.untestedColourCount === 0 ? html`<p>Nothing is left to test - ${displayNameFor(h)} has a known result for every colour/gait locus.</p>` : raw('');
+
   const body = html`
     <h1>Test ${displayNameFor(h)}</h1>
     ${errorBox(params.error)}
     <p class="muted">${params.ownerStable.name}'s balance: ${String(params.ownerStable.balance)}</p>
+    <h2>Health</h2>
     ${rows}
     ${panelBlock}
     ${nothingLeft}
+    <h2>Colour and gait</h2>
+    ${colourRows}
+    ${colourPanelBlock}
+    ${colourNothingLeft}
     <p><a href="/horses/${String(h.id)}">Back to ${displayNameFor(h)}</a></p>
   `;
   return pageShell({

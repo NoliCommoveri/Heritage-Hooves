@@ -251,6 +251,8 @@ The one visible oddity, accepted: a solid foal out of two Paints displays as a Q
 
 "German Warmblood" is an umbrella over several separate studbooks. Treating it as one breed is a reasonable simplification at this scale; splitting it later is additive rather than disruptive.
 
+**Built 3 Aug 2026 (amendment 0017a §6):** all eight breeds' ideal vectors remain specified-but-not-seeded — the Quarter Horse's is still the only one live, and every breed-conformation show class is still Quarter-Horse-only. What changed is that **admission to play is now an explicit operator control**, `breeds.enabled`, toggled from `/admin/breeds`. Disabling a breed closes it to *new arrivals only* — founding offers, the consignment dealer, admin-created horses, new NPC breeding targets, new show classes — and never touches a horse, pedigree, class or listing that already exists; two existing horses of a disabled breed can still be bred and their foal is still that breed. The consignment dealer (§13's outcross mechanism gains a second one — see below) currently stocks **Quarter Horses only** (`consignment_breed_codes` in config), for the same reason the NPC show barn is Quarter-Horse-only: it is the one breed with a seeded ideal vector, and pricing anything else would be systematically wrong in a way a child could learn to exploit. Widening it the day the drafted vectors in `docs/breed-ideal-vectors.md` are seeded is a config edit, not a deploy.
+
 ### 4b. Silhouettes
 
 Relevant only once generated art exists (§5c), and worth deciding then rather than now.

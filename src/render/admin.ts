@@ -18,6 +18,8 @@ import type { HorseSearchRow } from '../db/horses';
 import { horseDisplayName } from '../db/horses';
 import type { NpcStableAdminRow, NpcCeilingScheduleRow } from '../db/npcBreeding';
 import type { DisciplineRow } from '../db/disciplines';
+import type { ConsignmentInjectionRow } from '../db/consignment';
+import { LOCI } from '../engines/genetics/loci';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
@@ -36,6 +38,7 @@ type AdminSubnavPage =
   | 'ageing'
   | 'care'
   | 'npc'
+  | 'consignment'
   | 'security'
   | 'migrations'
   | 'reset';
@@ -56,6 +59,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
     { label: 'Care', href: '/admin/care', active: active === 'care' },
     { label: 'NPC stables', href: '/admin/npc', active: active === 'npc' },
+    { label: 'Consignment dealer', href: '/admin/consignment', active: active === 'consignment' },
     { label: 'Security', href: '/admin/security', active: active === 'security' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
@@ -99,6 +103,8 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/health">Health (horses)</a></p>
     <p><a class="button-link" href="/admin/ageing">Ageing</a></p>
     <p><a class="button-link" href="/admin/care">Care</a></p>
+    <p><a class="button-link" href="/admin/npc">NPC stables</a></p>
+    <p><a class="button-link" href="/admin/consignment">Consignment dealer</a></p>
     <p><a class="button-link" href="/admin/security">Security</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
@@ -661,22 +667,50 @@ export function renderFoundingAdminPage(params: {
  * page can tell the operator is the exact next filename per breed, so it's a column of its own
  * rather than left for them to work out from the current count.
  */
-export function renderBreedsAdminPage(params: { world: WorldRow; breeds: BreedRow[]; error?: string; notice?: string }): SafeHtml {
-  const rows = params.breeds.map(
-    (b) => html`
+/** Amendment 0017a §6.3: what the "which of these can I safely turn on?" columns are built from. */
+export interface BreedReadiness {
+  hasIdealVector: boolean;
+  poolOk: boolean;
+  aliveCount: number;
+}
+
+export function renderBreedsAdminPage(params: {
+  world: WorldRow;
+  breeds: BreedRow[];
+  readiness: Map<number, BreedReadiness>;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const rows = params.breeds.map((b) => {
+    const r = params.readiness.get(b.id);
+    return html`
     <tr>
       <td>${b.code}</td>
       <td>${b.name}</td>
+      <td>
+        <form method="post" action="/admin/breeds" style="display:inline">
+          <input type="hidden" name="action" value="set_enabled">
+          <input type="hidden" name="breed_id" value="${String(b.id)}">
+          <input type="hidden" name="enabled" value="${b.enabled === 1 ? '0' : '1'}">
+          <button type="submit">${b.enabled === 1 ? 'In play - take out' : 'Out of play - bring in'}</button>
+        </form>
+      </td>
+      <td>${r?.hasIdealVector ? 'Yes' : html`<span class="muted">No - no breed show class yet</span>`}</td>
+      <td>${r?.poolOk ? 'Yes' : html`<span class="notice">No - missing a locus</span>`}</td>
       <td>${String(b.image_count)}</td>
+      <td>${String(r?.aliveCount ?? 0)}</td>
       <td><input type="text" inputmode="numeric" name="count_${String(b.id)}" value="${String(b.image_count)}" style="width:4rem"></td>
       <td class="muted">${libraryImagePath(b.code, b.image_count + 1)}</td>
-    </tr>`
-  );
+    </tr>`;
+  });
 
   const body = html`
     <h1>Breeds</h1>
     ${errorBox(params.error)}
     ${noticeBox(params.notice)}
+    <div class="card">
+      <p><strong>Taking a breed out of play only closes it to NEW arrivals</strong> - founding offers, the consignment dealer, and this admin's own "create a horse" form. It never touches a horse, class, pedigree or listing that already exists: existing horses of that breed live, age, train, show, sell and die exactly as before, and two existing horses of a disabled breed can still be bred together, producing a foal of that same breed. It is not reversible in spirit - a breed code is written permanently into every horse born of it - but the switch itself can be flipped back at any time.</p>
+    </div>
     <div class="card">
       <p>In GitHub, go to <code>public/horses</code> &rarr; <strong>Add file</strong> &rarr; <strong>Upload files</strong>. Name each picture for its breed code and the next number in the "Next filename" column below, save as <code>.webp</code>, and commit. Once the deploy finishes, set that breed's count to the new total here and save.</p>
       <p><strong>Files are never renumbered and never deleted - only replaced in place.</strong> Skipping or removing a number shows a broken picture rather than being quietly left out, because the site has no way to know a file is missing without a child finding it. Replacing a picture at its existing number is fine and is how you fix a bad upload.</p>
@@ -684,7 +718,7 @@ export function renderBreedsAdminPage(params: { world: WorldRow; breeds: BreedRo
     </div>
     <form method="post" action="/admin/breeds">
       <table>
-        <thead><tr><th>Code</th><th>Breed</th><th>Current count</th><th>New count</th><th>Next filename</th></tr></thead>
+        <thead><tr><th>Code</th><th>Breed</th><th>In play</th><th>Ideal vector?</th><th>Allele pool?</th><th>Images</th><th>Horses alive</th><th>New count</th><th>Next filename</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <button type="submit">Save counts</button>
@@ -1263,6 +1297,131 @@ export function renderNpcAdminPage(params: {
     </div>
   `;
   return shell(params.world, body, 'NPC stables', 'npc');
+}
+
+const CONSIGNMENT_INJECTABLE_LOCI = LOCI.filter((l) => ['E', 'A', 'CR', 'G', 'DMRT3'].includes(l.code));
+const CONSIGNMENT_LOCUS_LABEL: Record<string, string> = { E: 'Extension', A: 'Agouti', CR: 'Cream', G: 'Grey', DMRT3: 'Gait' };
+
+function injectionStatusLabel(row: ConsignmentInjectionRow): string {
+  if (row.status === 'queued') return 'Queued';
+  if (row.status === 'cancelled') return 'Cancelled';
+  return `Applied${row.applied_horse_id !== null ? ` (horse #${String(row.applied_horse_id)})` : ''}`;
+}
+
+/**
+ * /admin/consignment (amendment 0017a §5.5). A form and a table, not a polished UI (CLAUDE.md §13) -
+ * the queue with a cancel link per row, the injection history (§8's risk: "look at that screen
+ * before queueing anything"), and what's currently standing on the market.
+ */
+export function renderConsignmentAdminPage(params: {
+  world: WorldRow;
+  nextCycleGameDay: number;
+  standingListings: { horseName: string; price: number; expiresGameDay: number }[];
+  queued: ConsignmentInjectionRow[];
+  history: ConsignmentInjectionRow[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const standingRows = params.standingListings.map(
+    (l) => html`<tr><td>${l.horseName}</td><td>${String(l.price)}</td><td>${String(l.expiresGameDay)}</td></tr>`
+  );
+
+  const queuedRows = params.queued.map(
+    (row) => html`
+    <tr>
+      <td>${row.locus_code}</td>
+      <td>${row.allele}</td>
+      <td>${row.zygosity}</td>
+      <td>${row.applies_to}</td>
+      <td>${row.sex_preference}</td>
+      <td class="muted">${row.note ?? ''}</td>
+      <td>
+        <form method="post" action="/admin/consignment" style="display:inline">
+          <input type="hidden" name="action" value="cancel">
+          <input type="hidden" name="id" value="${String(row.id)}">
+          <button type="submit">Cancel</button>
+        </form>
+      </td>
+    </tr>`
+  );
+
+  const historyRows = params.history.map(
+    (row) => html`
+    <tr>
+      <td>${String(row.queued_game_day)}</td>
+      <td>${row.locus_code}</td>
+      <td>${row.allele}</td>
+      <td>${row.zygosity}</td>
+      <td>${injectionStatusLabel(row)}</td>
+      <td class="muted">${row.note ?? ''}</td>
+    </tr>`
+  );
+
+  // No JavaScript in this codebase (CLAUDE.md), so a locus-then-allele two-step form isn't
+  // available - one combined dropdown instead, which still makes a typo impossible (§5.5's own
+  // rule: "never free text - a typo becomes a horse").
+  const localeAlleleOptions = html`${CONSIGNMENT_INJECTABLE_LOCI.flatMap((l) =>
+    l.alleles.map((allele) => html`<option value="${l.code}:${allele}">${CONSIGNMENT_LOCUS_LABEL[l.code] ?? l.code} (${l.code}) - ${allele}</option>`)
+  )}`;
+
+  const body = html`
+    <h1>Consignment dealer</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <p><strong>Next batch due:</strong> game day ${String(params.nextCycleGameDay)}.</p>
+      <p class="muted">Every ${'90'} game days the dealer offers one or two outside horses, generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation.</p>
+    </div>
+    <div class="card">
+      <h2>Currently standing</h2>
+      ${params.standingListings.length
+        ? html`<table><thead><tr><th>Horse</th><th>Price</th><th>Expires (game day)</th></tr></thead><tbody>${standingRows}</tbody></table>`
+        : html`<p class="muted">Nothing on the market from the dealer right now.</p>`}
+    </div>
+    <div class="card">
+      <h2>Queue an allele</h2>
+      <p class="muted">Consumed by the next batch that mints a matching horse. When it lands, that locus is pre-tested for the dealer automatically - untested, an injected allele is invisible and nobody ever pays for it.</p>
+      <form method="post" action="/admin/consignment">
+        <input type="hidden" name="action" value="queue">
+        <label>Locus and allele <select name="locus_allele" required>${localeAlleleOptions}</select></label>
+        <label>Zygosity
+          <select name="zygosity" required>
+            <option value="het">One copy (het)</option>
+            <option value="hom">Two copies (hom)</option>
+          </select>
+        </label>
+        <label>Applies to
+          <select name="applies_to" required>
+            <option value="one">One horse</option>
+            <option value="all">Every matching horse in the batch</option>
+          </select>
+        </label>
+        <label>Sex preference
+          <select name="sex_preference" required>
+            <option value="stallion">Stallion (spreads fastest)</option>
+            <option value="mare">Mare</option>
+            <option value="any">Either</option>
+          </select>
+        </label>
+        <label>Note <input type="text" name="note" placeholder="why - this breaks breed purity on purpose, say why"></label>
+        <button type="submit">Queue</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Queued</h2>
+      ${params.queued.length
+        ? html`<table><thead><tr><th>Locus</th><th>Allele</th><th>Zygosity</th><th>Applies to</th><th>Sex</th><th>Note</th><th></th></tr></thead><tbody>${queuedRows}</tbody></table>`
+        : html`<p class="muted">Nothing queued.</p>`}
+    </div>
+    <div class="card">
+      <h2>Injection history</h2>
+      <p class="muted">Every allele ever introduced - the only place to see the gene pool this has been building (§8's risk: it is a one-way ratchet).</p>
+      ${params.history.length
+        ? html`<table><thead><tr><th>Queued (game day)</th><th>Locus</th><th>Allele</th><th>Zygosity</th><th>Status</th><th>Note</th></tr></thead><tbody>${historyRows}</tbody></table>`
+        : html`<p class="muted">No injections yet.</p>`}
+    </div>
+  `;
+  return shell(params.world, body, 'Consignment dealer', 'consignment');
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   type ImportOfferRow,
   type ClaimOfferResult,
 } from '../db/founding';
-import { getBreeds } from '../db/breeds';
+import { getBreedsInPlay } from '../db/breeds';
 import { getConformationTraits } from '../db/quantitativeTraits';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
@@ -53,7 +53,7 @@ async function renderPage(
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
 
   if (offer && offer.status === 'pending') {
-    const breeds = await getBreeds(ctx.env);
+    const breeds = await getBreedsInPlay(ctx.env);
     return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, offer, breeds, ...extra }));
   }
 
@@ -97,7 +97,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
       return renderPage(ctx, stable, offer, { error: "Tick the box to confirm - the breed choice can't be undone." });
     }
     const breedId = Number(form.breed_id);
-    const breeds = await getBreeds(ctx.env);
+    const breeds = await getBreedsInPlay(ctx.env);
     if (!breeds.some((b) => b.id === breedId)) {
       return renderPage(ctx, stable, offer, { error: 'Choose a breed.' });
     }

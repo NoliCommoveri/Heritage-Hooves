@@ -312,6 +312,16 @@ everybody who can see the number already knows why.
 Write this as a comment at the top of the file. It is the kind of thing a future session adds "for
 realism" without noticing what it exposes.
 
+**Amendment 0017a §4.7 adds a second entry to this list, of the same shape: `appraise()` must not
+read `horses.genotype` for the colour term either.** It takes the horse's expressed phenotype
+(public — anyone can see a horse's colour) and the seller's own `horse_knowledge` rows (namespaced
+`locus:<code>`), exactly as it already takes knowledge rows for health. Reading the genotype would
+price in a hidden allele nobody has paid to learn — a seller could read a cream carrier off their
+own guide value without ever buying the test, which breaks the same truth-vs-knowledge boundary and
+empties the testing economy in one line of code. See that document's §4.7 for the full reasoning and
+`hiddenColourAlleleCount` (`src/engines/genetics/inference.ts`), the one function that decides
+whether a tested locus counts toward the premium.
+
 ### 4.3 The shape
 
 ```
@@ -340,6 +350,11 @@ result       = max(market_min_value, round to nearest 10)
   tested-clear premium real and untested stock a gamble, per §2.3.
 - **`recordFactor`** — `1 + market_win_bonus × wins + market_place_bonus × (topThree − wins)`,
   capped at `market_record_cap`, read from `horse_show_summary`.
+- **`colourFactor`** — **built 3 Aug 2026, amendment 0017a §4.7.** `visibleColourFactor ×
+  carriedAlleleFactor`. The visible half needs no knowledge check (a config table keyed on the
+  horse's expressed colour); the carried half is `1 + market_carried_allele_premium × n`, capped at
+  `market_carried_allele_cap`, where `n` is `hiddenColourAlleleCount` — tested loci that looking
+  alone could not already resolve. Multiplies in alongside `healthFactor` in the product above.
 
 Every coefficient is a live tunable in config (§5.3). The engine takes them as one params object
 and reads nothing global.
@@ -902,13 +917,14 @@ On a deployed world with two player stables:
 
 ## 19. Amendments
 
-- **`docs/slices/0017a-amendment-colour-testing-and-the-consignment-dealer.md`** (3 Aug 2026) —
-  adds **Part E, a consignment dealer**: an NPC middleman that offers one or two outside-bred horses
-  on the open market every 90 game days, removes them if unclaimed, and lets the operator queue an
-  allele from `/admin` to be seeded into the next batch — the only mechanism in the game that can
-  introduce a colour nobody owns. It also specifies **colour testing** for players, which Part E
-  depends on and which must be built first. It also adds **`/admin/breeds`**, and wires up
-  `breeds.enabled` — a column that has existed since `0010_breeds.sql` and that nothing has ever
-  read.
+- **`docs/slices/0017a-amendment-colour-testing-and-the-consignment-dealer.md`** (3 Aug 2026,
+  **built** 3 Aug 2026) — adds **Part E, a consignment dealer**: an NPC middleman that offers one or
+  two outside-bred horses on the open market every 90 game days, removes them if unclaimed, and lets
+  the operator queue an allele from `/admin/consignment` to be seeded into the next batch — the only
+  mechanism in the game that can introduce a colour nobody owns. It also specifies **colour
+  testing** for players, which Part E depends on and which was built first (`horse_knowledge`'s
+  `locus:` rows, `appraise()`'s new `colourFactor` term — see this document's own §4.2/§4.3 above).
+  It also adds **`/admin/breeds`**, and wires up `breeds.enabled` — a column that has existed since
+  `0010_breeds.sql` and that nothing had ever read.
 
   It is **not** Part B and changes nothing in §11. Its §2 lists every place the two touch.

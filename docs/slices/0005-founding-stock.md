@@ -93,6 +93,18 @@ generateCandidate(input: {
 
 It returns a candidate's whole content and writes nothing. The caller reads the breed row, calls this, and inserts the row.
 
+**Built 3 Aug 2026 (amendment 0017a §5.3): `generateCandidate` now has a second caller.** The
+consignment dealer (`src/db/consignment.ts`'s `mintConsignmentBatch`) calls it exactly the same way
+`chooseBreedForOffer` does — mid quality band, the breed's real pool, no changes to this function
+itself — and then, only for its own candidates, applies a queued allele injection afterwards via a
+separate pure function (`src/engines/founding/injection.ts`). **A change to this function now
+affects the dealer's stock as well as founding batches.** Also: the breed a stable is offered to
+choose from (`chooseBreedForOffer`'s caller, `routes/founding.ts`) is now filtered by `breeds.enabled`
+— `getBreedsInPlay()` in `src/db/breeds.ts`, per that amendment's §6. A disabled breed simply does
+not appear in the dropdown; `chooseBreedForOffer` itself is unchanged and still trusts whatever
+`breed_id` it's given, since the route has already re-derived the choice from the in-play list before
+calling it.
+
 ### 3.2 The Mendelian draw
 
 **For each locus in `LOCI` order** — never `Object.keys(pool)`, per `CLAUDE.md` §11's slice-0002 entry — draw two alleles independently from that locus's frequencies, and sort the pair into canonical order with `sortAllelePair`.

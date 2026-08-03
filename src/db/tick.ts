@@ -18,6 +18,7 @@ import { chargeUpkeep } from './upkeep';
 import { noticeCareDue } from './care';
 import { deleteOldEvents } from './events';
 import { expireListings } from './listings';
+import { runConsignments } from './consignment';
 import { killDueLethalFoals } from './health';
 import { assignLifespansAndNoticeFrailty, killDueOldHorses } from './ageing';
 
@@ -112,6 +113,10 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // should not come back to an empty market), and an event written by this stage is subject to
       // the same retention pass as any other, which is the ordering rule every event-writing stage
       // already follows. Idempotent by its own `status = 'open'` guard, no marker column needed.
+      // Amendment 0017a §5.7: immediately before expireListings, same reasoning as that stage's own
+      // comment - a paused world must not mint consignments either (this whole branch only runs
+      // when paused === 0), and any event this stage writes is subject to the same retention pass.
+      await runConsignments(env, newGameDay, newTickSeq, config);
       await expireListings(env, newGameDay);
       // Slice 0009 Part B §6.4: a notice board, not an archive - deletes every event (read or not)
       // older than events_retention_game_days. Sits inside this same paused === 0 branch so it

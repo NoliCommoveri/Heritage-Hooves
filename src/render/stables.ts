@@ -110,6 +110,12 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = `${str('horse_name', 'A horse')} didn't sell${price ? ` at ${price}` : ''} and has come off the market. You can put them back on at any time, at any price you like.`;
       break;
     }
+    // Amendment 0017a §5.7: the consignment dealer's own 90-game-day batch landing.
+    case 'consignment_batch': {
+      const count = typeof payload.count === 'number' ? payload.count : 1;
+      sentence = `The consignment dealer has ${String(count)} new horse${count === 1 ? '' : 's'} on the market. Standing for 90 game days, or until claimed.`;
+      break;
+    }
     default:
       sentence = row.kind;
   }
