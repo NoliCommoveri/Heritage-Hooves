@@ -18,6 +18,7 @@ import { originStableFullName } from '../engines/founding/names';
 import type { CareCardView, CareLineView, ManagementPlanRow } from '../db/care';
 import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
+import { formatCalendarDate } from '../lib/calendar';
 
 export const displayNameFor = horseDisplayName;
 
@@ -314,6 +315,7 @@ export function renderBarnList(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   horses: {
@@ -367,6 +369,7 @@ export function renderBarnList(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.stable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -401,6 +404,7 @@ export function renderBreedPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   mares: HorseRow[];
@@ -460,6 +464,7 @@ export function renderBreedPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.stable.id, 'breed', params.hasFoundingOffer),
     body,
   });
@@ -537,13 +542,13 @@ function healthStatusBadge(row: HealthConditionDisplay): SafeHtml {
  * the card shows nothing but the condition names (§1 step 5) - no results, no Test button, even
  * for a condition that would otherwise be visible without a test. That is a deliberate scope limit
  * for this slice's one non-owner viewer, not a rule about what visible-without-a-test means. */
-function healthCard(params: { owner: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number }): SafeHtml {
+function healthCard(params: { owner: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number; gameDaysPerYear: number }): SafeHtml {
   if (params.rows.length === 0) return raw('');
   const rows = params.owner
     ? params.rows.map(
         (row) => html`
         <div class="health-row">
-          <p><strong>${row.name}:</strong> ${healthStatusBadge(row)} ${row.testedGameDay !== null ? html`<span class="muted">(tested game day ${String(row.testedGameDay)})</span>` : raw('')}</p>
+          <p><strong>${row.name}:</strong> ${healthStatusBadge(row)} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
           <p class="muted">${row.teachingText}</p>
         </div>`
       )
@@ -617,6 +622,7 @@ export function renderHorsePage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   owner: boolean;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
@@ -752,9 +758,9 @@ export function renderHorsePage(params: {
   // §8.1), or Veteran/Failing for a living one - never both, never neither's opposite state.
   const statusMarker =
     h.status === 'dead'
-      ? html`<span class="badge badge-danger">Died${h.ended_game_day !== null ? html`, game day ${String(h.ended_game_day)}` : raw('')}</span>`
+      ? html`<span class="badge badge-danger">Died${h.ended_game_day !== null ? html`, ${formatCalendarDate(h.ended_game_day, params.gameDaysPerYear)}` : raw('')}</span>`
       : h.status === 'removed'
-        ? html`<span class="badge">Retired away${h.ended_game_day !== null ? html`, game day ${String(h.ended_game_day)}` : raw('')}</span>`
+        ? html`<span class="badge">Retired away${h.ended_game_day !== null ? html`, ${formatCalendarDate(h.ended_game_day, params.gameDaysPerYear)}` : raw('')}</span>`
         : params.ageState === 'veteran'
           ? html`<span class="badge">Veteran</span>`
           : params.ageState === 'failing'
@@ -820,7 +826,7 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
-    ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id })}
+    ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${careCard({
       care: params.care,
       feedLevelName: params.feedLevelName,
@@ -854,6 +860,7 @@ export function renderHorsePage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: params.owner ? stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer) : undefined,
     body,
   });
@@ -877,6 +884,7 @@ export function renderTestPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
   horse: HorseRow;
@@ -898,7 +906,7 @@ export function renderTestPage(params: {
     };
     return html`
       <div class="health-row">
-        <p><strong>${row.name}:</strong> ${row.price === null ? healthStatusBadge(known) : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested game day ${String(row.testedGameDay)})</span>` : raw('')}</p>
+        <p><strong>${row.name}:</strong> ${row.price === null ? healthStatusBadge(known) : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
         <p class="muted">${row.teachingText}</p>
         ${row.price !== null
           ? html`
@@ -938,6 +946,7 @@ export function renderTestPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -965,6 +974,7 @@ export function renderImagePickerPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
   horse: HorseRow;
@@ -1013,6 +1023,7 @@ export function renderImagePickerPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -1027,6 +1038,7 @@ export function renderRetireConfirmPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   ownerStable: StableRow;
   hasFoundingOffer: boolean;
   horse: HorseRow;
@@ -1065,6 +1077,7 @@ export function renderRetireConfirmPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
     body,
   });
@@ -1087,6 +1100,7 @@ export function renderPastHorsesPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   horses: HorseRow[];
@@ -1096,8 +1110,8 @@ export function renderPastHorsesPage(params: {
     <tr>
       <td><a href="/horses/${String(h.id)}">${displayNameFor(h)}</a></td>
       <td>${h.sex}</td>
-      <td>${String(h.born_game_day)}</td>
-      <td>${h.ended_game_day !== null ? String(h.ended_game_day) : ''}</td>
+      <td>${formatCalendarDate(h.born_game_day, params.gameDaysPerYear)}</td>
+      <td>${h.ended_game_day !== null ? formatCalendarDate(h.ended_game_day, params.gameDaysPerYear) : ''}</td>
       <td>${endedDescription(h)}</td>
     </tr>`
   );
@@ -1107,7 +1121,7 @@ export function renderPastHorsesPage(params: {
     ${params.horses.length
       ? html`
         <table>
-          <thead><tr><th>Name</th><th>Sex</th><th>Born (game day)</th><th>Ended (game day)</th><th>How</th></tr></thead>
+          <thead><tr><th>Name</th><th>Sex</th><th>Born</th><th>Ended</th><th>How</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`
       : html`<p>No horses here have ended yet.</p>`}
@@ -1119,6 +1133,7 @@ export function renderPastHorsesPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(params.stable.id, 'horses', params.hasFoundingOffer),
     body,
   });

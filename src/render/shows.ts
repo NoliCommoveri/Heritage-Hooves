@@ -270,6 +270,7 @@ export function renderEntryResultPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   show: ShowRow;
   cls: ShowClassRow;
   horseName: string;
@@ -358,6 +359,7 @@ export function renderEntryResultPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     body,
   });
 }

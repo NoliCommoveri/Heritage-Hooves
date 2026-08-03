@@ -30,9 +30,9 @@ export interface ShellParams {
   actionsLeft: number | null;
   /**
    * docs/fixes/season-month-display.md: config's game_days_per_year, used to put a calendar-style
-   * label ("April, Year 2") beside the raw game day in the header. Optional so a page that hasn't
-   * been threaded with it yet (currently the horse page and every admin screen - see that doc's
-   * §2/§3) keeps showing today's plain integer, unchanged.
+   * label ("April, Year 2") beside the raw game day in the header. Every player-facing page passes
+   * this. Optional only because admin screens deliberately never do (that doc's §2/§3 - the
+   * operator wants the exact integer, not a label) and section === 'admin' ignores it either way.
    */
   gameDaysPerYear?: number;
   body: SafeHtml;

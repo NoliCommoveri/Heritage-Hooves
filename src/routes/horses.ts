@@ -185,6 +185,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       world: ctx.world,
       isAdmin: ctx.account!.is_admin === 1,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       stable,
       hasFoundingOffer,
       horses: rows,
@@ -205,7 +206,15 @@ export async function stablePastHorsesRoute(ctx: RequestContext, stableId: numbe
 
   const [horses, hasFoundingOffer] = await Promise.all([listPastHorses(ctx.env, stableId), hasWaitingFoundingOffer(ctx.env, stableId)]);
   return htmlResponse(
-    renderPastHorsesPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses })
+    renderPastHorsesPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
+      stable,
+      hasFoundingOffer,
+      horses,
+    })
   );
 }
 
@@ -306,7 +315,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET') {
-    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, mares, stallions, describe }));
+    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer, mares, stallions, describe }));
   }
   if (method !== 'POST') return notFound();
 
@@ -322,6 +331,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         stable,
         hasFoundingOffer,
         mares,
@@ -359,6 +369,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         stable,
         hasFoundingOffer,
         mares,
@@ -379,6 +390,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
           world: ctx.world,
           isAdmin,
           actionsLeft,
+          gameDaysPerYear,
           stable,
           hasFoundingOffer,
           mares,
@@ -401,6 +413,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
           world: ctx.world,
           isAdmin,
           actionsLeft,
+          gameDaysPerYear,
           stable,
           hasFoundingOffer,
           mares,
@@ -528,7 +541,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
 
   const showSummary = await getShowSummary(ctx.env, horse.id);
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
-  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
+  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
@@ -549,6 +562,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       world: ctx.world,
       isAdmin,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       owner,
       ownerStable,
       hasFoundingOffer,
@@ -765,6 +779,7 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
       world: ctx.world,
       isAdmin,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       ownerStable,
       hasFoundingOffer,
       horse,
@@ -843,6 +858,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
         world: ctx.world,
         isAdmin: ctx.account!.is_admin === 1,
         actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
         ownerStable,
         hasFoundingOffer,
         horse,
@@ -1135,6 +1151,7 @@ export async function horseRetireRoute(ctx: RequestContext, method: string, hors
         world: ctx.world,
         isAdmin: ctx.account!.is_admin === 1,
         actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
         ownerStable,
         hasFoundingOffer,
         horse,
