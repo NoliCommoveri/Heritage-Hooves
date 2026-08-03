@@ -73,6 +73,8 @@ import m0069 from '../../migrations/0069_stables_feed_level.sql';
 import m0070 from '../../migrations/0070_ledger_add_farrier_kind.sql';
 import m0071 from '../../migrations/0071_show_entries_care_modifier.sql';
 import m0072 from '../../migrations/0072_config_care.sql';
+import m0073 from '../../migrations/0073_horses_location.sql';
+import m0074 from '../../migrations/0074_config_location.sql';
 
 export interface MigrationFile {
   name: string;
@@ -162,6 +164,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0070_ledger_add_farrier_kind.sql', sql: m0070 },
   { name: '0071_show_entries_care_modifier.sql', sql: m0071 },
   { name: '0072_config_care.sql', sql: m0072 },
+  { name: '0073_horses_location.sql', sql: m0073 },
+  { name: '0074_config_location.sql', sql: m0074 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

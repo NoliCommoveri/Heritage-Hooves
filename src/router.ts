@@ -30,6 +30,7 @@ import {
   horseTestRoute,
   horseRetireRoute,
   horseCareRoute,
+  horseLocationRoute,
 } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
@@ -52,7 +53,7 @@ import {
 } from './routes/admin';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -123,6 +124,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (sub === '/test') return withReissuedCookie(ctx, await horseTestRoute(ctx, method, horseId));
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
+    if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
     return notFound();
   }
 

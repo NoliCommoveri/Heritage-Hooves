@@ -57,6 +57,14 @@ export interface HorseRow {
    * null until this horse is newly overdue, cleared back to null the moment either service is
    * called. Not rendered anywhere. */
   care_notice_game_day: number | null;
+  /** Where the horse actually is (migrations/0073). 'pasture' means it still ages and still carries
+   * every gene it carried before, but its care timers are frozen, its board is multiplied by
+   * pasture_upkeep_multiplier, and it cannot be bred or shown until brought in. */
+  location: 'barn' | 'pasture';
+  /** The game day it last moved. Null means it has never moved. Serves two purposes at once - the
+   * frozen-care credit while out, and the settling period while in - see that migration's comment
+   * and src/engines/care/location.ts. */
+  location_changed_game_day: number | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {

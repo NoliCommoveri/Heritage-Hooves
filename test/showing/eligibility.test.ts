@@ -19,9 +19,31 @@ const ELIGIBLE_HORSE: EligibilityHorse = {
   gaited: false,
   alreadyEntered: false,
   barredByCondition: false,
+  // The location flag: the baseline horse is in the barn and settled.
+  availability: { available: true },
 };
 
 describe('checkEligibility', () => {
+  // The location flag. Checked above every fact about the horse itself, so a horse that is both out
+  // at pasture and the wrong breed is told the thing it can actually do something about.
+  it('refuses a horse that is out at pasture', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, availability: { available: false, reason: 'at_pasture' } }, QH_CLASS, 0)).toEqual({
+      ok: false,
+      reason: 'at_pasture',
+    });
+  });
+
+  it('refuses a horse still settling in after coming home', () => {
+    expect(
+      checkEligibility({ ...ELIGIBLE_HORSE, availability: { available: false, reason: 'settling_in', daysRemaining: 12 } }, QH_CLASS, 0)
+    ).toEqual({ ok: false, reason: 'settling_in' });
+  });
+
+  it('reports being at pasture ahead of any other failed rule', () => {
+    const out: EligibilityHorse = { ...ELIGIBLE_HORSE, breedId: 2, ageGameDays: 10, availability: { available: false, reason: 'at_pasture' } };
+    expect(checkEligibility(out, QH_CLASS, 0)).toEqual({ ok: false, reason: 'at_pasture' });
+  });
+
   it('accepts a horse that meets every rule', () => {
     expect(checkEligibility(ELIGIBLE_HORSE, QH_CLASS, 0)).toEqual({ ok: true });
   });

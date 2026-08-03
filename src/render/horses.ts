@@ -15,6 +15,7 @@ import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
 import { originStableFullName } from '../engines/founding/names';
 import type { CareCardView, CareLineView } from '../db/care';
+import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 
 export const displayNameFor = horseDisplayName;
@@ -58,12 +59,22 @@ function careBarnBadge(care: CareCardView | null): SafeHtml {
   return raw('');
 }
 
+/** The location flag's barn-list marker. Neutral styling on purpose - turning a horse out is an
+ * ordinary management decision, not a warning, and a child who put a horse at grass on purpose
+ * should not see it flagged as if something were wrong. */
+function locationBarnBadge(horse: HorseRow, availability: WorkAvailability | null): SafeHtml {
+  if (horse.status !== 'alive' || !availability || availability.available) return raw('');
+  if (availability.reason === 'at_pasture') return html`<span class="badge">At pasture</span>`;
+  return html`<span class="badge">Settling in</span>`;
+}
+
 const CARE_STATUS_LABEL: Record<CareStatus, string> = {
   not_yet: 'Not yet',
   fresh: 'Fresh',
   due_soon: 'Due soon',
   due: 'Due',
   overdue: 'Overdue',
+  at_pasture: 'Not on the clock',
 };
 
 /** Slice 0013 §8.1: "next due in 12 days" / "overdue by 30 days" - daysUntilDue's own sign tells
@@ -77,7 +88,7 @@ function careDueSentence(line: CareLineView): string {
 
 /** Slice 0013 §8.1: the Care card, between Health and Show record. §2.3's discipline applies here
  * too - this card never touches the Conformation card's numbers, only its own modifier line. */
-function careCard(params: { care: CareCardView | null; feedLevelName: string; horseId: number; canManage: boolean; careError?: string; careNotice?: string }): SafeHtml {
+function careCard(params: { care: CareCardView | null; feedLevelName: string; horseId: number; canManage: boolean; pronoun: string; careError?: string; careNotice?: string }): SafeHtml {
   const c = params.care;
   if (!c) return raw('');
 
@@ -88,6 +99,18 @@ function careCard(params: { care: CareCardView | null; feedLevelName: string; ho
         ${errorBox(params.careError)}
         ${noticeBox(params.careNotice)}
         <p class="muted">Too young to need the farrier yet - care starts at three.</p>
+      </div>`;
+  }
+
+  // At pasture the two timers are frozen and the modifier is exactly 1.00, so the ramp lines and
+  // the call buttons would both be lies. One honest sentence instead.
+  if (c.farrier.status === 'at_pasture') {
+    return html`
+      <div class="card">
+        <h2>Care</h2>
+        ${errorBox(params.careError)}
+        ${noticeBox(params.careNotice)}
+        <p class="muted">Out at pasture - no farrier or vet visits needed while ${params.pronoun} is turned out. The clock on both starts again when ${params.pronoun} comes in.</p>
       </div>`;
   }
 
@@ -116,6 +139,74 @@ function careCard(params: { care: CareCardView | null; feedLevelName: string; ho
       ${callButton('wellness', 'Book a visit', c.wellness.cost)}
       <p><strong>Feed:</strong> ${params.feedLevelName} <span class="muted">(set for the whole barn)</span></p>
       ${modifierLine}
+    </div>`;
+}
+
+/**
+ * The location flag's own card, directly below Care because the two are read together: whether a
+ * horse needs the farrier and whether it is even in the barn are one question in a child's head.
+ *
+ * Deliberately plain about the trade in both directions. Turning out says what it costs (no
+ * breeding, no showing) before the button, not after; bringing in names the settling days left, so
+ * "why can't I enter her?" is answered on the page that caused it rather than on the show page
+ * three clicks away.
+ */
+function locationCard(params: {
+  horse: HorseRow;
+  availability: WorkAvailability | null;
+  canManage: boolean;
+  /** Set when turning out is refused for a reason the horse itself carries - today, a mare in foal
+   * (the operator's rule 3). Rendered as the explanation in place of the button. */
+  blockedReason?: string;
+  error?: string;
+}): SafeHtml {
+  const h = params.horse;
+  if (h.status !== 'alive' || !params.availability) return raw('');
+  const subject = h.sex === 'mare' ? 'she' : 'he';
+  const object = h.sex === 'mare' ? 'her' : 'him';
+  const availability = params.availability;
+
+  const button = (action: 'turn_out' | 'bring_in', label: string) =>
+    params.canManage
+      ? html`
+        <form method="post" action="/horses/${String(h.id)}/location">
+          <input type="hidden" name="action" value="${action}">
+          <button type="submit" class="secondary">${label}</button>
+        </form>`
+      : raw('');
+
+  if (availability.available) {
+    return html`
+      <div class="card">
+        <h2>Where ${subject} is</h2>
+        ${errorBox(params.error)}
+        <p><strong>In the barn.</strong> ${subject[0].toUpperCase()}${subject.slice(1)} can be bred and shown, and needs the farrier and the vet as normal.</p>
+        ${params.blockedReason
+          ? html`<p class="muted">${params.blockedReason}</p>`
+          : html`
+            <p class="muted">Out at pasture ${object} would cost nothing to keep and need no farrier or vet - but ${subject} could not be bred or shown until brought back in and settled.</p>
+            ${button('turn_out', 'Turn out to pasture')}`}
+      </div>`;
+  }
+
+  if (availability.reason === 'at_pasture') {
+    return html`
+      <div class="card">
+        <h2>Where ${subject} is</h2>
+        ${errorBox(params.error)}
+        <p><strong>Out at pasture.</strong> ${subject[0].toUpperCase()}${subject.slice(1)} is still growing up out there and costs nothing to keep, but cannot be bred or shown while ${subject} is turned out.</p>
+        ${button('bring_in', `Bring ${object} in`)}
+      </div>`;
+  }
+
+  const days = availability.daysRemaining;
+  return html`
+    <div class="card">
+      <h2>Where ${subject} is</h2>
+      ${errorBox(params.error)}
+      <p><strong>Settling in.</strong> ${subject[0].toUpperCase()}${subject.slice(1)} came in from pasture and is getting back into work - ready to be bred or shown in ${String(days)} more day${days === 1 ? '' : 's'}.</p>
+      <p class="muted">The farrier and the vet can come in the meantime, and board is being charged as normal.</p>
+      ${button('turn_out', 'Turn back out to pasture')}
     </div>`;
 }
 
@@ -177,6 +268,7 @@ export function renderBarnList(params: {
     visibleConditions: ConditionRow[];
     ageState: AgeState;
     care: CareCardView | null;
+    availability: WorkAvailability | null;
   }[];
   feedLevels: Record<string, FeedLevelDefinition>;
   careSummary: { farrierDue: number; wellnessDue: number };
@@ -185,11 +277,11 @@ export function renderBarnList(params: {
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, care }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, care, availability }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${careBarnBadge(care)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -511,6 +603,11 @@ export function renderHorsePage(params: {
   /** Slice 0011 §4.3/§8.1: this living horse's own Veteran/Failing/young/adult state - never
    * consulted for an ended horse (the status badge below covers that case instead). */
   ageState: AgeState;
+  /** The location flag: this horse's barn/pasture/settling state, or null for an ended horse. */
+  availability: WorkAvailability | null;
+  /** Why turning out is refused right now, if it is - today only "she is in foal". */
+  locationBlockedReason?: string;
+  locationError?: string;
   /** Slice 0011 §8.1: owner AND alive - the one flag that gates every action a dead or removed
    * horse's page must hide (Enter in a show, Test, Choose/Change picture, Retire away). Reading
    * content (pedigree, conformation, health, show record, picture) is never gated by this. */
@@ -649,7 +746,8 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id })}
-    ${careCard({ care: params.care, feedLevelName: params.feedLevelName, horseId: h.id, canManage: params.canManage, careError: params.careError, careNotice: params.careNotice })}
+    ${careCard({ care: params.care, feedLevelName: params.feedLevelName, horseId: h.id, canManage: params.canManage, pronoun: h.sex === 'mare' ? 'she' : 'he', careError: params.careError, careNotice: params.careNotice })}
+    ${locationCard({ horse: h, availability: params.availability, canManage: params.canManage, blockedReason: params.locationBlockedReason, error: params.locationError })}
     ${showRecordCard({
       summary: params.showSummary,
       recentResults: params.recentShowResults,

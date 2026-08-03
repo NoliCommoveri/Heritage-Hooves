@@ -50,3 +50,50 @@ describe('computeUpkeep', () => {
     expect(charge.advanceMarker).toBe(true);
   });
 });
+
+describe('computeUpkeep with pastured horses (the location flag)', () => {
+  it('a horse at pasture costs nothing at the default multiplier of 0', () => {
+    const charge = computeUpkeep({ daysOwed: 10, aliveHorses: 0, pastureHorses: 4, ratePerHorsePerGameDay: 2, pastureMultiplier: 0 });
+    expect(charge.amount).toBe(0);
+    // The marker still advances - a stable whose horses are all out still had those days pass.
+    expect(charge.advanceMarker).toBe(true);
+  });
+
+  it('charges the barn normally and the pasture at its own multiplier', () => {
+    const charge = computeUpkeep({
+      daysOwed: 10,
+      aliveHorses: 3,
+      pastureHorses: 2,
+      ratePerHorsePerGameDay: 2,
+      feedMultiplier: 1,
+      pastureMultiplier: 0.5,
+    });
+    // 3 x 10 x 2 x 1 = 60 in the barn, 2 x 10 x 2 x 0.5 = 20 at grass.
+    expect(charge.amount).toBe(-80);
+  });
+
+  it('feed multiplies the barn only - a pastured horse eats grass, not the feed the barn buys', () => {
+    const charge = computeUpkeep({
+      daysOwed: 10,
+      aliveHorses: 1,
+      pastureHorses: 1,
+      ratePerHorsePerGameDay: 2,
+      feedMultiplier: 2,
+      pastureMultiplier: 1,
+    });
+    // Premium doubles the barn horse (40) and leaves the pastured one at base rate (20).
+    expect(charge.amount).toBe(-60);
+  });
+
+  it('omitting the pasture parameters is byte-for-byte what it charged before the flag existed', () => {
+    const before = computeUpkeep({ daysOwed: 10, aliveHorses: 4, ratePerHorsePerGameDay: 2, feedMultiplier: 1 });
+    const after = computeUpkeep({ daysOwed: 10, aliveHorses: 4, pastureHorses: 0, ratePerHorsePerGameDay: 2, feedMultiplier: 1, pastureMultiplier: 0 });
+    expect(after).toEqual(before);
+    expect(after.amount).toBe(-80);
+  });
+
+  it('a stable with every horse at grass charges 0, not -0', () => {
+    const charge = computeUpkeep({ daysOwed: 10, aliveHorses: 0, pastureHorses: 6, ratePerHorsePerGameDay: 2, pastureMultiplier: 0 });
+    expect(Object.is(charge.amount, -0)).toBe(false);
+  });
+});

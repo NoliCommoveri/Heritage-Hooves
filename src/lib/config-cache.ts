@@ -139,6 +139,13 @@ export interface ConfigValues {
   /** Slice 0013 §2.5/§4.3. One JSON object so a level can be retuned or a fourth added without a
    * code change - see src/engines/care/modifier.ts's FeedLevelsConfig. */
   feed_levels: FeedLevelsConfig;
+  /** The location flag (migrations/0074), not slice 0013. What a pastured horse's board is
+   * multiplied by - 0 means a horse at grass costs nothing to keep. A multiplier rather than a
+   * hardcoded skip so board can be made to cost something again from /admin/config, no deploy. */
+  pasture_upkeep_multiplier: number;
+  /** How long a horse coming in from pasture is "settling in" before it can be bred or shown. The
+   * number that stops free pasture being free storage - see src/engines/care/location.ts. */
+  pasture_settle_game_days: number;
   /** Slice 0013 §2.4. The clamp - not the components - is what guarantees the ±5% band. */
   care_modifier_min: number;
   care_modifier_max: number;

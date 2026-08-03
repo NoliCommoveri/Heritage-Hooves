@@ -32,8 +32,19 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
   const stables = stablesResult.results ?? [];
   if (stables.length === 0) return;
 
-  const countResults = await env.DB.batch<{ n: number }>(
-    stables.map((s) => env.DB.prepare(`SELECT COUNT(*) AS n FROM horses WHERE owner_stable_id = ? AND status = 'alive'`).bind(s.id))
+  // Counted by location in one pass per stable: the barn's horses carry feed and full board, the
+  // pastured ones carry pasture_upkeep_multiplier (0 today). SUM over zero rows is NULL rather than
+  // 0, which is why both are coalesced below.
+  const countResults = await env.DB.batch<{ barn: number | null; pasture: number | null }>(
+    stables.map((s) =>
+      env.DB
+        .prepare(
+          `SELECT SUM(CASE WHEN location = 'barn' THEN 1 ELSE 0 END) AS barn,
+                  SUM(CASE WHEN location = 'pasture' THEN 1 ELSE 0 END) AS pasture
+             FROM horses WHERE owner_stable_id = ? AND status = 'alive'`
+        )
+        .bind(s.id)
+    )
   );
 
   const ledgerEntries: LedgerEntry[] = [];
@@ -41,11 +52,19 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
 
   stables.forEach((stable, i) => {
     const daysOwed = newGameDay - stable.last_upkeep_game_day;
-    const aliveHorses = countResults[i].results[0]?.n ?? 0;
+    const aliveHorses = countResults[i].results[0]?.barn ?? 0;
+    const pastureHorses = countResults[i].results[0]?.pasture ?? 0;
     // Slice 0013 §2.5/§7.1: feed multiplies the existing charge rather than creating a second one -
     // feed *is* board.
     const feedMultiplier = feedUpkeepMultiplier(stable.feed_level, config.values);
-    const charge = computeUpkeep({ daysOwed, aliveHorses, ratePerHorsePerGameDay: rate, feedMultiplier });
+    const charge = computeUpkeep({
+      daysOwed,
+      aliveHorses,
+      ratePerHorsePerGameDay: rate,
+      feedMultiplier,
+      pastureHorses,
+      pastureMultiplier: config.values.pasture_upkeep_multiplier,
+    });
     if (!charge.advanceMarker) return;
 
     if (charge.amount !== 0) {
@@ -56,7 +75,9 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
         kind: 'upkeep',
         referenceType: 'tick',
         referenceId: tickSeq,
-        description: `Board for ${String(aliveHorses)} horse${aliveHorses === 1 ? '' : 's'}, ${String(daysOwed)} day${daysOwed === 1 ? '' : 's'}${feedNote}.`,
+        // Pasture is named only when there are horses out, so an ordinary barn's line reads exactly
+        // as it did before the location flag existed.
+        description: `Board for ${String(aliveHorses)} horse${aliveHorses === 1 ? '' : 's'}${pastureHorses > 0 ? `, ${String(pastureHorses)} at pasture` : ''}, ${String(daysOwed)} day${daysOwed === 1 ? '' : 's'}${feedNote}.`,
         gameDay: newGameDay,
       });
     }

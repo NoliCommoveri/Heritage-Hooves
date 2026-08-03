@@ -14,6 +14,7 @@ import type { HorseRow } from './horses';
 import { horseDisplayName } from './horses';
 import { buildLedgerStatements, type LedgerEntry, type LedgerKind } from './ledger';
 import { buildEventStatement } from './events';
+import { frozenCareDays, workAvailability, type WorkAvailability } from '../engines/care/location';
 import {
   timerState,
   careModifier as computeCareModifier,
@@ -50,12 +51,17 @@ export function careStartGameDay(bornGameDay: number, cfg: ConfigValues): number
   return bornGameDay + cfg.care_start_age_game_days;
 }
 
-type CareTimerHorse = Pick<HorseRow, 'born_game_day' | 'last_farrier_game_day' | 'last_vet_game_day'>;
+type CareTimerHorse = Pick<HorseRow, 'born_game_day' | 'last_farrier_game_day' | 'last_vet_game_day'> & {
+  /** The location flag. Optional so the pre-flag call shape still compiles; absent reads as 'barn',
+   * which is what every horse was before migrations/0073 added the column. */
+  location?: 'barn' | 'pasture';
+};
 
 function timerStateFor(service: CareService, horse: CareTimerHorse, cfg: ConfigValues, gameDay: number) {
   const state: TimerState = {
     lastCallGameDay: service === 'farrier' ? horse.last_farrier_game_day : horse.last_vet_game_day,
     careStartGameDay: careStartGameDay(horse.born_game_day, cfg),
+    atPasture: horse.location === 'pasture',
   };
   return timerState(state, timerConfigFor(service, cfg), gameDay);
 }
@@ -65,13 +71,17 @@ function timerStateFor(service: CareService, horse: CareTimerHorse, cfg: ConfigV
  * always 0 - Part B was not built this session. */
 export function careModifierForHorse(horse: CareTimerHorse, feedLevel: string, cfg: ConfigValues, gameDay: number): CareModifierResult {
   const startDay = careStartGameDay(horse.born_game_day, cfg);
+  const atPasture = horse.location === 'pasture';
   const feed = feedLevelDefinition(feedLevel, cfg.feed_levels);
   return computeCareModifier({
-    farrier: { lastCallGameDay: horse.last_farrier_game_day, careStartGameDay: startDay },
+    farrier: { lastCallGameDay: horse.last_farrier_game_day, careStartGameDay: startDay, atPasture },
     farrierConfig: farrierTimerConfig(cfg),
-    wellness: { lastCallGameDay: horse.last_vet_game_day, careStartGameDay: startDay },
+    wellness: { lastCallGameDay: horse.last_vet_game_day, careStartGameDay: startDay, atPasture },
     wellnessConfig: wellnessTimerConfig(cfg),
-    feedDelta: feed.care_delta,
+    // Feed is the barn's. A horse at grass is outside that standing trade entirely (§2.5 makes feed
+    // a per-stable decision about what is in the mangers), so it carries no feed delta either - it
+    // comes out at exactly 1.00, every component neutral.
+    feedDelta: atPasture ? 0 : feed.care_delta,
     conditionDelta: 0,
     gameDay,
     modifierMin: cfg.care_modifier_min,
@@ -137,7 +147,10 @@ export async function callOneHorseCare(
   const description = `${params.service === 'farrier' ? 'Farrier visit' : 'Wellness visit'}, ${horseDisplayName(params.horse)}.`;
 
   await env.DB.batch([
-    env.DB.prepare(`UPDATE horses SET ${column} = ?, care_notice_game_day = NULL WHERE id = ?`).bind(params.gameDay, params.horse.id),
+    // AND location = 'barn' is defence in depth - the route refuses a pastured horse before it gets
+    // here, but a care call whose date lands on a horse at grass would silently break the
+    // frozen-time credit invariant that bringInFromPasture relies on (see location.ts).
+    env.DB.prepare(`UPDATE horses SET ${column} = ?, care_notice_game_day = NULL WHERE id = ? AND location = 'barn'`).bind(params.gameDay, params.horse.id),
     ...buildLedgerStatements(env, [
       { stableId: params.ownerStableId, amount: -params.cost, kind, referenceType: 'horse', referenceId: params.horse.id, description, gameDay: params.gameDay },
     ]),
@@ -168,7 +181,9 @@ export async function callBarnRoundCare(
   params: { stableId: number; service: CareService; gameDay: number; config: ConfigValues; balance: number }
 ): Promise<BarnRoundResult> {
   const cfg = params.config;
-  const horsesResult = await env.DB.prepare(`SELECT * FROM horses WHERE owner_stable_id = ? AND status = 'alive'`).bind(params.stableId).all<HorseRow>();
+  // Horses at pasture are skipped entirely: their timers are frozen, so they are never due, and a
+  // round must never spend money on a horse the owner deliberately turned out.
+  const horsesResult = await env.DB.prepare(`SELECT * FROM horses WHERE owner_stable_id = ? AND status = 'alive' AND location = 'barn'`).bind(params.stableId).all<HorseRow>();
   const horses = horsesResult.results ?? [];
 
   const candidates = horses
@@ -226,7 +241,7 @@ interface CareCandidateRow {
 async function stampNpcHorsesCurrent(env: Env, gameDay: number): Promise<void> {
   await env.DB.prepare(
     `UPDATE horses SET last_farrier_game_day = ?, last_vet_game_day = ?
-     WHERE status = 'alive' AND owner_stable_id IN (SELECT id FROM stables WHERE is_npc = 1)`
+     WHERE status = 'alive' AND location = 'barn' AND owner_stable_id IN (SELECT id FROM stables WHERE is_npc = 1)`
   )
     .bind(gameDay, gameDay)
     .run();
@@ -243,7 +258,7 @@ async function noticeCareDueForPlayers(env: Env, gameDay: number, cfg: ConfigVal
   const rows = await env.DB.prepare(
     `SELECT h.id, h.born_game_day, h.last_farrier_game_day, h.last_vet_game_day, h.owner_stable_id, s.account_id
      FROM horses h JOIN stables s ON s.id = h.owner_stable_id
-     WHERE h.status = 'alive' AND h.care_notice_game_day IS NULL AND s.account_id IS NOT NULL`
+     WHERE h.status = 'alive' AND h.location = 'barn' AND h.care_notice_game_day IS NULL AND s.account_id IS NOT NULL`
   ).all<CareCandidateRow>();
 
   const byStable = new Map<number, { accountId: number; horseIds: number[]; farrierCount: number; wellnessCount: number }>();
@@ -309,19 +324,26 @@ export interface CareAdminData {
    * feed delta folded in - so the distribution reflects the modifier a show would actually apply. */
   modifierBuckets: { rangeLabel: string; count: number }[];
   stables: { id: number; name: string; feedLevelName: string; boardPerDay: number }[];
+  /** The location flag: how many living player horses are out at grass, and how many are home but
+   * still inside their settling window - the two numbers that explain a suddenly-small show field. */
+  atPasture: number;
+  settlingIn: number;
 }
 
 interface CareCensusRow {
   born_game_day: number;
   last_farrier_game_day: number | null;
   last_vet_game_day: number | null;
+  location: 'barn' | 'pasture';
+  location_changed_game_day: number | null;
   feed_level: string;
 }
 
 export async function getCareAdminData(env: Env, gameDay: number, config: Config): Promise<CareAdminData> {
   const cfg = config.values;
   const rowsResult = await env.DB.prepare(
-    `SELECT h.born_game_day, h.last_farrier_game_day, h.last_vet_game_day, s.feed_level
+    `SELECT h.born_game_day, h.last_farrier_game_day, h.last_vet_game_day, h.location,
+            h.location_changed_game_day, s.feed_level
      FROM horses h JOIN stables s ON s.id = h.owner_stable_id
      WHERE h.status = 'alive' AND s.account_id IS NOT NULL`
   ).all<CareCensusRow>();
@@ -331,8 +353,12 @@ export async function getCareAdminData(env: Env, gameDay: number, config: Config
   const wellnessCounts = new Map<CareStatus, number>(CARE_STATUSES.map((s) => [s, 0]));
   const bucketCounts = new Array(10).fill(0) as number[];
   const span = cfg.care_modifier_max - cfg.care_modifier_min;
+  let atPasture = 0;
+  let settlingIn = 0;
 
   for (const row of rows) {
+    if (row.location === 'pasture') atPasture++;
+    else if (!availabilityForHorse(row, cfg, gameDay).available) settlingIn++;
     const farrier = timerStateFor('farrier', row, cfg, gameDay);
     const wellness = timerStateFor('wellness', row, cfg, gameDay);
     farrierCounts.set(farrier.status, (farrierCounts.get(farrier.status) ?? 0) + 1);
@@ -372,6 +398,8 @@ export async function getCareAdminData(env: Env, gameDay: number, config: Config
     wellness: CARE_STATUSES.map((status) => ({ status, count: wellnessCounts.get(status) ?? 0 })),
     modifierBuckets,
     stables,
+    atPasture,
+    settlingIn,
   };
 }
 
@@ -386,9 +414,87 @@ export async function makeAllHorsesOverdue(env: Env, gameDay: number, config: Co
 
   await env.DB.prepare(
     `UPDATE horses SET last_farrier_game_day = ?, last_vet_game_day = ?, care_notice_game_day = NULL
-     WHERE status = 'alive' AND born_game_day <= ?
+     WHERE status = 'alive' AND location = 'barn' AND born_game_day <= ?
        AND owner_stable_id IN (SELECT id FROM stables WHERE account_id IS NOT NULL)`
   )
     .bind(farrierBack, wellnessBack, eligibleBornBy)
     .run();
+}
+
+// ---------------------------------------------------------------------------
+// Turning out and bringing in - the location flag
+// ---------------------------------------------------------------------------
+
+/** Whether this horse can be bred or shown right now. Wraps the pure rule so route and render code
+ * never has to remember which config key the settling period lives under. */
+export function availabilityForHorse(
+  horse: { location?: 'barn' | 'pasture'; location_changed_game_day?: number | null },
+  cfg: ConfigValues,
+  gameDay: number
+): WorkAvailability {
+  return workAvailability(
+    { location: horse.location ?? 'barn', locationChangedGameDay: horse.location_changed_game_day ?? null },
+    gameDay,
+    cfg.pasture_settle_game_days
+  );
+}
+
+/**
+ * Turn a horse out to pasture. Immediate - there is no wait going out, only coming back in.
+ *
+ * Its care timers are deliberately not touched here: they are simply not read while
+ * `location = 'pasture'` (timerState short-circuits), and the frozen time is credited back on the
+ * way in. Doing it this way rather than stamping on the way out means a horse turned out and
+ * brought straight back is exactly where it started, with no rounding drift either direction.
+ *
+ * care_notice_game_day is cleared because a horse at pasture is never counted in an overdue notice,
+ * and a stale marker left set would suppress the next genuine notice after it comes home.
+ *
+ * The WHERE clause is the idempotency guard (CLAUDE.md §5.4 applied to a button, as slice 0013 §6.4
+ * does for the barn round): a double-tap finds the horse already at pasture and changes nothing,
+ * rather than resetting location_changed_game_day and silently extending the freeze.
+ */
+export async function turnOutToPasture(env: Env, horseId: number, gameDay: number): Promise<boolean> {
+  const result = await env.DB.prepare(
+    `UPDATE horses SET location = 'pasture', location_changed_game_day = ?, care_notice_game_day = NULL
+     WHERE id = ? AND status = 'alive' AND location = 'barn'`
+  )
+    .bind(gameDay, horseId)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+/**
+ * Bring a horse in from pasture, crediting back the care time frozen while it was out.
+ *
+ * The credit is what stops a horse coming home from two game years at grass reading as several
+ * intervals overdue for a mechanic that was not running while it was gone - the same unfairness
+ * migration 0068's backfill exists to prevent for every horse alive when care shipped.
+ *
+ * MIN(..., ?) is belt and braces. The invariant making the arithmetic exact is that care calls are
+ * refused for a horse at pasture (the route checks, and callOneHorseCare's own UPDATE re-checks),
+ * so a timer can never be later than the day the horse went out, and adding the full time out can
+ * never push it past today. The MIN costs nothing and keeps this statement correct on its own terms
+ * if a future session ever adds a path that shoes a horse at grass.
+ *
+ * location_changed_game_day is reset to today, which starts the settling window: the horse is home,
+ * but not fit to be bred or shown until pasture_settle_game_days have passed.
+ */
+export async function bringInFromPasture(
+  env: Env,
+  horse: { id: number; location_changed_game_day: number | null },
+  gameDay: number
+): Promise<boolean> {
+  const frozen = frozenCareDays({ location: 'pasture', locationChangedGameDay: horse.location_changed_game_day }, gameDay);
+  const result = await env.DB.prepare(
+    `UPDATE horses
+        SET location = 'barn',
+            location_changed_game_day = ?,
+            last_farrier_game_day = MIN(last_farrier_game_day + ?, ?),
+            last_vet_game_day     = MIN(last_vet_game_day + ?, ?)
+      WHERE id = ? AND status = 'alive' AND location = 'pasture'`
+  )
+    .bind(gameDay, frozen, gameDay, frozen, gameDay, horse.id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
