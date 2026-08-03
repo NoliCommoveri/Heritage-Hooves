@@ -32,6 +32,10 @@ import { nowUtcSeconds } from '../lib/time';
 //   listing_expired -> {"v":1,"horse_name":"...","price":4000}
 // Both payload shapes are also documented in src/db/listings.ts's file header, since
 // migrations/0048_events.sql is already applied and must not be edited (CLAUDE.md §8).
+// Amendment 0017a §5.7 adds one more, same no-migration-needed reasoning - a stable-level event
+// (subject_horse_id is NULL), written to every active player-owned stable when a consignment batch
+// lands (src/db/consignment.ts):
+//   consignment_batch -> {"v":1,"count":2}
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -43,7 +47,8 @@ export type EventKind =
   | 'horse_died_old_age'
   | 'care_due'
   | 'horse_sold'
-  | 'listing_expired';
+  | 'listing_expired'
+  | 'consignment_batch';
 
 export interface EventRow {
   id: number;

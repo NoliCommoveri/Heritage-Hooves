@@ -30,6 +30,17 @@ export type KnownResult = 'clear' | 'carrier' | 'affected';
 export interface AppraiseParams {
   /** The horse's expressed conformation values, exactly as slice 0006 computes them for display. */
   expressed: Partial<Record<TraitCode, number>>;
+  /** Amendment 0017a §4.7. The horse's visible colour name, ALREADY passed through
+   * src/render/colour.ts's smoky-black display mapping for the appraising stable's own knowledge -
+   * never the raw truth string. An untested smoky black must price exactly as a plain black, the
+   * same "a stranger at a show can see it" rule that makes this term visible-only in the first
+   * place; it is not a second truth-vs-knowledge boundary, it is the same one health already has. */
+  visibleColour: string;
+  /** §4.7: how many colour/gait loci this stable has tested where inferFromPhenotype's own
+   * (untested) possibility set had more than one member - i.e. a genuine discovery, not something
+   * looking already gave away for free. Computed by the caller from horse_knowledge and
+   * inferFromPhenotype; this engine never reads horses.genotype for it. */
+  knownHiddenColourAlleleCount: number;
   /** Null (or empty) for a breed with no seeded ideal vector - see §4.4 and qualityUnknown below. */
   ideal: IdealVector | null;
   /** show_ideal_falloff, live from config. No judge is involved in an appraisal, so scoreEntry is
@@ -62,6 +73,11 @@ export interface AppraiseConfig extends AgeModifierConfig {
   market_place_bonus: number;
   market_record_cap: number;
   market_min_value: number;
+  /** Amendment 0017a §4.7. Expressed colour name -> multiplier - keep the whole range modest next
+   * to market_quality_weight (§8's risk: colour must never out-compete conformation). */
+  market_visible_colour_factors: Record<string, number>;
+  market_carried_allele_premium: number;
+  market_carried_allele_cap: number;
 }
 
 export interface AppraisalFactor {
@@ -122,7 +138,10 @@ export function appraise(input: AppraiseParams): Appraisal {
   const record = recordFactor(input.wins, input.topThree, c);
   factors.push({ label: 'Show record', detail: recordDetail(input.wins, input.topThree) });
 
-  const raw = base * youth * age.modifier * failing * health * record * c.market_price_multiplier;
+  const colour = colourFactor(input.visibleColour, input.knownHiddenColourAlleleCount, c);
+  factors.push({ label: 'Colour', detail: colourDetail(input.visibleColour, input.knownHiddenColourAlleleCount) });
+
+  const raw = base * youth * age.modifier * failing * health * record * colour * c.market_price_multiplier;
   const value = Math.max(c.market_min_value, Math.round(raw / 10) * 10);
 
   return { value, factors, qualityUnknown: !hasIdeal };
@@ -175,6 +194,24 @@ function healthDetail(results: KnownResult[]): string {
 function recordFactor(wins: number, topThree: number, c: AppraiseConfig): number {
   const places = Math.max(0, topThree - wins);
   return Math.min(c.market_record_cap, 1 + c.market_win_bonus * wins + c.market_place_bonus * places);
+}
+
+/**
+ * Amendment 0017a §4.7: colourFactor = visibleColourFactor × carriedAlleleFactor. The visible half
+ * needs no test and no knowledge check - a config table keyed on the expressed colour name, 1 when
+ * that colour has no entry (an operator has not priced it yet, not "worthless"). The carried half is
+ * `1 + market_carried_allele_premium × n`, capped - never doubled up with the visible half, since
+ * `n` only counts loci that were genuinely hidden from looking (see AppraiseParams' own comment).
+ */
+function colourFactor(visibleColour: string, hiddenCount: number, c: AppraiseConfig): number {
+  const visible = c.market_visible_colour_factors[visibleColour] ?? 1;
+  const carried = Math.min(c.market_carried_allele_cap, 1 + c.market_carried_allele_premium * hiddenCount);
+  return visible * carried;
+}
+
+function colourDetail(visibleColour: string, hiddenCount: number): string {
+  if (hiddenCount === 0) return visibleColour;
+  return `${visibleColour}; carries ${String(hiddenCount)} tested colour allele${hiddenCount === 1 ? '' : 's'} that don't show`;
 }
 
 function recordDetail(wins: number, topThree: number): string {

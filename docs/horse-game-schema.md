@@ -408,7 +408,7 @@ Also decided there: the primary key is `(descendant_id, ancestor_id, depth)` rat
 
 - `id`, `stable_id`, `horse_id`
 - `kind` — genotype / screening. **Only `'genotype'` is written by slice 0010** — the screening kind, and the going-stale behaviour that makes it distinct, arrive with the polygenic predispositions (§3a's third category).
-- `subject_code` — a locus code or a condition code
+- `subject_code` — a locus code or a condition code. **Built 3 Aug 2026** (amendment 0017a §4.1): a colour/gait locus row is namespaced `locus:<code>` (e.g. `locus:CR`), never a bare code, so the two families never collide even though nothing currently stops a bare condition code from being a single letter. `result` for a locus row is the stored pair as text, in `LOCI`'s own canonical order (e.g. `"Cr/cr"`), not a clear/carrier/affected label — a colour locus has no severity. Every reader of this table that assumes a `kind = 'genotype'` row is a disease result must filter on the `locus:` prefix (`src/db/health.ts`'s `knowledgeMap` does).
 - `result` — clear / carrier / affected, or a screening observation
 - `tested_game_day`, `expires_game_day` (nullable — always NULL for a genotype row, since permanence is the point), `cost_paid`
 

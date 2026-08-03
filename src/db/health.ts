@@ -5,7 +5,7 @@
 
 import type { Env } from '../types';
 import type { Genotype } from '../engines/genetics/genotype';
-import { parseGenotype } from '../engines/genetics/genotype';
+import { parseGenotype, getMendelianPair } from '../engines/genetics/genotype';
 import { conditionStatus, parseConditionTrigger, lethalTerminalGameDay, ownerVisibleStatus, type ConditionStatusLabel } from '../engines/health/status';
 import type { LethalTrigger } from '../engines/founding/generate';
 import { buildConditionSignsEventStatement, buildEventStatement } from './events';
@@ -223,7 +223,9 @@ export async function conditionDeltaMapForHorses(
 export function knowledgeMap(rows: HorseKnowledgeRow[]): Map<string, ConditionStatusLabel> {
   const map = new Map<string, ConditionStatusLabel>();
   for (const row of rows) {
-    if (row.kind === 'genotype') map.set(row.subject_code, row.result);
+    // Amendment 0017a §4.1: a `locus:`-namespaced colour row is not a disease result and must never
+    // be read as one - this map is keyed by bare condition code everywhere it's consulted.
+    if (row.kind === 'genotype' && !row.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX)) map.set(row.subject_code, row.result);
   }
   return map;
 }
@@ -275,6 +277,52 @@ export function buildKnowledgePurchaseStatements(env: Env, params: RecordTestPur
       `INSERT INTO horse_knowledge (stable_id, horse_id, kind, subject_code, result, tested_game_day, expires_game_day, cost_paid)
        VALUES (?, ?, 'genotype', ?, ?, ?, NULL, ?)`
     ).bind(params.stableId, params.horseId, condition.code, status, params.gameDay, params.costByCode[condition.code] ?? 0);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Amendment 0017a §4: colour testing. Same table, same `kind = 'genotype'` mechanism as the disease
+// tests above, distinguished only by a `locus:`-namespaced subject_code (§4.1) - every reader that
+// assumes a genotype row is a disease result must filter on that prefix, this file's readers
+// included (see untestedConditions/knowledgeMap above, which this section deliberately does not
+// touch - a locus: row is simply invisible to them, and that is what keeps the two families apart).
+// ---------------------------------------------------------------------------
+
+export const LOCUS_KNOWLEDGE_PREFIX = 'locus:';
+
+/** Every colour/gait locus subject_code this stable already holds a result for, bare (no prefix) -
+ * the test page's "what's left to buy" list. */
+export function testedColourLoci(known: HorseKnowledgeRow[]): Set<string> {
+  const out = new Set<string>();
+  for (const row of known) {
+    if (row.kind === 'genotype' && row.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX)) out.add(row.subject_code.slice(LOCUS_KNOWLEDGE_PREFIX.length));
+  }
+  return out;
+}
+
+export interface LocusKnowledgePurchaseParams {
+  stableId: number;
+  horseId: number;
+  gameDay: number;
+  genotype: Genotype;
+  /** Bare locus codes being bought, e.g. ['E','CR'] - already re-derived by the caller from
+   * testedColourLoci, never trusted from the form (the same discipline slice 0010 §7.1 step 1 uses
+   * for a disease test purchase). */
+  locusCodes: string[];
+  /** What each locus actually cost, keyed by bare code - computed by the caller from live config. */
+  costByCode: Record<string, number>;
+}
+
+/** §4.1: result is the pair as stored, in LOCI's own canonical order (getMendelianPair already
+ * returns it sorted), e.g. "Cr/cr". Same shape as buildKnowledgePurchaseStatements, kept separate
+ * because a colour result has no severity/trigger to evaluate - it is simply the pair. */
+export function buildLocusKnowledgePurchaseStatements(env: Env, params: LocusKnowledgePurchaseParams): D1PreparedStatement[] {
+  return params.locusCodes.map((code) => {
+    const pair = getMendelianPair(params.genotype, code);
+    return env.DB.prepare(
+      `INSERT INTO horse_knowledge (stable_id, horse_id, kind, subject_code, result, tested_game_day, expires_game_day, cost_paid)
+       VALUES (?, ?, 'genotype', ?, ?, ?, NULL, ?)`
+    ).bind(params.stableId, params.horseId, `${LOCUS_KNOWLEDGE_PREFIX}${code}`, pair.join('/'), params.gameDay, params.costByCode[code] ?? 0);
   });
 }
 

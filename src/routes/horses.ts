@@ -16,6 +16,8 @@ import {
   type EnterShowInfo,
   type HealthConditionDisplay,
   type TestConditionOption,
+  type ColourLocusOption,
+  type ColourInferenceRow,
 } from '../render/horses';
 import { eligibilityMessage, placingText } from '../render/shows';
 import {
@@ -32,7 +34,7 @@ import {
 } from '../db/horses';
 import { getStableById, type StableRow } from '../db/stables';
 import { getBreedById, getBreeds, getLoci, type LocusRow, type BreedRow } from '../db/breeds';
-import { parseGenotype } from '../engines/genetics/genotype';
+import { parseGenotype, sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
@@ -66,7 +68,14 @@ import {
   buildKnowledgePurchaseStatements,
   breedingHealthWarningsFor,
   conditionDeltaMapForHorses,
+  getKnownGenotypeSubjectsForHorses,
+  testedColourLoci,
+  buildLocusKnowledgePurchaseStatements,
+  LOCUS_KNOWLEDGE_PREFIX,
 } from '../db/health';
+import { displayColourName } from '../render/colour';
+import { inferFromPhenotype } from '../engines/genetics/inference';
+import { foalColourPossibilities } from '../engines/genetics/foal-colours';
 import { buildLedgerStatements } from '../db/ledger';
 import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../engines/health/status';
 import type { Genotype } from '../engines/genetics/genotype';
@@ -82,12 +91,69 @@ import {
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
- * rather than a second copy. */
-export function describeHorseRow(horse: Pick<HorseRow, 'genotype' | 'born_game_day' | 'sex'>, gameDay: number, gameDaysPerYear: number): string {
+ * rather than a second copy.
+ *
+ * Amendment 0017a §4.3: `creamTested` defaults to false, which is the safe direction - a spectator
+ * "at the rail" cannot tell smoky black from plain black either, so the untested reading is the
+ * correct public one, not merely a fallback. Pass true only where the caller has actually checked
+ * this specific viewing stable's own horse_knowledge for `locus:CR`. */
+export function describeHorseRow(
+  horse: Pick<HorseRow, 'genotype' | 'born_game_day' | 'sex'>,
+  gameDay: number,
+  gameDaysPerYear: number,
+  creamTested = false
+): string {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = gameDay - horse.born_game_day;
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
-  return describeHorse(phenotype, horse.sex, ageDays / gameDaysPerYear);
+  const displayPhenotype = { ...phenotype, visibleColour: displayColourName(phenotype.visibleColour, creamTested), bornColour: displayColourName(phenotype.bornColour, creamTested) };
+  return describeHorse(displayPhenotype, horse.sex, ageDays / gameDaysPerYear);
+}
+
+/** Amendment 0017a §4.2/§4.5: what this horse's phenotype, narrowed by this stable's own
+ * horse_knowledge, still leaves open at each colour/gait locus - never horses.genotype directly.
+ * Shared by the horse page's own colour card and the breeding preview's foal-colour prediction so
+ * there is exactly one place a locus's knowledge row narrows an inferred set. */
+async function narrowedColourInference(
+  ctx: RequestContext,
+  stableId: number,
+  horse: Pick<HorseRow, 'id' | 'genotype' | 'born_game_day' | 'sex'>
+): Promise<Record<string, AllelePair[]>> {
+  const genotype = parseGenotype(horse.genotype);
+  const ageDays = ctx.world.game_day - horse.born_game_day;
+  const phenotype = expressPhenotype(genotype, ageDays, ctx.config.values.game_days_per_year);
+  const inferred = inferFromPhenotype(phenotype);
+  const knowledge = await getKnowledgeForHorse(ctx.env, stableId, horse.id);
+  for (const k of knowledge) {
+    if (k.kind !== 'genotype' || !k.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX)) continue;
+    const code = k.subject_code.slice(LOCUS_KNOWLEDGE_PREFIX.length);
+    if (!(code in inferred)) continue;
+    const [a, b] = k.result.split('/');
+    inferred[code] = [sortAllelePair(code, a, b)];
+  }
+  return inferred;
+}
+
+const COLOUR_LOCUS_LABEL: Record<string, string> = { E: 'red/black (Extension)', A: 'Agouti', CR: 'cream', G: 'grey', DMRT3: 'gait' };
+
+/** Amendment 0017a §4.4/§4.5 point 1: foalColourPossibilities turned into the sentences the
+ * breeding preview shows - the worked example from the amendment's own §4.4. */
+function foalColourSentences(result: ReturnType<typeof foalColourPossibilities>): string[] {
+  const sentences: string[] = [];
+  if (result.certain.length > 0) {
+    const parts = result.certain
+      .slice()
+      .sort((a, b) => b.probability - a.probability)
+      .map((c) => `about ${String(Math.round(c.probability * 100))}% ${c.colour}`);
+    sentences.push(`Foals from this pairing: ${parts.join(', ')}.`);
+  }
+  for (const u of result.uncertain) {
+    const who = u.untestedParents.length === 2 ? 'Neither parent has' : u.untestedParents[0] === 'sire' ? 'The stallion has not' : 'The mare has not';
+    const label = COLOUR_LOCUS_LABEL[u.locusCode] ?? u.locusCode;
+    const unlocked = u.unlockedColours.length > 0 ? ` If tested, ${u.unlockedColours.join(' or ')} foals become possible.` : '';
+    sentences.push(`${who} been tested for ${label}.${unlocked}`);
+  }
+  return sentences;
 }
 
 /** Slice 0006 §6: the four conformation measurements for one horse, ready to hand to a render
@@ -159,10 +225,15 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   const activeTab: BarnBucket | 'all' = rawShow === 'mares' || rawShow === 'stallions' || rawShow === 'foals' || rawShow === 'geldings' ? rawShow : 'all';
   const horses = activeTab === 'all' ? allHorses : allHorses.filter((h) => bucketFor(h, ctx.world.game_day, cfg.foal_max_age_game_days) === activeTab);
 
+  // Amendment 0017a §4.3: one query for the whole barn's cream knowledge, not one per row - the
+  // same discipline getKnownGenotypeSubjectsForHorses was already built for (slice 0014 §5.2).
+  const creamKnownRows = await getKnownGenotypeSubjectsForHorses(ctx.env, horses.map((h) => h.id));
+  const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
+
   const rows = await Promise.all(
     horses.map(async (horse) => ({
       horse,
-      description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear),
+      description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear, creamTestedHorseIds.has(horse.id)),
       // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
       // rather than a query per horse - it's already loaded on the row. Guarded to living horses
       // only (slice 0010) - a dead mare's stored cycle slot means nothing.
@@ -334,9 +405,12 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const isAdmin = ctx.account!.is_admin === 1;
   const actionsLeft = actionsLeftFor(ctx);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
-  const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear);
 
   const allHorses = await listStableHorses(ctx.env, stableId);
+  const creamKnownRows = await getKnownGenotypeSubjectsForHorses(ctx.env, allHorses.map((h) => h.id));
+  const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
+  const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear, creamTestedHorseIds.has(h.id));
+
   const mares = allHorses.filter((h) => h.sex === 'mare');
   const stallions = allHorses.filter((h) => h.sex === 'stallion');
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
@@ -378,6 +452,15 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     // from either horse's genotype (both already loaded above for the COI calculation, which is
     // exactly why this is delegated to a function that never has them in scope - see its comment).
     const healthWarnings = await breedingHealthWarningsFor(ctx.env, stableId, mare.id, stallion.id);
+    // Amendment 0017a §4.4/§4.5 point 1: computed only from this booking stable's own knowledge of
+    // each parent (narrowedColourInference), never from either horse's genotype directly.
+    const [stallionColour, mareColour] = await Promise.all([
+      narrowedColourInference(ctx, stableId, stallion),
+      narrowedColourInference(ctx, stableId, mare),
+    ]);
+    const colourNotes = foalColourSentences(
+      foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear })
+    );
     const preview: BreedPreview = {
       mareId: mare.id,
       stallionId: stallion.id,
@@ -390,6 +473,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       conceptionPercent: `${String(Math.round(breakdown.p * 100))}%`,
       conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
       healthWarnings,
+      colourNotes,
     };
     return htmlResponse(
       renderBreedPage({
@@ -535,7 +619,29 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const ageYears = ageDays / gameDaysPerYear;
   const genotype = parseGenotype(horse.genotype);
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
-  const description = describeHorse(phenotype, horse.sex, ageYears);
+  // Amendment 0017a §4.3: only this stable's own cream test unmasks smoky black - a non-owner (or
+  // an owner who has not tested) reads the same "black" a spectator at the rail would see.
+  const ownKnowledge = owner ? await getKnowledgeForHorse(ctx.env, ownerStable.id, horse.id) : [];
+  const creamTested = ownKnowledge.some((r) => r.kind === 'genotype' && r.subject_code === 'locus:CR');
+  const displayPhenotype = { ...phenotype, visibleColour: displayColourName(phenotype.visibleColour, creamTested), bornColour: displayColourName(phenotype.bornColour, creamTested) };
+  const description = describeHorse(displayPhenotype, horse.sex, ageYears);
+
+  // Amendment 0017a §4.5 point 2: what this horse can pass on, per locus - owner (or admin) only.
+  const colour: ColourInferenceRow[] = [];
+  if (owner || isAdmin) {
+    const inferred = await narrowedColourInference(ctx, ownerStable.id, horse);
+    const colourLoci = (await getLoci(ctx.env)).filter((l) => l.category !== 'disease');
+    for (const l of colourLoci) {
+      const known = ownKnowledge.find((k) => k.kind === 'genotype' && k.subject_code === `locus:${l.code}`);
+      const possible = inferred[l.code] ?? [];
+      const summary = known
+        ? `${known.result} (tested)`
+        : possible.length === 1
+          ? `${possible[0].join('/')} (certain from looks)`
+          : `untested - ${String(possible.length)} possibilities`;
+      colour.push({ code: l.code, name: l.name, summary });
+    }
+  }
 
   const breed = horse.breed_id ? await getBreedById(ctx.env, horse.breed_id) : undefined;
   const breederStable = horse.breeder_stable_id ? await getStableById(ctx.env, horse.breeder_stable_id) : null;
@@ -617,7 +723,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       hasFoundingOffer,
       horse,
       description,
-      visibleColour: phenotype.visibleColour,
+      visibleColour: displayPhenotype.visibleColour,
       ageYears,
       ageModifier,
       breed,
@@ -647,6 +753,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       locationBlockedReason,
       locationError: params.get('location_error') ?? undefined,
       health,
+      colour,
       care,
       managementPlans,
       careError,
@@ -866,6 +973,8 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
   const isAdmin = ctx.account!.is_admin === 1;
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
+  const ownCreamKnowledge = await getKnownGenotypeSubjectsForHorses(ctx.env, [horse.id]);
+  const creamTested = ownCreamKnowledge.some((r) => r.subject_code === 'locus:CR');
 
   const render = (error?: string) =>
     renderImagePickerPage({
@@ -876,7 +985,7 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
       ownerStable,
       hasFoundingOffer,
       horse,
-      visibleColour: phenotype.visibleColour,
+      visibleColour: displayColourName(phenotype.visibleColour, creamTested),
       groups,
       usedBy,
       error,
@@ -930,10 +1039,40 @@ async function buildTestPageRows(
   return { rows, untested };
 }
 
+/** Amendment 0017a §4.5 point 4/§4.6: the colour panel, alongside the disease one above - same
+ * page, same mechanism, priced from the same genotype_test_cost/genotype_panel_cost keys (§4.6: add
+ * no new config). */
+async function buildColourTestPageRows(
+  ctx: RequestContext,
+  ownerStableId: number,
+  horseId: number
+): Promise<{ rows: ColourLocusOption[]; untestedCodes: string[] }> {
+  const [loci, knowledge] = await Promise.all([getLoci(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  const colourLoci = loci.filter((l) => l.category !== 'disease');
+  const tested = testedColourLoci(knowledge);
+
+  const rows: ColourLocusOption[] = colourLoci.map((l) => {
+    const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === `${LOCUS_KNOWLEDGE_PREFIX}${l.code}`);
+    return {
+      code: l.code,
+      name: l.name,
+      teachingText: l.teaching_text,
+      known: known ? known.result : null,
+      testedGameDay: known ? known.tested_game_day : null,
+      price: tested.has(l.code) ? null : ctx.config.values.genotype_test_cost,
+    };
+  });
+  const untestedCodes = colourLoci.filter((l) => !tested.has(l.code)).map((l) => l.code);
+
+  return { rows, untestedCodes };
+}
+
 /**
- * /horses/:id/test - slice 0010 §7.1/§7.2. Owner-only on both GET and POST, the same
- * notFound()-for-a-non-owner shape every stable-scoped route already uses. GET lists every enabled
- * condition; POST buys either one (`condition_code`) or the whole remaining panel (`action=panel`).
+ * /horses/:id/test - slice 0010 §7.1/§7.2, extended by amendment 0017a §4 for colour loci. Owner-only
+ * on both GET and POST, the same notFound()-for-a-non-owner shape every stable-scoped route already
+ * uses. GET lists every enabled condition plus every colour/gait locus; POST buys either one disease
+ * condition (`condition_code`), the disease panel (`action=panel`), one locus (`locus_code`), or the
+ * colour panel (`action=colour_panel`) - two panels, priced separately (§4.6).
  */
 export async function horseTestRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
   const horse = await getHorse(ctx.env, horseId);
@@ -945,7 +1084,10 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
 
   const render = async (error?: string) => {
-    const { rows, untested } = await buildTestPageRows(ctx, ownerStable.id, horseId, genotype);
+    const [{ rows, untested }, colour] = await Promise.all([
+      buildTestPageRows(ctx, ownerStable.id, horseId, genotype),
+      buildColourTestPageRows(ctx, ownerStable.id, horseId),
+    ]);
     return htmlResponse(
       renderTestPage({
         world: ctx.world,
@@ -958,6 +1100,9 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
         rows,
         untestedCount: untested.length,
         panelPrice: ctx.config.values.genotype_panel_cost,
+        colourRows: colour.rows,
+        untestedColourCount: colour.untestedCodes.length,
+        colourPanelPrice: ctx.config.values.genotype_panel_cost,
         error,
       })
     );
@@ -967,6 +1112,77 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
+
+  // Amendment 0017a §4.6: the colour panel and single-locus purchases, handled entirely separately
+  // from the disease path below - same table, same mechanism, but a different builder
+  // (buildLocusKnowledgePurchaseStatements) since a colour result has no trigger to evaluate.
+  if (form.action === 'colour_panel' || typeof form.locus_code === 'string') {
+    const { untestedCodes } = await buildColourTestPageRows(ctx, ownerStable.id, horseId);
+    let codesToBuy: string[];
+    let colourTotalCost: number;
+    let colourDescription: string;
+
+    if (form.action === 'colour_panel') {
+      if (untestedCodes.length === 0) return render('Nothing is left to test.');
+      codesToBuy = untestedCodes;
+      colourTotalCost = ctx.config.values.genotype_panel_cost;
+      colourDescription = `Colour panel test, ${displayNameFor(horse)}.`;
+    } else {
+      const found = untestedCodes.find((c) => c === form.locus_code);
+      if (!found) return render("That test isn't available for this horse.");
+      codesToBuy = [found];
+      colourTotalCost = ctx.config.values.genotype_test_cost;
+      colourDescription = `Colour test (${found}), ${displayNameFor(horse)}.`;
+    }
+
+    const actionsLeftForColour = actionsLeftFor(ctx);
+    if (actionsLeftForColour !== null && actionsLeftForColour < ACTION_COSTS.genotype_test) {
+      return render(turnsRefusalMessage(ctx));
+    }
+    if (!canTakeOnCost(ownerStable.balance)) {
+      return render(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Win a show, or ask a grown-up to add money, before testing.`);
+    }
+
+    const colourCostByCode: Record<string, number> = {};
+    const colourBase = Math.floor(colourTotalCost / codesToBuy.length);
+    codesToBuy.forEach((code) => {
+      colourCostByCode[code] = colourBase;
+    });
+    colourCostByCode[codesToBuy[codesToBuy.length - 1]] += colourTotalCost - colourBase * codesToBuy.length;
+
+    try {
+      await ctx.env.DB.batch([
+        ...buildLocusKnowledgePurchaseStatements(ctx.env, {
+          stableId: ownerStable.id,
+          horseId,
+          gameDay: ctx.world.game_day,
+          genotype,
+          locusCodes: codesToBuy,
+          costByCode: colourCostByCode,
+        }),
+        ...buildLedgerStatements(ctx.env, [
+          {
+            stableId: ownerStable.id,
+            amount: -colourTotalCost,
+            kind: 'vet',
+            referenceType: 'horse',
+            referenceId: horseId,
+            description: colourDescription,
+            gameDay: ctx.world.game_day,
+          },
+        ]),
+      ]);
+    } catch (err) {
+      if (err instanceof Error && /unique constraint failed/i.test(err.message)) {
+        return render('That result is already known - nothing was charged.');
+      }
+      throw err;
+    }
+
+    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
+    return redirect(`/horses/${String(horseId)}`);
+  }
+
   // Slice 0010 §7.1 step 1: re-derive what is untested from the knowledge rows rather than
   // trusting the form - the same "re-derive and check membership" rule isAllowedImagePath
   // established in slice 0007. A submitted condition code that is already known or not applicable

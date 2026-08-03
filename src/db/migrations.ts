@@ -95,6 +95,10 @@ import m0091 from '../../migrations/0091_ledger_add_market_kinds.sql';
 import m0092 from '../../migrations/0092_config_market.sql';
 import m0093 from '../../migrations/0093_npc_policy_market_columns.sql';
 import m0094 from '../../migrations/0094_config_npc_market.sql';
+import m0095 from '../../migrations/0095_config_market_colour.sql';
+import m0096 from '../../migrations/0096_consignment_injections.sql';
+import m0097 from '../../migrations/0097_consignment_dealer_stable.sql';
+import m0098 from '../../migrations/0098_config_consignment.sql';
 
 export interface MigrationFile {
   name: string;
@@ -206,6 +210,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0092_config_market.sql', sql: m0092 },
   { name: '0093_npc_policy_market_columns.sql', sql: m0093 },
   { name: '0094_config_npc_market.sql', sql: m0094 },
+  { name: '0095_config_market_colour.sql', sql: m0095 },
+  { name: '0096_consignment_injections.sql', sql: m0096 },
+  { name: '0097_consignment_dealer_stable.sql', sql: m0097 },
+  { name: '0098_config_consignment.sql', sql: m0098 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

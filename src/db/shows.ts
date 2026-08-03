@@ -18,7 +18,7 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import { getHorse, horseDisplayName, type HorseRow } from './horses';
-import { getBreeds } from './breeds';
+import { getBreedsInPlay } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
 import { listNpcStableHorses } from './npc';
@@ -517,10 +517,12 @@ export async function createDueShows(env: Env, gameDay: number, config: Config):
 }
 
 async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: number, config: Config): Promise<void> {
-  const breeds = await getBreeds(env);
+  const breeds = await getBreedsInPlay(env);
   // §4.2: a class is only created for a breed whose ideal_vector is non-null. Today that is the
   // Quarter Horse and nothing else - when the other seven breeds get vectors, they get classes with
-  // no code change here.
+  // no code change here. Amendment 0017a §6.2: also gated on `enabled` - a disabled breed's
+  // standing classes run to completion, only the creation of the NEXT one is gated, so this is the
+  // one place in this function that reads getBreedsInPlay rather than getBreeds.
   const eligibleBreeds = breeds.filter((b) => b.ideal_vector !== null);
   // Slice 0012 §8.1: one class per enabled discipline, ordered by sort_order, capped at
   // show_discipline_classes_per_show. Today that's Barrel Racing and nothing else (§5.1/§6.3) -

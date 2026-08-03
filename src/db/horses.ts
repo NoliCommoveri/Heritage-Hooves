@@ -129,6 +129,18 @@ export async function countAliveHorsesByStable(env: Env): Promise<Map<number, nu
   return map;
 }
 
+/** Amendment 0017a §6.3's "Horses alive" column - what turning a breed off would, and would not,
+ * affect, made concrete at the moment the operator is deciding. Excludes cross-bred horses
+ * (breed_id NULL), the same as every other breed-scoped query in this codebase. */
+export async function countAliveHorsesByBreed(env: Env): Promise<Map<number, number>> {
+  const result = await env.DB.prepare(
+    `SELECT breed_id, COUNT(*) AS n FROM horses WHERE status = 'alive' AND breed_id IS NOT NULL GROUP BY breed_id`
+  ).all<{ breed_id: number; n: number }>();
+  const map = new Map<number, number>();
+  for (const row of result.results ?? []) map.set(row.breed_id, row.n);
+  return map;
+}
+
 export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }

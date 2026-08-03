@@ -54,6 +54,7 @@ import {
   adminAgeingRoute,
   adminCareRoute,
   adminNpcRoute,
+  adminConsignmentRoute,
   adminSecurityRoute,
   adminUnlockRoute,
   adminHorseSearchRoute,
@@ -246,6 +247,7 @@ async function dispatchAdminRoute(ctx: RequestContext, path: string, method: str
   if (path === '/admin/ageing') return adminAgeingRoute(ctx, method);
   if (path === '/admin/care') return adminCareRoute(ctx, method);
   if (path === '/admin/npc') return adminNpcRoute(ctx, method);
+  if (path === '/admin/consignment') return adminConsignmentRoute(ctx, method);
   return null;
 }
 

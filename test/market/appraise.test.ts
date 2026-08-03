@@ -24,6 +24,10 @@ const CONFIG: AppraiseConfig = {
   market_place_bonus: 0.05,
   market_record_cap: 2.5,
   market_min_value: 50,
+  // Amendment 0017a §4.7.
+  market_visible_colour_factors: { palomino: 1.2, cremello: 1.4, buckskin: 1.15 },
+  market_carried_allele_premium: 0.1,
+  market_carried_allele_cap: 1.5,
 };
 
 const IDEAL: IdealVector = {
@@ -44,6 +48,8 @@ function baseline(overrides: Partial<AppraiseParams> = {}): AppraiseParams {
     knownResults: [],
     wins: 0,
     topThree: 0,
+    visibleColour: 'bay',
+    knownHiddenColourAlleleCount: 0,
     params: CONFIG,
     ...overrides,
   };
@@ -109,7 +115,19 @@ describe('appraise: never reads the lifespan (§4.2, §14.2)', () => {
     // session adds a natural_death_game_day (or an "expected remaining life") field to this
     // interface, this test's own type annotation stops compiling - which is the point.
     const keys = Object.keys(baseline()).sort();
-    expect(keys).toEqual(['ageGameDays', 'expressed', 'falloff', 'ideal', 'isFailing', 'knownResults', 'params', 'topThree', 'wins']);
+    expect(keys).toEqual([
+      'ageGameDays',
+      'expressed',
+      'falloff',
+      'ideal',
+      'isFailing',
+      'knownHiddenColourAlleleCount',
+      'knownResults',
+      'params',
+      'topThree',
+      'visibleColour',
+      'wins',
+    ]);
 
     // And behaviourally: a horse two years from its rolled death and one twenty years from it
     // appraise identically as long as neither has had the notice, because nothing here can tell
@@ -168,5 +186,32 @@ describe('appraise: the value itself', () => {
     expect(factors).toContain('Age');
     expect(factors).toContain('Health tests');
     expect(factors).toContain('Show record');
+    expect(factors).toContain('Colour');
+  });
+});
+
+describe('appraise: colour (amendment 0017a §4.7)', () => {
+  it('a rare visible colour appraises higher than a bay of otherwise identical quality', () => {
+    const bay = appraise(baseline({ visibleColour: 'bay' })).value;
+    const cremello = appraise(baseline({ visibleColour: 'cremello' })).value;
+    expect(cremello).toBeGreaterThan(bay);
+  });
+
+  it('an untested allele never prices in: two identical horses differ only if one is tested', () => {
+    const untested = appraise(baseline({ visibleColour: 'bay', knownHiddenColourAlleleCount: 0 })).value;
+    const tested = appraise(baseline({ visibleColour: 'bay', knownHiddenColourAlleleCount: 1 })).value;
+    expect(tested).toBeGreaterThan(untested);
+  });
+
+  it('the carried-allele premium is capped', () => {
+    const cappedAt = appraise(baseline({ knownHiddenColourAlleleCount: 5 })).value;
+    const evenMore = appraise(baseline({ knownHiddenColourAlleleCount: 50 })).value;
+    expect(evenMore).toBe(cappedAt);
+  });
+
+  it('an unpriced colour (no entry in market_visible_colour_factors) is neutral, not worthless', () => {
+    const known = appraise(baseline({ visibleColour: 'bay' })).value; // no entry for bay either
+    const alsoUnknown = appraise(baseline({ visibleColour: 'some future colour name' })).value;
+    expect(alsoUnknown).toBe(known);
   });
 });

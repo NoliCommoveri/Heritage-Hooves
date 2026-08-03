@@ -86,9 +86,10 @@ function freshDb(): DatabaseSync {
   return db;
 }
 
-// The migrations seed three NPC stables (ids 1-3), so the two player stables below are 4 and 5.
-const SELLER = 4;
-const BUYER = 5;
+// The migrations seed four NPC stables (ids 1-3, plus the amendment 0017a consignment dealer at 4),
+// so the two player stables below are 5 and 6.
+const SELLER = 5;
+const BUYER = 6;
 
 function seed(db: DatabaseSync, opts: { sameAccount?: boolean } = {}) {
   db.exec(`INSERT INTO accounts (username, display_name, password_hash, is_admin, active, must_change_password, created_real_ts) VALUES ('a','A','x',0,1,0,0), ('b','B','x',0,1,0,0)`);

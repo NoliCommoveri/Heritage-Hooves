@@ -211,6 +211,27 @@ export interface ConfigValues {
   /** Live. Caps how many horses one NPC stable lists in a single tick, so a sudden overflow (a
    * batch of foals all reaching capacity at once) doesn't dump the whole barn on the market. */
   npc_market_max_listings_per_tick: number;
+  /** Amendment 0017a §4.7. Expressed colour name -> multiplier, live, read fresh every appraisal.
+   * §8's risk: keep the whole range modest next to market_quality_weight (4.0), or breeding for
+   * colour starts to out-compete breeding for conformation. */
+  market_visible_colour_factors: Record<string, number>;
+  market_carried_allele_premium: number;
+  market_carried_allele_cap: number;
+  /** Amendment 0017a §5.8. The consignment dealer's own tunables - all live, all guesses. No
+   * consignment_age_min/max_game_days key: runConsignments reuses founding_age_min/max_game_days
+   * directly rather than a second, easy-to-drift copy of the same two numbers (§5.3). */
+  consignment_cadence_game_days: number;
+  /** Snapshotted onto listings.expires_game_day at listing time (CLAUDE.md §5.5) - retuning this
+   * must never move a standing consignment listing's expiry. */
+  consignment_listing_game_days: number;
+  consignment_batch_min: number;
+  consignment_batch_max: number;
+  /** disease-test count per consigned horse -> weight, e.g. {"0":55,"2":25,...}. */
+  consignment_test_count_weights: Record<string, number>;
+  consignment_price_multiplier: number;
+  /** Intersected with the breeds in play (§6) - a breed must be both listed here and enabled for
+   * the dealer to stock it. */
+  consignment_breed_codes: string[];
 }
 
 export type ConfigFlags = Record<string, boolean>;

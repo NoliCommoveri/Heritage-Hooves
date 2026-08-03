@@ -4,6 +4,8 @@
 // after the seed migrations).
 
 import type { Env } from '../types';
+import { nowUtcSeconds } from '../lib/time';
+import { parseAllelePool } from '../engines/founding/pool';
 
 export interface BreedRow {
   id: number;
@@ -51,6 +53,55 @@ export async function getBreeds(env: Env): Promise<BreedRow[]> {
 
 export async function getBreedById(env: Env, id: number): Promise<BreedRow | undefined> {
   return (await getBreeds(env)).find((b) => b.id === id);
+}
+
+/**
+ * Amendment 0017a §6.1/§6.2: `enabled` gates admission of NEW horses of a breed - founding offers,
+ * the consignment dealer, admin creation, new npc_policy targets, new show classes - and nothing
+ * else. Every one of those five call sites reads this instead of getBreeds directly (§8's own
+ * warning: prefer one helper every creation path calls over five scattered `WHERE enabled = 1`
+ * clauses). Never used to filter what an EXISTING horse, class or listing can do.
+ */
+export async function getBreedsInPlay(env: Env): Promise<BreedRow[]> {
+  return (await getBreeds(env)).filter((b) => b.enabled === 1);
+}
+
+export type SetBreedEnabledResult = { ok: true } | { ok: false; error: 'last_enabled' } | { ok: false; error: 'missing_locus'; locusCode: string };
+
+/**
+ * §6.3's two guards, enforced here (not only in the route) so nothing that calls this later skips
+ * them: refuse disabling the last breed in play, and refuse enabling one whose pool is missing a
+ * locus (0005 §3.2 - pool.ts throws with the locus named; this catches that throw and turns it into
+ * a refusal rather than a broken founding offer down the line). Writes a config_audit row under
+ * `breed:<code>:enabled`, reusing that table's generic key/old/new shape (§6.4) rather than a
+ * second history table.
+ */
+export async function setBreedEnabled(env: Env, breedId: number, enabled: boolean, accountId: number | null, gameDay: number): Promise<SetBreedEnabledResult> {
+  const breeds = await getBreeds(env);
+  const breed = breeds.find((b) => b.id === breedId);
+  if (!breed) throw new Error(`setBreedEnabled: breed ${String(breedId)} not found`);
+  if (breed.enabled === (enabled ? 1 : 0)) return { ok: true };
+
+  if (!enabled) {
+    const anotherStaysEnabled = breeds.some((b) => b.id !== breedId && b.enabled === 1);
+    if (!anotherStaysEnabled) return { ok: false, error: 'last_enabled' };
+  } else {
+    try {
+      parseAllelePool(breed.founding_allele_pool);
+    } catch (err) {
+      const match = err instanceof Error ? /locus (\S+)/.exec(err.message) : null;
+      return { ok: false, error: 'missing_locus', locusCode: match?.[1] ?? breed.code };
+    }
+  }
+
+  await env.DB.batch([
+    env.DB.prepare('UPDATE breeds SET enabled = ? WHERE id = ?').bind(enabled ? 1 : 0, breedId),
+    env.DB
+      .prepare('INSERT INTO config_audit (changed_by_account_id, real_ts, game_day, path, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(accountId, nowUtcSeconds(), gameDay, `breed:${breed.code}:enabled`, JSON.stringify(breed.enabled === 1), JSON.stringify(enabled)),
+  ]);
+  breedsCache = null;
+  return { ok: true };
 }
 
 export async function getLoci(env: Env): Promise<LocusRow[]> {
