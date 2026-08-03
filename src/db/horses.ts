@@ -117,6 +117,18 @@ export async function countAliveHorses(env: Env, stableId: number): Promise<numb
   return row?.n ?? 0;
 }
 
+/** /world (slice 0016 §6.2): living horse counts for every stable, one grouped query rather than
+ * one per stable - the same discipline listStablesForWorld's own join follows. */
+export async function countAliveHorsesByStable(env: Env): Promise<Map<number, number>> {
+  const result = await env.DB.prepare(`SELECT owner_stable_id, COUNT(*) AS n FROM horses WHERE status = 'alive' GROUP BY owner_stable_id`).all<{
+    owner_stable_id: number;
+    n: number;
+  }>();
+  const map = new Map<number, number>();
+  for (const row of result.results ?? []) map.set(row.owner_stable_id, row.n);
+  return map;
+}
+
 export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }

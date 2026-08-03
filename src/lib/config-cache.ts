@@ -163,6 +163,17 @@ export interface ConfigValues {
   /** Slice 0014 §2.8: the fixed draw chance for ROBUSTNESS_TRAITS in founding generation,
    * regardless of quality band - see src/engines/founding/generate.ts. */
   robustness_one_chance: number;
+  /** Slice 0016 §4.2. Display only - the barn list's Foals tab. Nothing in breeding, showing, care
+   * or ageing may read this; each of those already has its own age threshold. */
+  foal_max_age_game_days: number;
+  /** Slice 0016 §5.1/§10.2. How many judged shows /shows lists after the class-type/breed filter. */
+  shows_recent_count: number;
+  /** Slice 0016 §9.3/§9.4. Real seconds, not game days - a deliberate, named exception to CLAUDE.md
+   * §5.3 (see the comparison site in src/lib/pin.ts's caller). */
+  pin_max_attempts: number;
+  pin_lockout_window_seconds: number;
+  /** Slice 0016 §9.5. How long one admin-door unlock lasts, in real seconds. */
+  admin_pin_grace_seconds: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

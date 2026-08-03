@@ -9,7 +9,7 @@ import type { Env } from '../types';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderMigrationsPage } from '../render/migrations';
 import { listMigrationStatus, applyPendingMigrations } from '../db/migrations';
-import { readSession } from '../lib/session';
+import { readSession, readAdminUnlockPayload } from '../lib/session';
 import { getAccountById, countAccounts } from '../db/accounts';
 
 async function isPreSetup(env: Env): Promise<boolean> {
@@ -21,25 +21,38 @@ async function isPreSetup(env: Env): Promise<boolean> {
   }
 }
 
-type AdminCheck = 'admin' | 'logged_out' | 'not_admin';
-
-async function checkAdmin(request: Request, env: Env): Promise<AdminCheck> {
-  const session = await readSession(request, env.SESSION_SECRET);
-  if (!session) return 'logged_out';
-  const account = await getAccountById(env, session.accountId);
-  if (account && account.active === 1 && account.is_admin === 1) return 'admin';
-  return 'not_admin';
-}
+// Slice 0016 §9.6: this page fixes everything, including a botched deploy, so it must never be the
+// thing a locked-out operator can't reach. It can't read config.values.admin_pin_grace_seconds
+// (config may not exist yet), so this is a hard ceiling rather than the tunable - deliberately
+// generous, since there is nothing tuning it down accidentally.
+const MIGRATIONS_PIN_GRACE_SECONDS = 1800;
 
 export async function migrationsRoute(request: Request, env: Env, method: string): Promise<Response> {
   const preSetup = await isPreSetup(env);
   if (!preSetup) {
-    const check = await checkAdmin(request, env);
+    const session = await readSession(request, env.SESSION_SECRET);
     // No session at all reads as "not logged in yet", same as every normal page - send them to
     // log in instead of a bare Forbidden. A session that resolves to a real, non-admin account is
     // still a flat 403, matching every other /admin route.
-    if (check === 'logged_out') return redirect('/login');
-    if (check === 'not_admin') return new Response('Forbidden', { status: 403 });
+    if (!session) return redirect('/login');
+    const account = await getAccountById(env, session.accountId);
+    if (!account || account.active !== 1 || account.is_admin !== 1) return new Response('Forbidden', { status: 403 });
+
+    // The PIN gate, gated defensively (§9.6): if reading pin_hash fails for any reason - a missing
+    // column on a database this migration hasn't landed on yet, a missing table - the request is
+    // let through exactly as it was before this slice. A locked-out operator with no working
+    // migrations page has no recovery route at all, and that failure mode is worse than a missed
+    // PIN check on this one page.
+    try {
+      if (account.pin_hash) {
+        const payload = await readAdminUnlockPayload(request, env.SESSION_SECRET);
+        const valid =
+          payload !== null && payload.accountId === account.id && Math.floor(Date.now() / 1000) - payload.issuedAt <= MIGRATIONS_PIN_GRACE_SECONDS;
+        if (!valid) return redirect(`/admin/unlock?redirect=${encodeURIComponent('/admin/migrations')}`);
+      }
+    } catch {
+      // Deliberate hole - see the comment above.
+    }
   }
 
   if (method === 'GET') {

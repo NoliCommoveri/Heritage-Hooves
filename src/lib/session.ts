@@ -7,6 +7,7 @@ import { parseCookies, serializeCookie } from './cookies';
 
 const SESSION_COOKIE = 'hh_session';
 const STABLE_COOKIE = 'hh_stable';
+const ADMIN_UNLOCK_COOKIE = 'hh_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const REISSUE_AFTER_SECONDS = 60 * 60 * 24; // re-issue once a day old
 
@@ -89,4 +90,46 @@ export async function readStableCookie(request: Request, secret: string): Promis
   if (!constantTimeEqual(hmac, expected)) return null;
   const stableId = Number(stableIdStr);
   return Number.isInteger(stableId) ? stableId : null;
+}
+
+// Slice 0016 §9.5: the admin-door PIN gate's own cookie, same signed shape as hh_session.
+//
+// The boundary this cookie must never cross (§2.1): unlocking it proves *this admin is present* on
+// *this device, right now* - nothing more. It must never become a way for a non-admin session to
+// become an admin one. The is_admin check in router.ts always runs first, and this cookie is a
+// second gate behind it, never a replacement. A future session reusing "hh_admin present" as a
+// general escalation (the mirror image of slice 0005 §7.2's own warning) would be building the
+// wrong thing on top of this.
+export interface AdminUnlockPayload {
+  accountId: number;
+  issuedAt: number;
+}
+
+export async function buildAdminUnlockCookie(accountId: number, secret: string, issuedAt: number = Math.floor(Date.now() / 1000)): Promise<string> {
+  const payload = `${accountId}.${issuedAt}`;
+  const hmac = await hmacHex(payload, secret);
+  // The cookie's own maxAge is generous cleanup only - the real validity window is
+  // admin_pin_grace_seconds, re-checked server-side on every admin request (§9.5), never trusted to
+  // expire in the browser.
+  return serializeCookie(ADMIN_UNLOCK_COOKIE, `${payload}.${hmac}`, { maxAgeSeconds: SESSION_MAX_AGE_SECONDS });
+}
+
+export function expireAdminUnlockCookie(): string {
+  return serializeCookie(ADMIN_UNLOCK_COOKIE, '', { expireNow: true });
+}
+
+export async function readAdminUnlockPayload(request: Request, secret: string): Promise<AdminUnlockPayload | null> {
+  const cookies = parseCookies(request.headers.get('Cookie'));
+  const value = cookies[ADMIN_UNLOCK_COOKIE];
+  if (!value) return null;
+  const parts = value.split('.');
+  if (parts.length !== 3) return null;
+  const [accountIdStr, issuedAtStr, hmac] = parts;
+  const payload = `${accountIdStr}.${issuedAtStr}`;
+  const expected = await hmacHex(payload, secret);
+  if (!constantTimeEqual(hmac, expected)) return null;
+  const accountId = Number(accountIdStr);
+  const issuedAt = Number(issuedAtStr);
+  if (!Number.isInteger(accountId) || !Number.isInteger(issuedAt)) return null;
+  return { accountId, issuedAt };
 }

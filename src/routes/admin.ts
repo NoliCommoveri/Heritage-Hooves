@@ -15,11 +15,28 @@ import {
   renderHealthAdminPage,
   renderAgeingAdminPage,
   renderCareAdminPage,
+  renderAdminSecurityPage,
+  renderAdminUnlockPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
-import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
+import {
+  listAccounts,
+  createAccount,
+  updatePassword,
+  setActive,
+  countStablesByAccount,
+  listStableNamesForAccount,
+  hasGrantedFoundingBatch,
+  countAdmins,
+  updateAccountProfile,
+  setAdminFlag,
+  deleteAccountRow,
+} from '../db/accounts';
 import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
-import { expireStableCookie } from '../lib/session';
+import { expireStableCookie, buildAdminUnlockCookie } from '../lib/session';
+import { setPinHash, recordPinAttempt, listRecentPinAttempts, listRecentPinAttemptsForDisplay } from '../db/pin';
+import { decidePinAttempt } from '../lib/pin';
+import { nowUtcSeconds } from '../lib/time';
 import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
 import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName } from '../db/horses';
@@ -28,7 +45,7 @@ import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
 import { buildLedgerStatements, listStableBalancesForAdmin, listRecentAdjustments } from '../db/ledger';
-import { hashPassword } from '../lib/password';
+import { hashPassword, verifyPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
 import { listConfigAudit } from '../db/configAudit';
 import { setPaused } from '../db/world';
@@ -49,10 +66,16 @@ export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
 }
 
 export async function adminAccountsRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [accounts, stableCounts, adminCount] = await Promise.all([listAccounts(ctx.env), countStablesByAccount(ctx.env), countAdmins(ctx.env)]);
+    return htmlResponse(
+      renderAccountsPage({ world: ctx.world, accounts, stableCounts, currentAccountId: ctx.account!.id, adminCount, error, notice })
+    );
+  }
+
   if (method === 'GET') {
-    const accounts = await listAccounts(ctx.env);
     const notice = new URL(ctx.request.url).searchParams.get('saved') ? 'Saved.' : undefined;
-    return htmlResponse(renderAccountsPage({ world: ctx.world, accounts, notice }));
+    return page(undefined, notice);
   }
   if (method !== 'POST') return notFound();
 
@@ -64,21 +87,14 @@ export async function adminAccountsRoute(ctx: RequestContext, method: string): P
     const username = (form.username ?? '').trim();
     const startingPassword = form.starting_password ?? '';
 
-    if (!displayName || !username) {
-      const accounts = await listAccounts(ctx.env);
-      return htmlResponse(renderAccountsPage({ world: ctx.world, accounts, error: 'Name and username are required.' }));
-    }
-    if (startingPassword.length < minLen) {
-      const accounts = await listAccounts(ctx.env);
-      return htmlResponse(renderAccountsPage({ world: ctx.world, accounts, error: `Starting password must be at least ${minLen} characters.` }));
-    }
+    if (!displayName || !username) return page('Name and username are required.');
+    if (startingPassword.length < minLen) return page(`Starting password must be at least ${minLen} characters.`);
 
     const passwordHash = await hashPassword(startingPassword);
     try {
       await createAccount(ctx.env, { username, displayName, passwordHash, isAdmin: false, mustChangePassword: true });
     } catch {
-      const accounts = await listAccounts(ctx.env);
-      return htmlResponse(renderAccountsPage({ world: ctx.world, accounts, error: 'That username is already taken.' }));
+      return page('That username is already taken.');
     }
     return redirect('/admin/accounts?saved=1');
   }
@@ -86,10 +102,7 @@ export async function adminAccountsRoute(ctx: RequestContext, method: string): P
   if (form.action === 'reset_password') {
     const accountId = Number(form.account_id);
     const startingPassword = form.starting_password ?? '';
-    if (startingPassword.length < minLen) {
-      const accounts = await listAccounts(ctx.env);
-      return htmlResponse(renderAccountsPage({ world: ctx.world, accounts, error: `Starting password must be at least ${minLen} characters.` }));
-    }
+    if (startingPassword.length < minLen) return page(`Starting password must be at least ${minLen} characters.`);
     const passwordHash = await hashPassword(startingPassword);
     await updatePassword(ctx.env, accountId, passwordHash, true);
     return redirect('/admin/accounts?saved=1');
@@ -98,6 +111,74 @@ export async function adminAccountsRoute(ctx: RequestContext, method: string): P
   if (form.action === 'deactivate' || form.action === 'reactivate') {
     const accountId = Number(form.account_id);
     await setActive(ctx.env, accountId, form.action === 'reactivate');
+    return redirect('/admin/accounts?saved=1');
+  }
+
+  // §8.2: rename and username change together. Changing a username never logs anyone out - the
+  // session cookie carries the account id, not the name.
+  if (form.action === 'edit') {
+    const accountId = Number(form.account_id);
+    const displayName = (form.display_name ?? '').trim();
+    const username = (form.username ?? '').trim();
+    if (!displayName || !username) return page('Name and username are required.');
+
+    const result = await updateAccountProfile(ctx.env, accountId, displayName, username);
+    if (!result.ok) return page('That username is already taken.');
+    return redirect('/admin/accounts?saved=1');
+  }
+
+  // §8.3: two guards, both re-checked here rather than trusted from the form - the single most
+  // likely way to lock the operator out.
+  if (form.action === 'set_admin') {
+    const accountId = Number(form.account_id);
+    const makeAdmin = form.is_admin === '1';
+
+    if (!makeAdmin) {
+      if (accountId === ctx.account!.id) return page("You can't remove your own admin flag.");
+      const adminCount = await countAdmins(ctx.env);
+      const target = (await listAccounts(ctx.env)).find((a) => a.id === accountId);
+      if (target?.is_admin === 1 && adminCount <= 1) return page("You can't remove the last admin.");
+    }
+
+    await setAdminFlag(ctx.env, accountId, makeAdmin);
+    return redirect('/admin/accounts?saved=1');
+  }
+
+  // §8.4: refuse, never cascade - an account that owns anything keeps it, always. Guarded by the
+  // same tick-box-plus-typed-word pattern /admin/reset uses, the typed word being the account's own
+  // username here rather than a fixed word.
+  if (form.action === 'delete') {
+    const accountId = Number(form.account_id);
+    const target = (await listAccounts(ctx.env)).find((a) => a.id === accountId);
+    if (!target) return notFound();
+
+    if (form.confirm !== 'yes') return page('Tick the box to confirm before deleting an account.');
+    if ((form.confirm_word ?? '').trim() !== target.username) return page(`Type ${target.username} to confirm.`);
+
+    if (accountId === ctx.account!.id) return page("You can't delete your own account.");
+
+    const adminCount = await countAdmins(ctx.env);
+    if (target.is_admin === 1 && adminCount <= 1) return page("You can't delete the last admin.");
+
+    const stableNames = await listStableNamesForAccount(ctx.env, accountId);
+    if (stableNames.length > 0) {
+      return page(`${stableNames.join(' and ')} still belong to this account. Deactivate the account instead, or move the stables first.`);
+    }
+    if (await hasGrantedFoundingBatch(ctx.env, accountId)) {
+      return page(`${target.display_name} has granted a founding-stock batch on record. Deactivate the account instead.`);
+    }
+
+    try {
+      await deleteAccountRow(ctx.env, accountId);
+    } catch (err) {
+      // A foreign key elsewhere (pin_attempts, config_audit) that the checks above don't name -
+      // only possible for an account that has actually used an admin page, which the "created with
+      // a typo and never used" case this button is for never will. Refuse rather than crash.
+      if (err instanceof Error && /foreign key/i.test(err.message)) {
+        return page(`${target.display_name} has other records attached and can't be deleted - deactivate the account instead.`);
+      }
+      throw err;
+    }
     return redirect('/admin/accounts?saved=1');
   }
 
@@ -139,6 +220,11 @@ const NUMERIC_CONFIG_KEYS = [
   'vet_wellness_interval_game_days',
   'vet_wellness_overdue_game_days',
   'vet_wellness_cost',
+  'foal_max_age_game_days',
+  'shows_recent_count',
+  'pin_max_attempts',
+  'pin_lockout_window_seconds',
+  'admin_pin_grace_seconds',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -657,4 +743,109 @@ export async function adminCareRoute(ctx: RequestContext, method: string): Promi
 
   await makeAllHorsesOverdue(ctx.env, ctx.world.game_day, ctx.config.values);
   return redirect('/admin/care?forced=1');
+}
+
+/**
+ * /admin/security (slice 0016 §9.2). Sets or changes the admin PIN for the logged-in admin's own
+ * account only - an admin can't set another admin's PIN, so there is no account picker here.
+ * Changing it requires the account's own login password, verified server-side.
+ */
+export async function adminSecurityRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string): Promise<Response> {
+    const attempts = await listRecentPinAttemptsForDisplay(ctx.env, 20);
+    const notice = new URL(ctx.request.url).searchParams.get('saved') ? 'PIN saved.' : undefined;
+    return htmlResponse(renderAdminSecurityPage({ world: ctx.world, hasPinSet: ctx.account!.pin_hash !== null, attempts, error, notice }));
+  }
+
+  if (method === 'GET') return page();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const pin = form.pin ?? '';
+  const password = form.password ?? '';
+
+  if (!/^\d{4}$/.test(pin)) return page('The PIN must be exactly 4 digits.');
+
+  const passwordOk = await verifyPassword(password, ctx.account!.password_hash);
+  if (!passwordOk) return page('That password is incorrect.');
+
+  const pinHash = await hashPassword(pin);
+  await setPinHash(ctx.env, ctx.account!.id, pinHash);
+
+  // Setting a PIN unlocks immediately - the admin who just set it should not be locked out on
+  // their very next click.
+  const response = redirect('/admin/security?saved=1');
+  response.headers.append('Set-Cookie', await buildAdminUnlockCookie(ctx.account!.id, ctx.env.SESSION_SECRET));
+  return response;
+}
+
+/** Never redirects anywhere but back into /admin - guards against an open-redirect via the
+ * `redirect` query/form field, and against looping back into the unlock page itself. */
+function safeAdminRedirectTarget(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/admin') || raw.startsWith('/admin/unlock')) return '/admin';
+  return raw;
+}
+
+/**
+ * /admin/unlock (slice 0016 §9.5/§9.7): the gate itself, and the sole exemption from it (checked in
+ * router.ts before this route is ever reached in blocked form). The lockout (src/lib/pin.ts) is
+ * checked before either the PIN or the forgotten-PIN password is even looked at, and applies to
+ * both paths alike - one door, one attempt log, one lockout, per §9.3/§9.7.
+ */
+export async function adminUnlockRoute(ctx: RequestContext, method: string): Promise<Response> {
+  const params = new URL(ctx.request.url).searchParams;
+  const redirectTo = safeAdminRedirectTarget(params.get('redirect'));
+  const forgot = params.get('forgot') === '1';
+
+  if (method === 'GET') return htmlResponse(renderAdminUnlockPage({ world: ctx.world, redirectTo, forgot }));
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const target = safeAdminRedirectTarget(form.redirect ?? redirectTo);
+  const isForgotSubmit = form.action === 'forgot';
+  const nowSeconds = nowUtcSeconds();
+
+  const recentAttempts = await listRecentPinAttempts(ctx.env, 50);
+  const decision = decidePinAttempt(recentAttempts, nowSeconds, {
+    maxAttempts: ctx.config.values.pin_max_attempts,
+    windowSeconds: ctx.config.values.pin_lockout_window_seconds,
+  });
+  if (!decision.allowed) {
+    const minutes = Math.max(1, Math.ceil(decision.retryAfterSeconds / 60));
+    return htmlResponse(
+      renderAdminUnlockPage({
+        world: ctx.world,
+        redirectTo: target,
+        forgot: isForgotSubmit,
+        error: `Too many wrong attempts. Try again in about ${String(minutes)} minute${minutes === 1 ? '' : 's'}.`,
+      })
+    );
+  }
+
+  if (isForgotSubmit) {
+    const password = form.password ?? '';
+    const ok = await verifyPassword(password, ctx.account!.password_hash);
+    await recordPinAttempt(ctx.env, { accountId: ctx.account!.id, attemptedByAccountId: ctx.account!.id, success: ok, nowSeconds });
+    if (!ok) {
+      return htmlResponse(renderAdminUnlockPage({ world: ctx.world, redirectTo: target, forgot: true, error: 'That password is incorrect.' }));
+    }
+    // §9.7: grants nothing new - knowing the password already means being this admin. Clears the
+    // PIN so a forgotten four-digit number can't permanently lock a game the operator has no
+    // terminal to fix from any other way.
+    await setPinHash(ctx.env, ctx.account!.id, null);
+    return redirect('/admin/security');
+  }
+
+  const pin = form.pin ?? '';
+  const pinHash = ctx.account!.pin_hash;
+  const ok = pinHash !== null && (await verifyPassword(pin, pinHash));
+  await recordPinAttempt(ctx.env, { accountId: ctx.account!.id, attemptedByAccountId: ctx.account!.id, success: ok, nowSeconds });
+
+  if (!ok) {
+    return htmlResponse(renderAdminUnlockPage({ world: ctx.world, redirectTo: target, forgot: false, error: 'Wrong PIN.' }));
+  }
+
+  const response = redirect(target);
+  response.headers.append('Set-Cookie', await buildAdminUnlockCookie(ctx.account!.id, ctx.env.SESSION_SECRET));
+  return response;
 }

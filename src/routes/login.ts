@@ -3,7 +3,7 @@ import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { renderLoginPage } from '../render/auth';
 import { getAccountByUsername, recordLogin } from '../db/accounts';
 import { verifyPassword } from '../lib/password';
-import { buildSessionCookie, expireSessionCookie, expireStableCookie } from '../lib/session';
+import { buildSessionCookie, expireSessionCookie, expireStableCookie, expireAdminUnlockCookie } from '../lib/session';
 
 export async function loginRoute(ctx: RequestContext, method: string): Promise<Response> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
@@ -31,5 +31,6 @@ export async function logoutRoute(): Promise<Response> {
   const response = redirect('/login');
   response.headers.append('Set-Cookie', expireSessionCookie());
   response.headers.append('Set-Cookie', expireStableCookie());
+  response.headers.append('Set-Cookie', expireAdminUnlockCookie());
   return response;
 }
