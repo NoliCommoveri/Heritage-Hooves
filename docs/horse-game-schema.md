@@ -632,7 +632,7 @@ Equipping is a nullable pointer rather than a join table, since a horse wears at
 
 ## 9. NPC stables
 
-Per §10b, NPC stables are rows in `stables` with `is_npc = 1`, and their horses are rows in `horses`. There is no parallel structure and no second scoring path. **Both tables below are built** (`docs/slices/0015-npc-stables.md`, Part A only as of 2026-08-03 — see `CLAUDE.md` §10's NPC stables row; the tick stage that actually makes them breed is still to come). Built shape departs from this section's sketch in three ways, all decided in the slice document rather than here:
+Per §10b, NPC stables are rows in `stables` with `is_npc = 1`, and their horses are rows in `horses`. There is no parallel structure and no second scoring path. **Both tables below are built, and both halves of the slice have landed** (`docs/slices/0015-npc-stables.md`, Part A and Part B both as of 2026-08-03 — see `CLAUDE.md` §10's NPC stables row). Built shape departs from this section's sketch in three ways, all decided in the slice document rather than here:
 
 ### 9.1 `npc_policy`
 
@@ -746,7 +746,7 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Care | `horses.last_farrier_game_day`, `horses.last_vet_game_day`, `horses.care_notice_game_day`, `stables.feed_level`; Part B (built slice 0014) adds `horse_conditions.management_state`/`management_until_game_day` and `conditions.management_text` (plain text, not the `management_options` JSON originally sketched — nothing reads a structure). **Not `horses.care` and not `horses.care_modifier`** — `docs/slices/0013-care-and-condition.md` §2.1 replaces the JSON blob with plain columns and drops the cache, for the reasons §4.1 above already gives about `phenotype_cache`. **Not `service_calls` either** — §5.6 of that slice defers it to the professions stage, where there is a provider to be null instead of |
 | Tack (now its own stage, after the market) | `tack_types`, `tack_items` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
-| NPC stables | `npc_policy`, `npc_ceiling_schedule` — **built (Part A only, 2026-08-03)**, see §9 above |
+| NPC stables | `npc_policy`, `npc_ceiling_schedule` — **built, in full (2026-08-03)**, see §9 above |
 | Market | `listings`, `buy_offers`, `stud_listings`, `stud_bookings` |
 | Professions | `provider_state`, `provider_inventory` |
 | Registries | `registries`, `registry_inductees` |

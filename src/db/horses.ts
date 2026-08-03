@@ -184,19 +184,23 @@ export async function loadAncestorEdges(env: Env, horseId: number): Promise<Ance
 }
 
 /**
- * The two-query load (slice 0002 §8): every ancestor id either parent has (one query), then those
- * horses' own (id, sire_id, dam_id, coi) rows plus the parents' own rows (a second query). Used
- * identically by the breeding preview and by the tick's conception roll (slice 0003 §4.6), which
- * is what guarantees the number shown before booking is the number the foal actually gets.
+ * The two-query load (slice 0002 §8), generalised from a single pairing to any set of horses
+ * (slice 0015 §4.2 step 7): every ancestor id any of them has (one query), then those horses' own
+ * (id, sire_id, dam_id, coi) rows plus the input horses' own rows (a second query). Calling this
+ * once per pairing an NPC stable is considering would be roughly 2 x mares x stallions round trips
+ * - this is the batched form loadPedigreeContext (below) is now a thin wrapper around.
  */
-export async function loadPedigreeContext(env: Env, sireId: number, damId: number): Promise<Map<number, PedigreeHorse>> {
-  const ancestorIdRows = await env.DB.prepare('SELECT DISTINCT ancestor_id FROM horse_ancestors WHERE descendant_id IN (?, ?)')
-    .bind(sireId, damId)
+export async function loadPedigreeContextForMany(env: Env, horseIds: number[]): Promise<Map<number, PedigreeHorse>> {
+  const map = new Map<number, PedigreeHorse>();
+  if (horseIds.length === 0) return map;
+
+  const idPlaceholders = horseIds.map(() => '?').join(', ');
+  const ancestorIdRows = await env.DB.prepare(`SELECT DISTINCT ancestor_id FROM horse_ancestors WHERE descendant_id IN (${idPlaceholders})`)
+    .bind(...horseIds)
     .all<{ ancestor_id: number }>();
 
-  const ids = new Set<number>([sireId, damId, ...(ancestorIdRows.results ?? []).map((r) => r.ancestor_id)]);
+  const ids = new Set<number>([...horseIds, ...(ancestorIdRows.results ?? []).map((r) => r.ancestor_id)]);
   const idList = Array.from(ids);
-  const map = new Map<number, PedigreeHorse>();
   if (idList.length === 0) return map;
 
   const placeholders = idList.map(() => '?').join(', ');
@@ -208,6 +212,14 @@ export async function loadPedigreeContext(env: Env, sireId: number, damId: numbe
     map.set(row.id, { sireId: row.sire_id, damId: row.dam_id, coi: row.coi });
   }
   return map;
+}
+
+/**
+ * Used identically by the breeding preview and by the tick's conception roll (slice 0003 §4.6),
+ * which is what guarantees the number shown before booking is the number the foal actually gets.
+ */
+export async function loadPedigreeContext(env: Env, sireId: number, damId: number): Promise<Map<number, PedigreeHorse>> {
+  return loadPedigreeContextForMany(env, [sireId, damId]);
 }
 
 /** The COI a hypothetical sire x dam pairing would produce, without writing anything. */
@@ -413,6 +425,11 @@ export interface FoalInsertInput {
   accountId: number | null;
   /** Slice 0011 §7.1: same as FoundingHorseInsertInput's own field. */
   lifespanConfig: LifespanRollConfig;
+  /** Slice 0015 §2.7/§7.2: null (the default, and every caller before this slice) means a player's
+   * foal, born unnamed for its owner to name later - unchanged. Set only when the owning stable is
+   * an NPC stable, which nobody will ever name by hand; the caller resolves a unique name first
+   * (src/db/npc.ts's resolveUniqueNpcFoalName) and binds it here instead of NULL. */
+  registeredName?: string | null;
 }
 
 /**
@@ -439,9 +456,10 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
          sire_id, dam_id, generation, coi, owner_stable_id, breeder_stable_id,
          born_game_day, status, created_real_ts, genotype, rng_seed, cycle_anchor_tick_seq,
          environmental_noise, natural_death_game_day
-       ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'alive', ?, ?, ?, ?, ?, ?)`
     ).bind(
       input.sex,
+      input.registeredName ?? null,
       input.breederPrefix,
       input.breedId,
       input.isCross ? 1 : 0,
