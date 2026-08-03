@@ -604,6 +604,17 @@ A genuine scope increase — realistically it doubles the backend — but most o
 - **The world tick gets substantially heavier.** Ageing every horse including NPC stock, advancing gestations, rolling condition onset, running breeding decisions, refreshing listings, scoring shows. At eight NPC stables of twenty-five horses each, the tick touches several hundred rows. This makes the paid Workers tier ($5/month, five minutes CPU) the realistic assumption, and it may be worth splitting the tick into staged jobs (age → health → breed → market → shows).
 - **Idempotency matters more.** A re-fired tick could double-advance a barn. Recommended: a per-stable marker so a repeat run skips work already done.
 
+**Part A built (2026-08-03), in `docs/slices/0015-npc-stables.md`; Part B (the actual breeding) not yet.** The data and the selection engine landed this session; nothing here changes what a player sees yet, since no NPC stable can breed until a later session wires the tick stage in. Against each subsection above:
+
+- **§10b** — confirmed as built: the selection engine (`src/engines/npc/selection.ts`) reuses the judge's own `scoreEntry`/`scoreAbilityEntry` rather than a second scoring formula, exactly per "no parallel scoring path."
+- **§10c** — three of the six personalities, not all six: a conformation specialist (Cedar Hollow), a discipline barn (Willow Creek Barrels, targeting the one discipline that exists), and Fair Meadow repurposed as the volume breeder. The other three (colour barn, bloodline preservationist, health-focused barn) are deliberately deferred — each needs something the game doesn't have real use for yet (visible pattern genetics a player is chasing, an unrelated line worth a premium, a testing economy in active use). A pure-data addition to `npc_policy` once warranted, not a redesign.
+- **§10d** — the ceiling is built as two columns (`npc_ceiling_schedule.conformation_ceiling`/`ability_ceiling`, not one `ceiling_value`), because the two personality kinds cap different quantities on different scales: a conformation trait's quality is closeness-to-target, an ability trait's is the expressed value itself. It clamps each trait's own quality score before the weighted average, using the scorer's own per-trait breakdown — not the aggregate, and not the raw expressed value (which would be wrong for a bidirectional trait, where "far from target" and "very high" are different things). Noise and retention bias are both built into the selection engine per-personality. **Not built:** tiered ceilings by show level — no tier exists in gameplay yet (`shows.tier` is schema, not something `createDueShows` uses), so this waits for tiered shows to be real.
+- **§10e** — not yet. The show-field top-up (`judgeOneClass`) still draws from Fair Meadow alone; generalising it to every `is_npc = 1` stable is Part B.
+- **§10f** — still explicitly out of scope, unchanged from this section's own note. NPC buying/selling/stud services wait for the Market stage.
+- **§10h** — realized so far: NPC stables are exempt from board (`chargeUpkeep` skips `is_npc = 1`), the same reasoning slice 0013 already applied to their care timers — there's nobody behind the wheel to respond to a bill. The tick has not gotten heavier yet, since nothing calls the selection engine until Part B.
+
+See `CLAUDE.md` §10's NPC stables row and the build log's 2026-08-03 entry for the concrete departures from this section's schema sketch.
+
 ---
 
 ## 11. Infrastructure and build practices
