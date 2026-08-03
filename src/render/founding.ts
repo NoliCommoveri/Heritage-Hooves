@@ -102,7 +102,7 @@ export function renderFoundingPage(params: {
     body = html`
       <h1>New horses</h1>
       ${errorBox(params.error)}
-      <p>Choose ${String(offer.mare_claims)} mare${offer.mare_claims === 1 ? '' : 's'} and ${String(offer.stallion_claims)} stallion${offer.stallion_claims === 1 ? '' : 's'} from the ${String(offer.mare_candidates + offer.stallion_candidates)} below. The rest won't be seen again.</p>
+      <p>Choose up to ${String(offer.mare_claims + offer.stallion_claims)} horses, any mix of mares and stallions, from the ${String(offer.mare_candidates + offer.stallion_candidates)} below. The rest won't be seen again.</p>
       <p class="muted">Each horse's registered name starts with a short stamp for the stable that bred it - not yours, since you didn't breed this one - but you can type your own name for the part after it.</p>
       <form method="post" action="/stables/${String(s.id)}/founding">
         <input type="hidden" name="action" value="claim">
