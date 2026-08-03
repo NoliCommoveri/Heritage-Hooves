@@ -20,5 +20,5 @@
   // @types/node to make one test file type-check would weaken the type checking on all of src/, so
   // the file is excluded from tsc instead. It still runs under vitest, which type-strips rather than
   // type-checks. See that file's own header for what it is and why it exists.
-  "exclude": ["test/market/sale-d1.test.ts", "test/npc/market-d1.test.ts", "test/founding/consignment-d1.test.ts"]
+  "exclude": ["test/market/sale-d1.test.ts", "test/npc/market-d1.test.ts", "test/founding/consignment-d1.test.ts", "test/reset-d1.test.ts"]
 }
