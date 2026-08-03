@@ -256,6 +256,12 @@ export function renderEntryResultPage(params: {
   rawScore: number;
   noise: number;
   finalScore: number;
+  /** Slice 0013 §8.4: the care modifier this entry was actually scored with, read from
+   * show_entries.care_modifier_applied - never recomputed, so this line does not change even
+   * though the horse's own care state has moved on since. Undefined for an entry judged before
+   * this slice (the column still defaults to 1.0, but there is nothing to say about it). */
+  careModifierApplied?: number;
+  careNote?: string;
 }): SafeHtml {
   const isAbility = params.traits.length > 0 && params.traits[0].kind === 'ability';
 
@@ -284,6 +290,14 @@ export function renderEntryResultPage(params: {
 
   const prizeSentence = params.prizePaid > 0 ? html` - paid <strong>${String(params.prizePaid)}</strong>` : raw('');
 
+  // Slice 0013 §8.4: shown even when the modifier was exactly 1.0 ("Care: normal") rather than
+  // hidden - a child comparing two results should be able to see that care was accounted for in
+  // both.
+  const careLine =
+    params.careModifierApplied !== undefined
+      ? html`<p>${params.careModifierApplied === 1 ? 'Care: normal.' : html`Care applied: <strong>${params.careModifierApplied.toFixed(2)}</strong>${params.careNote ? html` (${params.careNote})` : raw('')}`}</p>`
+      : raw('');
+
   const body = html`
     <h1>${params.horseName} at ${params.show.name}</h1>
     <p><strong>${placingText(params.placing)}</strong>${prizeSentence}, judged by ${params.judge?.name ?? 'an unnamed judge'}.</p>
@@ -295,6 +309,7 @@ export function renderEntryResultPage(params: {
       </table>
       <p>Weighted average: <strong>${params.rawScore.toFixed(2)}</strong> (out of a possible 100, over a total weight of ${params.weightSum.toFixed(2)})</p>
       <p>Noise on the day: <strong>${params.noise >= 0 ? '+' : ''}${params.noise.toFixed(2)}</strong> - the judge having an ordinary human day, not a measurement of the horse.</p>
+      ${careLine}
       <p><strong>Final score: ${params.finalScore.toFixed(2)}</strong></p>
     </div>
     <p><a href="/shows/${String(params.show.id)}">Back to ${params.show.name}</a></p>

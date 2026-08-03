@@ -14,6 +14,7 @@ import {
   renderMoneyAdminPage,
   renderHealthAdminPage,
   renderAgeingAdminPage,
+  renderCareAdminPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import { listAccounts, createAccount, updatePassword, setActive } from '../db/accounts';
@@ -41,6 +42,7 @@ import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { parseImageCount } from '../lib/images';
 import { getEnabledConditions, conditionCensus } from '../db/health';
 import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward } from '../db/ageing';
+import { getCareAdminData, makeAllHorsesOverdue } from '../db/care';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -130,6 +132,13 @@ const NUMERIC_CONFIG_KEYS = [
   'frailty_window_game_days',
   'veteran_age_game_days',
   'barn_shows_ended_game_days',
+  'care_start_age_game_days',
+  'farrier_interval_game_days',
+  'farrier_overdue_game_days',
+  'farrier_cost',
+  'vet_wellness_interval_game_days',
+  'vet_wellness_overdue_game_days',
+  'vet_wellness_cost',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -141,6 +150,12 @@ const DECIMAL_CONFIG_KEYS = [
   'inbreeding_depression_factor',
   'show_noise_sd',
   'show_ideal_falloff',
+  'farrier_bonus',
+  'farrier_penalty',
+  'vet_wellness_bonus',
+  'vet_wellness_penalty',
+  'care_modifier_min',
+  'care_modifier_max',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
@@ -251,6 +266,8 @@ export async function adminHorseNewRoute(ctx: RequestContext, method: string): P
     lethalFoalDeathGameDays: ctx.config.values.lethal_foal_death_game_days,
     accountId: stable.account_id,
     lifespanConfig: ctx.config.values,
+    careStartAgeGameDays: ctx.config.values.care_start_age_game_days,
+    currentGameDay: ctx.world.game_day,
   });
 
   if (!result.ok) {
@@ -606,4 +623,37 @@ export async function adminAgeingRoute(ctx: RequestContext, method: string): Pro
 
   await bringHorseDeathForward(ctx.env, horseId, ctx.world.game_day);
   return redirect('/admin/ageing?forced=1');
+}
+
+/** /admin/care (slice 0013 §8.5) - read-only except for the "make every horse overdue" testing
+ * control. */
+export async function adminCareRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const data = await getCareAdminData(ctx.env, ctx.world.game_day, ctx.config);
+    return htmlResponse(renderCareAdminPage({ world: ctx.world, data, noticeEnabled: ctx.config.flags.care_notice_enabled !== false, error, notice }));
+  }
+
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('forced')
+      ? 'Every eligible horse is now fully overdue on both timers.'
+      : params.get('toggled')
+        ? 'Overdue notices setting saved.'
+        : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+
+  if (form.action === 'toggle_notice') {
+    await writeConfig(ctx.env, ctx.account!.id, { flags: { care_notice_enabled: ctx.config.flags.care_notice_enabled === false } });
+    return redirect('/admin/care?toggled=1');
+  }
+
+  if (form.action !== 'make_overdue') return notFound();
+  if (form.confirm !== 'yes') return page('Tick the box to confirm before making every horse overdue.');
+
+  await makeAllHorsesOverdue(ctx.env, ctx.world.game_day, ctx.config.values);
+  return redirect('/admin/care?forced=1');
 }

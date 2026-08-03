@@ -8,6 +8,7 @@
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from './time';
+import type { FeedLevelsConfig } from '../engines/care/modifier';
 
 export interface ConfigValues {
   display_timezone: string;
@@ -118,6 +119,29 @@ export interface ConfigValues {
    * breed-conformation classes. Read fresh at show-creation time; disciplines.enabled and this cap
    * are the two levers for keeping seven-class shows from outrunning the action budget. */
   show_discipline_classes_per_show: number;
+  /** Slice 0013 §4.2/§4.3. Live. Care timers do not run below this age - a horse's care_start_game_day
+   * is born_game_day + this value, so a foal reads as "not yet" rather than overdue. */
+  care_start_age_game_days: number;
+  /** Slice 0013 §4.1/§4.3. Live - retuning any of these only changes the modifier computed on the
+   * next read, never a horse's own stored dates. */
+  farrier_interval_game_days: number;
+  farrier_overdue_game_days: number;
+  farrier_bonus: number;
+  farrier_penalty: number;
+  /** Read live, at the moment a call is made - a price change affects the next visit, never
+   * re-prices a call already paid for. */
+  farrier_cost: number;
+  vet_wellness_interval_game_days: number;
+  vet_wellness_overdue_game_days: number;
+  vet_wellness_bonus: number;
+  vet_wellness_penalty: number;
+  vet_wellness_cost: number;
+  /** Slice 0013 §2.5/§4.3. One JSON object so a level can be retuned or a fourth added without a
+   * code change - see src/engines/care/modifier.ts's FeedLevelsConfig. */
+  feed_levels: FeedLevelsConfig;
+  /** Slice 0013 §2.4. The clamp - not the components - is what guarantees the ±5% band. */
+  care_modifier_min: number;
+  care_modifier_max: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

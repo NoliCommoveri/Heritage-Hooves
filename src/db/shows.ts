@@ -26,6 +26,7 @@ import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
 import { isBarredFromShowing } from './health';
+import { careModifierForHorse } from './care';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -92,6 +93,10 @@ export interface ShowEntryRow {
   /** Slice 0009 §4.4. What was actually paid, snapshotted at judging - 0 if this entry didn't place
    * within the class's prize_schedule. */
   prize_paid: number;
+  /** Slice 0013 §2.1/§8.4. The care modifier this entry was actually scored with, snapshotted at
+   * judging time - never recomputed, so a result's explanation never changes afterwards even
+   * though the horse's own care state keeps moving. 1.0 for every entry judged before this slice. */
+  care_modifier_applied: number;
 }
 
 export interface HorseShowSummaryRow {
@@ -606,6 +611,16 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     if (horse) horseById.set(horse.id, horse);
   }
 
+  // Slice 0013 §8.4: the whole scoring integration is passing a real number into careModifier -
+  // nothing about either formula changes. One feed_level lookup per unique owner stable, not per
+  // horse; the show barn's own horses are always stamped current by the tick (§2.6), so their
+  // modifier lands at 1.00 with no special case here.
+  const feedLevelByStableId = new Map<number, string>();
+  for (const stableId of new Set(Array.from(horseById.values()).map((h) => h.owner_stable_id))) {
+    const stableRow = await getStableById(env, stableId);
+    feedLevelByStableId.set(stableId, stableRow?.feed_level ?? 'standard');
+  }
+
   // Slice 0012 §8.2: branch once, at the top, on class_type. Everything after this block (NPC
   // top-up already happened above, placings/summaries/prizes/events below) is shared and
   // unchanged - it does not care which scorer produced the numbers.
@@ -621,6 +636,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     rawScore: number;
     noise: number;
     finalScore: number;
+    careModifierApplied: number;
     breakdown: Record<string, unknown>;
   }
 
@@ -630,18 +646,24 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     if (!horse) continue;
     const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
     const noise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
+    const feedLevel = feedLevelByStableId.get(horse.owner_stable_id) ?? 'standard';
+    const care = careModifierForHorse(horse, feedLevel, config.values, gameDay);
+    // Snake_case to match every other breakdown key (§9.1's own convention) - read by a render
+    // route, not by TypeScript. farrier_status/wellness_status let the result explanation say
+    // *why* without recomputing the ramp later against a horse whose care state has since moved on
+    // (§8.4: the snapshot is the whole point, not a live recomputation).
+    const careBreakdown = { modifier: care.modifier, farrier_status: care.farrier.status, wellness_status: care.wellness.status };
 
     if (isDiscipline) {
-      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise });
+      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise, careModifier: care.modifier });
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
         noise: result.noise,
         finalScore: result.finalScore,
-        // Snake_case to match the documented shape (§9.1) - read by a render route, not by
-        // TypeScript, so it follows this codebase's JSON-column convention rather than
-        // result.traits' own camelCase field names. No target column - there is no target for an
-        // ability trait, only a weight and a contribution.
+        careModifierApplied: care.modifier,
+        // No target column - there is no target for an ability trait, only a weight and a
+        // contribution.
         breakdown: {
           v: 1,
           kind: 'ability',
@@ -651,15 +673,17 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           raw_score: result.rawScore,
           noise: result.noise,
           final_score: result.finalScore,
+          care: careBreakdown,
         },
       });
     } else {
-      const result = scoreEntry({ expressed, ideal: ideal!, judgeWeights, falloff: cls.ideal_falloff, noise });
+      const result = scoreEntry({ expressed, ideal: ideal!, judgeWeights, falloff: cls.ideal_falloff, noise, careModifier: care.modifier });
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
         noise: result.noise,
         finalScore: result.finalScore,
+        careModifierApplied: care.modifier,
         // Snake_case to match the documented shape (migrations/0038_show_entries.sql's comment and
         // slice 0008 §5.5) - the score_breakdown blob is read by a render route, not by TypeScript,
         // so it follows this codebase's JSON-column convention rather than result.traits' own
@@ -673,6 +697,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           raw_score: result.rawScore,
           noise: result.noise,
           final_score: result.finalScore,
+          care: careBreakdown,
         },
       });
     }
@@ -723,8 +748,8 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
       env.DB.prepare(
         `INSERT INTO show_entries (
            id, class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot,
-           raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day
-         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+           raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day, care_modifier_applied
+         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         entryId,
         cls.id,
@@ -737,7 +762,8 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         s.finalScore,
         JSON.stringify(s.breakdown),
         placing,
-        gameDay
+        gameDay,
+        s.careModifierApplied
       )
     );
   }
@@ -748,9 +774,9 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const placing = placingByHorseId.get(entry.horse_id)!;
     statements.push(
       env.DB.prepare(
-        `UPDATE show_entries SET raw_score = ?, noise_applied = ?, final_score = ?, score_breakdown = ?, placing = ?, scored_game_day = ?
+        `UPDATE show_entries SET raw_score = ?, noise_applied = ?, final_score = ?, score_breakdown = ?, placing = ?, scored_game_day = ?, care_modifier_applied = ?
          WHERE id = ? AND placing IS NULL`
-      ).bind(s.rawScore, s.noise, s.finalScore, JSON.stringify(s.breakdown), placing, gameDay, entry.id)
+      ).bind(s.rawScore, s.noise, s.finalScore, JSON.stringify(s.breakdown), placing, gameDay, s.careModifierApplied, entry.id)
     );
   }
 

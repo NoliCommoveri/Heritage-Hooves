@@ -9,6 +9,7 @@ import {
   createStableWithPrefix,
   getStableById,
   renamePrefix,
+  setFeedLevel,
   type StableRow,
 } from '../db/stables';
 import { setLastActiveStable } from '../db/accounts';
@@ -18,6 +19,8 @@ import { buildStableCookie } from '../lib/session';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { getLedgerForStable, withRunningBalance } from '../db/ledger';
 import { listUnreadEventsForAccount, listRecentEventsForStable, markAllEventsReadForAccount } from '../db/events';
+import { callBarnRoundCare, type CareService } from '../db/care';
+import { canTakeOnCost } from '../lib/money';
 
 export async function stablesPickerRoute(ctx: RequestContext): Promise<Response> {
   const account = ctx.account!;
@@ -172,4 +175,56 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   }
 
   return redirect(`/stables/${stableId}`);
+}
+
+/**
+ * /stables/:id/care - slice 0013 §6.1/§6.3. The barn round: every horse that needs the chosen
+ * service, oldest-due first, serviced until the balance runs out. Free of turns (§2.2). Refused
+ * entirely only when the stable is already in debt (§2.7) - a round that is merely more expensive
+ * than the balance allows still does as many as it can afford (§6.3), which callBarnRoundCare
+ * itself handles.
+ */
+export async function stableCareRoute(ctx: RequestContext, stableId: number): Promise<Response> {
+  const stable = await loadOwnedStable(ctx, stableId);
+  if (stable instanceof Response) return stable;
+
+  const form = await parseForm(ctx.request);
+  const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
+  const backTo = `/stables/${String(stableId)}/horses`;
+  if (!service) return redirect(backTo);
+
+  if (!canTakeOnCost(stable.balance)) {
+    const who = service === 'farrier' ? 'a farrier round' : 'a wellness round';
+    return redirect(
+      `${backTo}?care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before ${who}.`)}`
+    );
+  }
+
+  const result = await callBarnRoundCare(ctx.env, { stableId, service, gameDay: ctx.world.game_day, config: ctx.config.values, balance: stable.balance });
+
+  if (result.totalCount === 0) return redirect(`${backTo}?care_notice=${encodeURIComponent('Nothing due.')}`);
+
+  const verb = service === 'farrier' ? 'Shod' : 'Vet visited';
+  const notice =
+    result.serviced < result.totalCount
+      ? `${verb} ${String(result.serviced)} of ${String(result.totalCount)} - not enough money for the rest.`
+      : `${verb} ${String(result.serviced)} horse${result.serviced === 1 ? '' : 's'}.`;
+  return redirect(`${backTo}?care_notice=${encodeURIComponent(notice)}`);
+}
+
+/** /stables/:id/feed - slice 0013 §2.5/§6.1. Free, costs no turn, takes effect from the next
+ * tick's board charge. */
+export async function stableFeedRoute(ctx: RequestContext, stableId: number): Promise<Response> {
+  const stable = await loadOwnedStable(ctx, stableId);
+  if (stable instanceof Response) return stable;
+
+  const form = await parseForm(ctx.request);
+  const feedLevel = form.feed_level ?? '';
+  const backTo = `/stables/${String(stableId)}/horses`;
+  if (!(feedLevel in ctx.config.values.feed_levels.levels)) {
+    return redirect(`${backTo}?care_error=${encodeURIComponent('Choose a feed level.')}`);
+  }
+
+  await setFeedLevel(ctx.env, stableId, feedLevel);
+  return redirect(`${backTo}?care_notice=${encodeURIComponent('Feed level saved.')}`);
 }

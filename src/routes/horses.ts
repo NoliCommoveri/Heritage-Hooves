@@ -67,6 +67,7 @@ import {
 import { buildLedgerStatements } from '../db/ledger';
 import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../engines/health/status';
 import type { Genotype } from '../engines/genetics/genotype';
+import { careCardViewFor, callOneHorseCare, type CareService } from '../db/care';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -150,12 +151,40 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
       // already has that logic; this is additive to it, not a replacement).
       ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, cfg),
+      // Slice 0013 §8.2: null for an ended horse - care means nothing for a horse that isn't being
+      // kept anymore, and stableHorsesWithDead's rows never had their care columns written for one.
+      care: horse.status === 'alive' ? careCardViewFor(horse, stable.feed_level, cfg, ctx.world.game_day) : null,
     }))
   );
 
+  // Slice 0013 §8.2: the barn-wide summary line ("3 due for the farrier..."), counted from the same
+  // rows already computed above rather than a second query.
+  const careSummary = rows.reduce(
+    (acc, r) => ({
+      farrierDue: acc.farrierDue + (r.care?.needsFarrier ? 1 : 0),
+      wellnessDue: acc.wellnessDue + (r.care?.needsWellness ? 1 : 0),
+    }),
+    { farrierDue: 0, wellnessDue: 0 }
+  );
+
+  const params = new URL(ctx.request.url).searchParams;
+  const careNotice = params.get('care_notice') ?? undefined;
+  const careError = params.get('care_error') ?? undefined;
+
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
   return htmlResponse(
-    renderBarnList({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses: rows })
+    renderBarnList({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      stable,
+      hasFoundingOffer,
+      horses: rows,
+      feedLevels: cfg.feed_levels.levels,
+      careSummary,
+      careNotice,
+      careError,
+    })
   );
 }
 
@@ -448,6 +477,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const barnNameNotice = params.get('barn_saved') ? 'Barn name saved.' : undefined;
   const enterShowError = params.get('show_error') ?? undefined;
   const enterShowNotice = params.get('entered_show') ? 'Entered!' : undefined;
+  const careError = params.get('care_error') ?? undefined;
+  const careNotice = params.get('care_done') === 'farrier' ? 'Farrier called.' : params.get('care_done') === 'wellness' ? 'Vet visit booked.' : undefined;
 
   let loci: LocusRow[] | undefined;
   if (isAdmin) loci = await getLoci(ctx.env);
@@ -465,6 +496,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
+  const care = horse.status === 'alive' ? careCardViewFor(horse, ownerStable.feed_level, ctx.config.values, ctx.world.game_day) : null;
 
   return htmlResponse(
     renderHorsePage({
@@ -500,6 +532,10 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, ctx.config.values),
       canManage,
       health,
+      care,
+      careError,
+      careNotice,
+      feedLevelName: ctx.config.values.feed_levels.levels[ownerStable.feed_level]?.name ?? ownerStable.feed_level,
     })
   );
 }
@@ -889,6 +925,43 @@ async function buildRetireWarnings(ctx: RequestContext, horse: HorseRow): Promis
   }
 
   return warnings;
+}
+
+/**
+ * /horses/:id/care - slice 0013 §6.1/§6.2. One horse, one service. Owner-only, the same
+ * notFound()-for-a-non-owner shape every horse-scoped route in this file uses. Calling the farrier
+ * for a horse that is already fresh is allowed on purpose - it wastes money and resets the timer,
+ * which is the player's business (§6.2). No turn is spent (§2.2).
+ */
+export async function horseCareRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
+  if (!service) return redirect(`/horses/${String(horseId)}`);
+
+  const cfg = ctx.config.values;
+  const careView = careCardViewFor(horse, ownerStable.feed_level, cfg, ctx.world.game_day);
+  if (careView.tooYoung) {
+    return redirect(`/horses/${String(horseId)}?care_error=${encodeURIComponent('Too young to need the farrier yet - care starts at three.')}`);
+  }
+
+  // Slice 0013 §2.7: a purchase, blocked by the debt rule the same way a genotype test is - poor
+  // feed is always the way out, named here so a child sees the lever, not just the refusal.
+  if (!canTakeOnCost(ownerStable.balance)) {
+    const who = service === 'farrier' ? 'the farrier' : 'the vet';
+    return redirect(
+      `/horses/${String(horseId)}?care_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling ${who}.`)}`
+    );
+  }
+
+  const cost = service === 'farrier' ? cfg.farrier_cost : cfg.vet_wellness_cost;
+  await callOneHorseCare(ctx.env, { horse, ownerStableId: ownerStable.id, service, cost, gameDay: ctx.world.game_day });
+  return redirect(`/horses/${String(horseId)}?care_done=${service}`);
 }
 
 /**

@@ -110,6 +110,11 @@ export async function stockShowBarn(
         // everyone else's (CLAUDE.md §13) - a lifespan is rolled for them here exactly like anyone
         // else's founding stock.
         lifespanConfig: params.config.values,
+        // Slice 0013 §2.6/§5.2: the show barn's horses are stamped current every tick regardless
+        // (noticeCareDue), but starting them current here too means they never read as overdue for
+        // even the one tick between minting and the next tick running.
+        careStartAgeGameDays: params.config.values.care_start_age_game_days,
+        currentGameDay: params.gameDay,
       })
     );
   }

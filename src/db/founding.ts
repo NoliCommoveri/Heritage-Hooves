@@ -271,6 +271,8 @@ export interface ClaimOfferParams {
   accountId: number | null;
   lethalFoalDeathGameDays: number;
   lifespanConfig: LifespanRollConfig;
+  /** Slice 0013 §5.2 applied at creation - see buildFoundingHorseInsertStatements' own comment. */
+  careStartAgeGameDays: number;
 }
 
 /**
@@ -323,6 +325,12 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
         lethalFoalDeathGameDays: params.lethalFoalDeathGameDays,
         accountId: params.accountId,
         lifespanConfig: params.lifespanConfig,
+        // Slice 0013 §5.2 applied at creation: founding candidates are minted at 4-8 game years
+        // (config.founding_age_min/max_game_days), well past the 3-year care start age, so a
+        // freshly claimed horse must start current or it reads as fully overdue the moment a child
+        // claims it - see buildFoundingHorseInsertStatements' own comment.
+        careStartAgeGameDays: params.careStartAgeGameDays,
+        currentGameDay: params.gameDay,
       })
     );
     statements.push(

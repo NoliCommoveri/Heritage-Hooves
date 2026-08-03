@@ -24,4 +24,29 @@ describe('computeUpkeep', () => {
     expect(charge.amount).toBe(0);
     expect(charge.advanceMarker).toBe(true);
   });
+
+  // Slice 0013 §7.1/§10.8: feed multiplies the existing charge rather than creating a second one.
+  it('a feedMultiplier of 2.0 charges exactly double', () => {
+    const charge = computeUpkeep({ daysOwed: 10, aliveHorses: 4, ratePerHorsePerGameDay: 2, feedMultiplier: 2.0 });
+    expect(charge.amount).toBe(-160);
+  });
+
+  it('a feedMultiplier of 0.6 charges exactly 60%, rounded to an integer', () => {
+    const charge = computeUpkeep({ daysOwed: 10, aliveHorses: 4, ratePerHorsePerGameDay: 2, feedMultiplier: 0.6 });
+    expect(charge.amount).toBe(-Math.round(80 * 0.6));
+  });
+
+  it('a feedMultiplier of 1.0, or an omitted one, charges byte-for-byte what it charged before this slice', () => {
+    const withMultiplier = computeUpkeep({ daysOwed: 10, aliveHorses: 4, ratePerHorsePerGameDay: 2, feedMultiplier: 1.0 });
+    const withoutMultiplier = computeUpkeep({ daysOwed: 10, aliveHorses: 4, ratePerHorsePerGameDay: 2 });
+    expect(withMultiplier.amount).toBe(-80);
+    expect(withoutMultiplier.amount).toBe(-80);
+  });
+
+  it('the zero-horses case still returns amount 0 with a feedMultiplier applied - the -0 guard survives the multiplication', () => {
+    const charge = computeUpkeep({ daysOwed: 10, aliveHorses: 0, ratePerHorsePerGameDay: 2, feedMultiplier: 0.6 });
+    expect(charge.amount).toBe(0);
+    expect(Object.is(charge.amount, -0)).toBe(false);
+    expect(charge.advanceMarker).toBe(true);
+  });
 });
