@@ -83,6 +83,10 @@ import m0079 from '../../migrations/0079_seed_condition_management_text.sql';
 import m0080 from '../../migrations/0080_config_condition_management.sql';
 import m0081 from '../../migrations/0081_quantitative_traits_robustness.sql';
 import m0082 from '../../migrations/0082_config_robustness.sql';
+import m0083 from '../../migrations/0083_npc_policy.sql';
+import m0084 from '../../migrations/0084_npc_ceiling_schedule.sql';
+import m0085 from '../../migrations/0085_npc_stables_and_policies.sql';
+import m0086 from '../../migrations/0086_npc_stables_no_upkeep.sql';
 
 export interface MigrationFile {
   name: string;
@@ -182,6 +186,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0080_config_condition_management.sql', sql: m0080 },
   { name: '0081_quantitative_traits_robustness.sql', sql: m0081 },
   { name: '0082_config_robustness.sql', sql: m0082 },
+  { name: '0083_npc_policy.sql', sql: m0083 },
+  { name: '0084_npc_ceiling_schedule.sql', sql: m0084 },
+  { name: '0085_npc_stables_and_policies.sql', sql: m0085 },
+  { name: '0086_npc_stables_no_upkeep.sql', sql: m0086 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

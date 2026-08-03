@@ -25,10 +25,15 @@ interface StableForUpkeep {
  * every stable's count can be fetched in one batch instead of one round trip each. A foal born
  * mid-gap is charged from the tick after its birth, not from its birth day - a one-tick
  * approximation, not worth a per-horse owned_from calculation at this scale.
+ *
+ * NPC stables are exempt (slice 0015 §2.5): upkeep exists to make a player choose between more
+ * horses and more money, and nobody is playing an NPC stable, so the charge would model no
+ * decision - its only effect would be to silently switch the stable off. Same exemption category
+ * as noticeCareDue's farrier/vet skip for is_npc = 1 stables (slice 0013 §2.6).
  */
 export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number, config: Config): Promise<void> {
   const rate = config.values.upkeep_per_horse_per_game_day;
-  const stablesResult = await env.DB.prepare('SELECT id, last_upkeep_game_day, feed_level FROM stables WHERE active = 1').all<StableForUpkeep>();
+  const stablesResult = await env.DB.prepare('SELECT id, last_upkeep_game_day, feed_level FROM stables WHERE active = 1 AND is_npc = 0').all<StableForUpkeep>();
   const stables = stablesResult.results ?? [];
   if (stables.length === 0) return;
 

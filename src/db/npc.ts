@@ -16,10 +16,17 @@ import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
 import { getEnabledConditions, getLethalTriggers } from './health';
 
-/** One documented magic string, matching migrations/0040_npc_show_barn.sql - replaced by a proper
- * npc_policy row when the NPC stage lands (CLAUDE.md §11's founding-stock entry uses the same
- * pattern for its own magic string). */
+/** One documented magic string, matching migrations/0040_npc_show_barn.sql. Fair Meadow is now
+ * one of three personality stables (slice 0015 §2.1) rather than the game's only NPC stable, but
+ * keeps this name - nothing about its prefix, its history row, or its existing horses changes. */
 export const SHOW_BARN_PREFIX = 'Fair Meadow';
+
+/** Slice 0015 §2.1/§5.3: the conformation specialist and the discipline barn, seeded by
+ * migrations/0085_npc_stables_and_policies.sql. Named here, not just in that migration, because a
+ * full world reset (src/db/reset.ts) has to recreate both stables, and that migration never runs
+ * again. */
+export const CEDAR_HOLLOW_PREFIX = 'Cedar Hollow';
+export const WILLOW_CREEK_BARRELS_PREFIX = 'Willow Creek Barrels';
 
 export async function getShowBarnStable(env: Env): Promise<StableRow | null> {
   return env.DB.prepare('SELECT * FROM stables WHERE prefix = ? AND is_npc = 1').bind(SHOW_BARN_PREFIX).first<StableRow>();
