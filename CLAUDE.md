@@ -215,6 +215,7 @@ Indexes follow the queries the real screens make. Don't guess a full index list 
 | The other seven breeds | not started, **ideal vectors now drafted** | All eight breeds' ideal vectors are drafted in `docs/breed-ideal-vectors.md`; only the Quarter Horse's is live. Blocked on the NPC show barn being Quarter-Horse-only. |
 | Screens, the public world, and the admin door | built (2026-08-03) | Barn/show filters, a read-only `/world` public section, account admin, and a PIN gate in front of `/admin`. See `docs/slices/0016-admin-and-ui-improvements.md`. |
 | Robustness genes (polygenic health substrate) | built, substrate only, deliberately (2026-08-03) | Three hidden soundness traits added ahead of use, since `TRAITS` is append-only and a horse's genotype is fixed at birth. Nothing reads them yet. See `docs/slices/0014-before-the-children-play.md` §6. |
+| Genetic progress and inbreeding | **specified, not built (2026-08-03); §10's open questions need the operator before anyone builds** | Overview §10a (gene pool collapse) coming due. Measured with `docs/analysis/population-sim.mjs`: selection plateaus at generation ~15 (about two real years) and generations 15-50 add nothing; COI reaches ~60%, at which point a correct Quarter Horse shoulder needs 20 of 20 alleles. The fix is to move inbreeding depression off conformation expression and onto fitness, make zygosity visible, and build stud services. See `docs/slices/0018-genetic-progress-and-inbreeding.md`. |
 
 ---
 
