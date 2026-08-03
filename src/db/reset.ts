@@ -16,6 +16,7 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 import { SHOW_BARN_PREFIX, CEDAR_HOLLOW_PREFIX, WILLOW_CREEK_BARRELS_PREFIX } from './npc';
+import { CONSIGNMENT_DEALER_PREFIX } from './consignment';
 
 export type ResetScope = 'horses' | 'world';
 
@@ -150,15 +151,18 @@ export interface ResetResult {
  * now gone.
  *
  * A full world reset's blanket `DELETE FROM stables` also removes every NPC stable - each is a
- * stable like any other, and the migrations that created them (0040, 0085) only ever run once, so
- * nothing would recreate them afterwards. All three (Fair Meadow, Cedar Hollow, Willow Creek
- * Barrels) are re-inserted here, empty, in exactly the shape those migrations leave them in,
- * along with all three `npc_policy` rows - without the policy rows, every NPC stable comes back
- * after a reset and none of them ever breeds again once a later session wires the tick stage in
- * (slice 0015 §7.4). Fair Meadow is re-stocked from /admin/shows exactly as before; Cedar Hollow
- * and Willow Creek Barrels have no stocking control yet at all (that is slice 0015 §7.3's outcross
- * control, not built by this session - see CLAUDE.md §10's NPC stables row) - a reset before that
- * lands simply leaves them real, empty, unstocked stables, same as right after this migration.
+ * stable like any other, and the migrations that created them (0040, 0085, 0097) only ever run
+ * once, so nothing would recreate them afterwards. All four (Fair Meadow, Cedar Hollow, Willow
+ * Creek Barrels, and the Consignment Yard) are re-inserted here, empty, in exactly the shape those
+ * migrations leave them in, along with the three real `npc_policy` rows - without the policy rows,
+ * every NPC stable comes back after a reset and none of them ever breeds again once a later session
+ * wires the tick stage in (slice 0015 §7.4). Fair Meadow is re-stocked from /admin/shows exactly as
+ * before; Cedar Hollow and Willow Creek Barrels have no stocking control yet at all (that is slice
+ * 0015 §7.3's outcross control, not built by this session - see CLAUDE.md §10's NPC stables row) -
+ * a reset before that lands simply leaves them real, empty, unstocked stables, same as right after
+ * this migration. The Consignment Yard gets no `npc_policy` row, deliberately matching migration
+ * 0097 - it never breeds, shows or buys, and `runConsignments` mints its next batch on the tick
+ * immediately following the reset (`nextConsignmentDueGameDay` treats "no listing yet" as due now).
  */
 export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResult> {
   const statements = tablesForScope(scope).map((table) => env.DB.prepare(`DELETE FROM ${table}`));
@@ -236,6 +240,22 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
            VALUES ((SELECT id FROM stables WHERE prefix = ?), 'discipline_barn', 'ability', 'barrels', 4.0, 0.10, 150, 2, 1.10, 0.10)`
         )
         .bind(WILLOW_CREEK_BARRELS_PREFIX)
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+           VALUES (NULL, 'The Consignment Yard', ?, 0, 1, 1, 0, 200, 0, ?, 1)`
+        )
+        .bind(CONSIGNMENT_DEALER_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
+        )
+        .bind(CONSIGNMENT_DEALER_PREFIX, CONSIGNMENT_DEALER_PREFIX, nowUtcSeconds())
     );
     statements.push(
       env.DB
