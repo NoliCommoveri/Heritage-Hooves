@@ -24,7 +24,7 @@ export function actionsRemaining(account: AccountActionState, tickSeq: number, a
  * compete with breeding, showing and testing for the day's turns. **Listing a horse stays free and
  * spends nothing**, deliberately (§2.5): a listing that costs nothing is a listing a child will
  * actually use rather than hoard actions against, and the ones nobody buys expire. */
-export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse';
+export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse' | 'sell_to_offer';
 
 export const ACTION_COSTS: Record<ActionKind, number> = {
   book_covering: 1,
@@ -32,6 +32,11 @@ export const ACTION_COSTS: Record<ActionKind, number> = {
   claim_founding: 1,
   genotype_test: 1,
   buy_horse: 1,
+  // Slice 0017 §12 (Part C): selling into a standing NPC offer skips the browsing period a fixed-
+  // price listing has - it is over the moment the button is pressed, the same decisive commitment
+  // buy_horse already costs the buyer, mirrored here onto the seller since there is no buyer turn
+  // to spend in this direction.
+  sell_to_offer: 1,
 };
 
 /** The next tick slot's time of day, for the "more arrive at..." refusal message (§5.4). Purely

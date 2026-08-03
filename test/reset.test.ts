@@ -25,6 +25,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   stable_prefix_history: ['stables'],
   ledger: ['stables'],
   npc_policy: ['stables', 'breeds', 'disciplines'],
+  buy_offers: ['stables'],
   stables: ['accounts'],
   tick_run: [],
 };

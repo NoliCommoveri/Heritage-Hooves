@@ -588,9 +588,15 @@ Updated incrementally when a class resolves. Permanent — survives the horse. T
 
 ### 7.2 `buy_offers`
 
-NPC standing demand, per §10f.
+**Built 3 Aug 2026** (`migrations/0099_buy_offers.sql`, slice 0017 §12, Part C). NPC standing demand, per §10f. The built shape against the sketch:
 
-- `id`, `stable_id`, `criteria` (JSON), `max_price`, `active`, `created_game_day`
+- `id`, `stable_id`, `criteria` (JSON), `max_price`, `active`, `created_game_day`, `created_real_ts` — as sketched, plus `created_real_ts` (every other table in the game keeps one).
+- `criteria` is `{"v":1,"breedId":number|null,"minAgeGameDays":number|null,"maxAgeGameDays":number|null,"minQuality":number}`. A null `breedId` means the offer isn't breed-restricted (true for a discipline barn's offer — `scoreAbilityEntry` doesn't need a breed match). Geldings are excluded from every offer in code, not in this JSON — the whole reason NPC buying exists is outcross breeding stock (§10f), and a gelding can never be bred.
+- **One active offer per stable**, enforced by a partial unique index on `stable_id WHERE active = 1` — the same "one open thing per owner" shape `idx_listings_one_open_per_horse` already establishes. `src/db/npcBuying.ts`'s `refreshNpcBuyOffers` (a new tick stage, run every tick alongside Part B's `runNpcMarketListings`) updates that row in place rather than closing and reopening one each cycle, so a link a player is looking at does not go dead the moment nothing about the offer actually changed.
+- **No player-facing "post an offer" path.** The board is NPC demand only — players sell into an existing offer, they never create one.
+- **Selling into an offer reuses Part A's sale path unchanged.** `src/db/buyOffers.ts`'s `sellIntoOffer` creates an ordinary `listings` row at the offer's own price and immediately calls `sellListing` on it — the exact commission, knowledge-copy, covering- and entry-reassignment and ledger-writing code a fixed-price sale already runs, so `/market/sold` shows the result exactly as it shows any other sale. There is no second sale batch anywhere in this file.
+- **The other buying route — an NPC shopping the open market itself** — needed no new table at all: `src/db/npcBuying.ts`'s `runNpcMarketPurchases` (a second new tick stage) reads `listings` directly and buys fits through `sellListing`, same as above. Both routes only ever buy from a real player (`seller_account_id IS NOT NULL` on the listing — an NPC's own `account_id` is always null), so neither can trigger NPC-to-NPC trading.
+- **The named risk, carried over from §12 of the slice document rather than resolved:** NPC balances are real and never topped up automatically. A stable that overspends on either route simply stops buying until it earns more (Part B is its income) or an operator adjusts it by hand from `/admin/money`. `/admin/npc` shows each NPC stable's balance next to what it has spent buying and earned selling since the current game year began, read live from the ledger's own `purchase`/`sale` kinds — the mitigation the slice document names, so the market drying up is visible before the children feel it.
 
 ### 7.3 `stud_listings`
 
@@ -752,7 +758,7 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Tack (now its own stage, after the market) | `tack_types`, `tack_items` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` — **built, in full (2026-08-03)**, see §9 above |
-| Market | `listings`, `buy_offers`, `stud_listings`, `stud_bookings` |
+| Market | `listings`, `buy_offers` — **built (2026-08-03)**, Parts A-C, see §7.1/§7.2 above. `stud_listings`, `stud_bookings` still not built (Part D). |
 | Professions | `provider_state`, `provider_inventory` |
 | Registries | `registries`, `registry_inductees` |
 | The other seven breeds | no new tables — the remaining `breeds` columns filled in for every breed but the Quarter Horse, plus their `conditions` rows |

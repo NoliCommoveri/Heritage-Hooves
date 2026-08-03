@@ -20,6 +20,7 @@ import { getDisciplines, type DisciplineRow } from './disciplines';
 import { listStableHorses, countAliveHorses, loadPedigreeContextForMany, type HorseRow } from './horses';
 import { getActivePregnancyForMare } from './pregnancies';
 import { getBookedCoveringForMare, bookCovering } from './coverings';
+import { getSeasonTradeSummary } from './ledger';
 import { isInBreedingSeason } from '../engines/breeding/season';
 import { availabilityForHorse } from './care';
 import { parseGenotype } from '../engines/genetics/genotype';
@@ -127,22 +128,30 @@ export interface NpcStableAdminRow {
   nextCycleDueGameDay: number | null;
   pairsLastCycle: number;
   marketPriceMultiplier: number;
+  /** Slice 0017 §12 (Part C)'s named mitigation 1: what this stable has spent buying and earned
+   * selling since the current game year started, read from the ledger's own 'purchase'/'sale' kinds
+   * - so an operator can see a stable's buying power drying up before the children feel it. */
+  spentBuyingThisSeason: number;
+  earnedSellingThisSeason: number;
 }
 
 /** /admin/npc's per-stable table (§7.3). One pass over every npc_policy row - three stables at
- * launch (§2.1), so no batching concern yet (§4.2's own closing note). */
-export async function listNpcStablesForAdmin(env: Env): Promise<NpcStableAdminRow[]> {
+ * launch (§2.1), so no batching concern yet (§4.2's own closing note). gameDay/gameDaysPerYear are
+ * only used to bound the season summary (§12) - everything else here is unchanged from slice 0015. */
+export async function listNpcStablesForAdmin(env: Env, gameDay: number, gameDaysPerYear: number): Promise<NpcStableAdminRow[]> {
   const [policies, breeds, disciplines] = await Promise.all([listNpcPolicies(env), getBreeds(env), getDisciplines(env)]);
   const breedById = new Map(breeds.map((b) => [b.id, b]));
   const disciplineByCode = new Map(disciplines.map((d) => [d.code, d]));
+  const seasonStartGameDay = Math.floor(gameDay / gameDaysPerYear) * gameDaysPerYear;
 
   const rows: NpcStableAdminRow[] = [];
   for (const policy of policies) {
     const stable = await getStableById(env, policy.stable_id);
     if (!stable) continue;
-    const [aliveCount, pairsLastCycle] = await Promise.all([
+    const [aliveCount, pairsLastCycle, tradeSummary] = await Promise.all([
       countAliveHorses(env, policy.stable_id),
       countPairsBookedOnDay(env, policy.stable_id, policy.last_bred_game_day),
+      getSeasonTradeSummary(env, policy.stable_id, seasonStartGameDay),
     ]);
     const targetLabel =
       policy.target_kind === 'conformation'
@@ -163,6 +172,8 @@ export async function listNpcStablesForAdmin(env: Env): Promise<NpcStableAdminRo
       nextCycleDueGameDay: policy.last_bred_game_day === null ? null : policy.last_bred_game_day + policy.breeding_interval_game_days,
       pairsLastCycle,
       marketPriceMultiplier: policy.market_price_multiplier,
+      spentBuyingThisSeason: tradeSummary.spentBuying,
+      earnedSellingThisSeason: tradeSummary.earnedSelling,
     });
   }
   return rows;

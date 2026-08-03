@@ -12,6 +12,7 @@ import { nowUtcSeconds } from '../lib/time';
 import { resolveDueCoverings } from './coverings';
 import { runNpcBreedingDecisions } from './npcBreeding';
 import { runNpcMarketListings } from './npcMarket';
+import { refreshNpcBuyOffers, runNpcMarketPurchases } from './npcBuying';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
@@ -68,6 +69,15 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // be listed twice, per idx_listings_one_open_per_horse), so no interval marker is needed the
       // way runNpcBreedingDecisions needs last_bred_game_day.
       await runNpcMarketListings(env, newGameDay, config);
+      // Slice 0017 §12 (Part C): sits right after Part B's own selling stage above - both are an
+      // NPC stable's own tick-cycle stock decisions. refreshNpcBuyOffers first (keeps the standing
+      // offers board current for anyone browsing /market this cycle), then runNpcMarketPurchases
+      // (shops the open listings that board's own criteria describe). Neither needs an interval
+      // marker: the offer upsert is naturally idempotent (recomputing the same offer just writes
+      // the same numbers back), and a purchase is guarded by sellListing's own WHERE-guarded batch,
+      // the same race protection a player's own buy route relies on (§7.3).
+      await refreshNpcBuyOffers(env, newGameDay, config);
+      await runNpcMarketPurchases(env, newGameDay, config);
       // Slice 0003 §10: physics resolves against the tick's new game_day/tick_seq before the world
       // row itself is updated below, so a failure here leaves world untouched and a retry recomputes
       // the same newGameDay/newTickSeq and finds the same (still-pending) rows to process - both

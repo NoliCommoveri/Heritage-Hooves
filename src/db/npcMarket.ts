@@ -34,8 +34,12 @@ import { openListingsBySellerStable, createListing, appraiseHorseForStable } fro
 
 /** The same target-scoring runOnePolicy's own scoreCandidate uses for breeding, minus the selection
  * noise and the retention roll - both are about picking who breeds, not about ranking who is worth
- * keeping, so a listing decision reads the horse's plain rawScore against the policy's target. */
-function qualityFor(horse: HorseRow, target: SelectionTarget, gameDay: number, config: Config): number {
+ * keeping, so a listing decision reads the horse's plain rawScore against the policy's target.
+ * Exported for src/db/buyOffers.ts and src/db/npcBuying.ts (slice 0017 §12, Part C): the same
+ * "how good is this horse against my own target" question a listing decision asks, asked again
+ * from the buying side - reused rather than re-derived, the same rule this file's own header
+ * comment already applies to appraiseHorseForStable and createListing. */
+export function qualityFor(horse: HorseRow, target: SelectionTarget, gameDay: number, config: Config): number {
   const expressed = expressedFor(horse, target.kind, gameDay, config);
   if (target.kind === 'conformation') {
     return scoreEntry({ expressed, ideal: target.ideal ?? {}, judgeWeights: target.judgeWeights ?? {}, falloff: target.falloff ?? 0, noise: 0 }).rawScore;
