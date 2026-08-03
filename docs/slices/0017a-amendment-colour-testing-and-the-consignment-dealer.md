@@ -21,9 +21,16 @@ if nobody buys them, and — the point of the whole thing — **the operator can
 from `/admin` to be seeded into the next batch**, so a colour that does not exist in the players'
 gene pool can be got into it deliberately.
 
+**Part 3 — breeds in play (§6).** An admin screen that turns a breed on or off, and the decision
+about what that actually means. `breeds.enabled` has existed since `0010_breeds.sql` and **nothing
+has ever read it**; this is where it starts mattering.
+
 **Part 1 must land first.** An injected allele nobody can test for is invisible, and a tested
 carrier is the dealer's entire value proposition. Building Part 2 first produces a feature that
 looks like it does nothing.
+
+Part 3 is independent of both and can land in any order, though the dealer's breed list (§5.8) reads
+it, so a dealer built first should be checked against §6 afterwards.
 
 **Naming.** 0017 already spends A, B, C and D. This is **Part E**. It is not "Part B1" and the
 consignment dealer is not a variety of NPC stable selling surplus — see §5.1.
@@ -69,6 +76,12 @@ Settled with the operator in conversation. Treat as standing.
    injection set from admin. This is strictly better and the resampling machinery is **not built** —
    see §5.4 for why.
 4. **When the operator injects an allele, the dealer pre-tests that locus.** Not optional. §5.4.
+5. **The dealer stocks Quarter Horses only, for now.** `consignment_breed_codes = ["QH"]`. It is the
+   only breed with a seeded `ideal_vector`, and under 0017 §4.4 anything else would be priced off
+   age and health alone — systematically wrong, in a direction a child could learn to exploit. This
+   is a config key, not a constant: the day the drafted vectors in `docs/breed-ideal-vectors.md` are
+   seeded, widening it is one edit at `/admin/config` with no deploy.
+6. **A breed can be taken in and out of play from admin, and that gates supply only.** §6.
 
 ---
 
@@ -397,7 +410,7 @@ feed scopes events — per account or per stable — before writing it.
 | `consignment_test_count_weights` | `{"0":55,"2":25,"3":13,"5":7}` | Live. Disease panel size, per horse. |
 | `consignment_price_multiplier` | `1.15` | Live. |
 | `consignment_carrier_premium` | `0.20` | Live. Per injected-and-tested allele. |
-| `consignment_breed_codes` | see §6 | Live. Which breeds the dealer draws from. |
+| `consignment_breed_codes` | `["QH"]` | Live. §3.5. Intersected with the breeds in play (§6) — a breed must be both listed here and enabled for the dealer to stock it. |
 | `consignment_age_min/max_game_days` | reuse founding | Live. |
 
 Every number is a guess, for the same reason 0017 §5.4 says so about its own table.
@@ -414,26 +427,122 @@ Every number is a guess, for the same reason 0017 §5.4 says so about its own ta
 
 ---
 
-## 6. Decide before building
+## 6. Part 3 — breeds in play
 
-Per CLAUDE.md §2, these are not for the building session to default.
+### 6.1 The column exists and is dead
 
-1. **Which breeds may the dealer draw from?** Only the Quarter Horse has a seeded `ideal_vector`, so
-   under 0017 §4.4 every non-QH consignment returns `qualityUnknown` and is priced off age and
-   health alone — systematically wrong, and wrong in a direction a child could learn to exploit.
-   Two answers: restrict `consignment_breed_codes` to `["QH"]` (safe, but undercuts the point of
-   *outside* stock), or seed the drafted vectors from `docs/breed-ideal-vectors.md` first — a
-   data-only migration that also unblocks the other-seven-breeds row in CLAUDE.md §10.
-   **This was raised twice in the specifying conversation and not answered.**
-2. **Should colour have value in `appraise()` game-wide?** §5.6 keeps the premium in the dealer's
-   own pricing, so nothing changes for players. The coherent alternative is that a cremello is worth
-   more whoever is selling it — which is a real economic decision about this game, and belongs to
-   the operator rather than to a session that happens to be in the file.
-3. **Colour test price**, per locus and as a panel, against the existing disease test price.
+`breeds.enabled` was added in `0010_breeds.sql` with `DEFAULT 1`, and `0005` §5.3 instructs the seed
+migration to set it on every new breed. **Nothing has ever read it.** `getBreeds` in
+`src/db/breeds.ts` is `SELECT * FROM breeds ORDER BY id ASC` with no filter, and none of its
+callers — `shows.ts`, `npc.ts`, `npcBreeding.ts`, `routes/shows.ts`, `routes/admin.ts` — filters
+either.
+
+So this is not "put a form over an existing switch." The switch is not wired to anything, and the
+work is deciding what it should be wired to. **Do that before writing the screen**, because a
+half-wired `enabled` is worse than a dead one: an operator who ticks a box and sees some of the game
+respond will reasonably assume all of it did.
+
+### 6.2 What `enabled = 0` means, exactly
+
+**It gates the introduction of new horses of that breed, and nothing else. It never touches a horse,
+class, pedigree or listing that already exists.**
+
+That sentence is the whole design and it should be a comment on the migration that first reads the
+column. A breed code is written permanently into every horse's `composition` blob at birth
+(CLAUDE.md §11), so a breed cannot be undone — only closed to new arrivals.
+
+**Gated by `enabled = 0` (no new horses of this breed enter the world):**
+
+- Founding-stock offers — `chooseBreedForOffer` must not offer it, and `mintOffer` must not pick it.
+- The consignment dealer (§5), intersected with `consignment_breed_codes`.
+- The admin "create a horse" form at `/admin/horses/new`.
+- New breed show classes. Existing classes stand — see below.
+- New `npc_policy.target_breed_id` assignments.
+
+**Explicitly NOT gated — this is the important half:**
+
+- **Existing horses of that breed live, age, train, show, sell and die exactly as before.** Nothing
+  hides them, nothing devalues them.
+- **Two existing horses of a disabled breed can still breed, and their foal is still that breed.**
+  Disabling a breed must never sterilise a child's herd. "New horses" above means new *introductions
+  from outside* — founding offers, consignments, admin creation — never foals from stock somebody
+  already owns. Get this wrong and disabling a breed silently ends a family's breeding programme.
+- **Standing show classes, entered horses and unresolved entries.** A disabled breed's class runs to
+  completion; only the creation of the *next* one is gated.
+- **`getBreedById`, and every render path that turns a `breed_id` into a name.** A disabled breed's
+  name must still display everywhere, forever.
+
+Read as a whole, `enabled` is an **admission gate on supply**, not a statement about whether the
+breed exists. The column name is weaker than the meaning; the meaning is what the comment must say.
+
+### 6.3 The screen — `/admin/breeds`
+
+`src/routes/admin.ts` already imports `updateBreedImageCounts`, so there is an admin breeds surface
+to extend rather than a new one to invent. Per CLAUDE.md §13, a form and a table, not a UI.
+
+One row per breed, and **the columns should say why a breed is or is not ready, not just carry a
+checkbox** — this screen's real job is answering "which of these can I safely turn on?":
+
+| Column | Why it is there |
+|---|---|
+| Code, name | — |
+| **In play** | The toggle. |
+| **Ideal vector?** | No vector means no breed show class, and an appraisal that skips the quality term entirely (0017 §4.4). The single best predictor of whether a breed is ready. |
+| **Allele pool?** | Every locus present, per 0005 §3.2. A breed missing a locus **throws** at generation — see the warning below. |
+| **Images?** | `image_count` — zero means every horse of this breed has no picture to pick. |
+| **Horses alive** | What turning it off would, and would not, affect. Makes §6.2's rule concrete at the moment the operator is deciding. |
+
+Two guards:
+
+- **At least one breed must stay in play.** A game with none has no founding offers and no
+  consignments, and the failure is silent. Refuse the last one, with a sentence saying why.
+- **Turning a breed on whose pool is missing a locus must be refused, not warned about.** 0005 §3.2
+  is explicit that a missing locus is an error rather than a default, and `pool.ts` throws with the
+  locus named. That throw would surface as a broken founding offer or a dead tick stage, neither of
+  which the operator can debug. Validate the pool against `LOCI` at the moment of enabling and say
+  which locus is missing.
+
+The screen should also carry one plain-English paragraph of §6.2 — what turning a breed off does and
+does not do — because it is exactly the kind of thing an operator reasonably assumes the wrong way
+round, and the consequence lands on a child's horses.
+
+### 6.4 Auditing the change
+
+Taking a breed in or out of play is a human decision that changes what the world produces, and it
+should leave a record for the same reason config changes do (CLAUDE.md §7's append-only list).
+
+Check `config_audit`'s columns at build time. If its shape is a generic key/old/new/who/when, reuse
+it with a key like `breed:QH:enabled` and note the reuse in the build log. If it is tied to the
+`config` row specifically, add a small append-only table rather than bending it. **Do not leave the
+change unrecorded** — six months on, "when did the Friesian stop appearing in offers?" is a question
+somebody will ask.
+
+### 6.5 Tests
+
+- A disabled breed does not appear in a founding offer's breed choice, and `mintOffer` never picks it.
+- A disabled breed is never stocked by the dealer, even when listed in `consignment_breed_codes`.
+- **A foal bred from two existing horses of a disabled breed is born normally and is that breed.**
+- An existing horse of a disabled breed still renders its breed name, still shows, still sells.
+- Disabling the last enabled breed is refused.
+- Enabling a breed whose pool is missing a locus is refused, naming the locus.
 
 ---
 
-## 7. Risks
+## 7. Decide before building
+
+Per CLAUDE.md §2, these are not for the building session to default.
+
+1. **Should colour have value in `appraise()` game-wide?** §5.6 keeps the premium in the dealer's
+   own pricing, so nothing changes for players. The coherent alternative is that a cremello is worth
+   more whoever is selling it — which is a real economic decision about this game, and belongs to
+   the operator rather than to a session that happens to be in the file.
+2. **Colour test price**, per locus and as a panel, against the existing disease test price.
+
+*(The breed question that stood here has been answered: Quarter Horse only, §3.5.)*
+
+---
+
+## 8. Risks
 
 - **The gene pool is a one-way ratchet.** Every injection is permanent; alleles do not leave a
   closed population of five stables except by chance. Two `Cr` injections a year for three years and
@@ -452,19 +561,30 @@ Per CLAUDE.md §2, these are not for the building session to default.
   migration comment.
 - **Colour testing could make health testing look cheap or dear by comparison.** The two prices sit
   next to each other on one page and will be read against each other.
+- **A half-wired `enabled`.** §6.2 lists five things the flag gates and four it must not. If a
+  future session adds a sixth place that creates horses and forgets the check, breeds drift back
+  into play silently. The check belongs in as few places as possible — prefer one
+  `getBreedsInPlay()` helper in `src/db/breeds.ts` that every creation path calls, over five
+  scattered `WHERE enabled = 1` clauses.
 
 ---
 
-## 8. Documents to correct when this is built
+## 9. Documents to correct when this is built
 
-- **`CLAUDE.md` §10** — a row for colour testing, and a row for the consignment dealer. **Edit only
-  your own rows**; the Part B session is rewriting the Market row.
+- **`CLAUDE.md` §10** — a row for colour testing, a row for the consignment dealer, and a row for
+  breeds in play. **Edit only your own rows**; the Part B session is rewriting the Market row.
 - **`docs/build-log.md`** — the `locus:` namespacing convention on `horse_knowledge.subject_code`;
   the smoky-black display rule and where the mapping helper lives; `consignment_injections` as a
-  queued-instruction table rather than config; and the dealer stable's fictional balance, which is
-  the thing a future session is most likely to unify away.
+  queued-instruction table rather than config; the dealer stable's fictional balance, which is the
+  thing a future session is most likely to unify away; and **what `breeds.enabled` gates and what
+  it deliberately does not** (§6.2), which is the entry a future session most needs and cannot
+  infer from the column name.
 - **`docs/horse-game-schema.md`** — record `horse_knowledge` carrying locus rows, which its own
   comment predicted.
 - **`docs/slices/0017-market.md` §19** — the pointer to this document.
 - **`docs/slices/0005-founding-stock.md`** — a note that `generateCandidate` now has a second
-  caller, so a change to it affects the dealer as well as founding batches.
+  caller, so a change to it affects the dealer as well as founding batches; and that the breed
+  choice at `chooseBreedForOffer` is now filtered by §6.
+- **`docs/horse-game-overview.md` §4a** — record that all eight breeds remain specified but that
+  admission to play is now an operator control, and that the dealer stocks Quarter Horses only until
+  the remaining ideal vectors are seeded.

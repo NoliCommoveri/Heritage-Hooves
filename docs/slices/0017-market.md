@@ -907,6 +907,8 @@ On a deployed world with two player stables:
   on the open market every 90 game days, removes them if unclaimed, and lets the operator queue an
   allele from `/admin` to be seeded into the next batch — the only mechanism in the game that can
   introduce a colour nobody owns. It also specifies **colour testing** for players, which Part E
-  depends on and which must be built first.
+  depends on and which must be built first. It also adds **`/admin/breeds`**, and wires up
+  `breeds.enabled` — a column that has existed since `0010_breeds.sql` and that nothing has ever
+  read.
 
   It is **not** Part B and changes nothing in §11. Its §2 lists every place the two touch.
