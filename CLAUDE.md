@@ -205,7 +205,7 @@ Indexes follow the queries the real screens make. Don't guess a full index list 
 | Ageing and death | built (2026-08-02), decline curve added 2026-08-03 | Lifespan rolled at birth, an announced Failing period, and voluntary retirement. Age-based performance decline added 2026-08-03. See `docs/slices/0011-ageing-death-and-removal.md` and `docs/slices/0014-before-the-children-play.md` §4. |
 | Discipline shows | framework built, 1 of 6 disciplines built (2026-08-02) | Generic discipline-class framework; only Barrel Racing is seeded, the rest are a data-only `INSERT` away. See `docs/slices/0012-discipline-shows.md`. |
 | NPC stables | built, in full (2026-08-03) | NPC policy/ceiling data and a selection engine reusing the judge's own scorer (Part A); a tick stage driving NPC breeding decisions (Part B). `/admin/npc` manages it. See `docs/slices/0015-npc-stables.md`. |
-| Market | not started | |
+| Market | **specified, not built** (spec 2026-08-03) | Four parts specified in one document; **only Part A (player sale listings and the transfer) is to be built.** Parts B (NPC selling), C (NPC buying) and D (stud services) share Part A's table, pricing engine and transfer path, which is why they are written down now. See `docs/slices/0017-market.md`. |
 | Tack | not started, **not yet specified** | Deliberately placed after the market — tack pricing and discipline specificity both depend on stages not yet built. See `docs/horse-game-overview.md` §8b. |
 | Professions | not started | |
 | Registries | not started | |
