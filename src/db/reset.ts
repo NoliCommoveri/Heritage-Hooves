@@ -9,13 +9,13 @@
 //   - config          - the tuning numbers on /admin/config are settings, not world content.
 //   - config_audit    - append-only (CLAUDE.md §7), and it is a record of admin tuning rather
 //                       than of anything that happened in the world.
-//   - breeds, loci, quantitative_traits, judges, conditions, disciplines, d1_migrations -
-//                       reference data, created by migrations. Clearing these would break the game
-//                       with no way back from the browser.
+//   - breeds, loci, quantitative_traits, judges, conditions, disciplines, npc_ceiling_schedule,
+//                       d1_migrations - reference data, created by migrations. Clearing these
+//                       would break the game with no way back from the browser.
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
-import { SHOW_BARN_PREFIX } from './npc';
+import { SHOW_BARN_PREFIX, CEDAR_HOLLOW_PREFIX, WILLOW_CREEK_BARRELS_PREFIX } from './npc';
 
 export type ResetScope = 'horses' | 'world';
 
@@ -62,8 +62,15 @@ const HORSE_TABLES = [
  * that scope keeps a stable's balance, so its ledger history must stay too, or the
  * balance-equals-sum-of-ledger invariant in src/db/ledger.ts would break the moment a horses-only
  * reset ran.
+ *
+ * Slice 0015 adds `npc_policy`, before `stables` - it has a real foreign key into it
+ * (stable_id), and D1 enforces foreign keys (migrations/0064_show_classes_discipline.sql's own
+ * comment confirms this was checked against a live database), so leaving it out would make a full
+ * world reset fail outright the moment an NPC stable has a policy row. Left out of `HORSE_TABLES`
+ * deliberately: a horses-only reset keeps stables (and therefore their policies) exactly as it
+ * keeps everything else about a stable.
  */
-const WORLD_ONLY_TABLES = ['stable_prefix_history', 'ledger', 'stables', 'tick_run'] as const;
+const WORLD_ONLY_TABLES = ['stable_prefix_history', 'ledger', 'npc_policy', 'stables', 'tick_run'] as const;
 
 export const RESET_TABLES = [...HORSE_TABLES, ...WORLD_ONLY_TABLES] as const;
 
@@ -86,6 +93,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',
   ledger: 'Money history',
+  npc_policy: 'NPC stables\' breeding policies',
   stables: 'Stables',
   tick_run: 'Tick history',
 };
@@ -134,11 +142,16 @@ export interface ResetResult {
  * stopped on purpose. Every other clock column is reset, because they describe a world that is
  * now gone.
  *
- * A full world reset's blanket `DELETE FROM stables` also removes the NPC show barn (slice 0008
- * §5.7) - it is a stable like any other, and migrations/0040_npc_show_barn.sql only ever runs
- * once, so nothing would recreate it afterwards. Re-inserted here, empty, in exactly the shape
- * that migration leaves it in - the operator re-stocks it from /admin/shows the same way as after
- * a fresh install.
+ * A full world reset's blanket `DELETE FROM stables` also removes every NPC stable - each is a
+ * stable like any other, and the migrations that created them (0040, 0085) only ever run once, so
+ * nothing would recreate them afterwards. All three (Fair Meadow, Cedar Hollow, Willow Creek
+ * Barrels) are re-inserted here, empty, in exactly the shape those migrations leave them in,
+ * along with all three `npc_policy` rows - without the policy rows, every NPC stable comes back
+ * after a reset and none of them ever breeds again once a later session wires the tick stage in
+ * (slice 0015 §7.4). Fair Meadow is re-stocked from /admin/shows exactly as before; Cedar Hollow
+ * and Willow Creek Barrels have no stocking control yet at all (that is slice 0015 §7.3's outcross
+ * control, not built by this session - see CLAUDE.md §10's NPC stables row) - a reset before that
+ * lands simply leaves them real, empty, unstocked stables, same as right after this migration.
  */
 export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResult> {
   const statements = tablesForScope(scope).map((table) => env.DB.prepare(`DELETE FROM ${table}`));
@@ -160,6 +173,62 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
            VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, 0, NULL, NULL, ?)`
         )
         .bind(SHOW_BARN_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'volume_breeder', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 12.0, 0.05, 60, 4)`
+        )
+        .bind(SHOW_BARN_PREFIX)
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+           VALUES (NULL, ?, ?, 0, 1, 1, 0, 40, 0, ?, 1)`
+        )
+        .bind(CEDAR_HOLLOW_PREFIX, CEDAR_HOLLOW_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
+        )
+        .bind(CEDAR_HOLLOW_PREFIX, CEDAR_HOLLOW_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'conformation_specialist', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 3.0, 0.10, 180, 2)`
+        )
+        .bind(CEDAR_HOLLOW_PREFIX)
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+           VALUES (NULL, ?, ?, 0, 1, 1, 0, 40, 0, ?, 1)`
+        )
+        .bind(WILLOW_CREEK_BARRELS_PREFIX, WILLOW_CREEK_BARRELS_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
+        )
+        .bind(WILLOW_CREEK_BARRELS_PREFIX, WILLOW_CREEK_BARRELS_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'discipline_barn', 'ability', 'barrels', 4.0, 0.10, 150, 2)`
+        )
+        .bind(WILLOW_CREEK_BARRELS_PREFIX)
     );
     statements.push(
       env.DB
