@@ -458,14 +458,27 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
 }
 
 /**
- * Slice 0010 §8/§2.4: the Health card's rows, resolved to what this viewer is entitled to see.
- * Non-owners (today, only an admin - horsePageRoute's own gate) get names only (§1 step 5). An
- * owner gets a paid-for result where one exists, else an observation for a signs_visible condition
- * their horse's genotype already reads as affected by (no charge, no test - §2.4), else "not
- * tested".
+ * Slice 0010 §8/§2.4, revised by slice 0016's follow-up: the Health card's rows, resolved to what
+ * this viewer is entitled to see. An owner gets a paid-for result where one exists, else an
+ * observation for a signs_visible condition their horse's genotype already reads as affected by (no
+ * charge, no test - §2.4), else "not tested". An admin viewing someone else's horse gets the truth
+ * straight from the genotype for every applicable condition, bypassing knowledge entirely - the
+ * truth-vs-knowledge split protects one player from another, not the operator from their own game.
+ * Anyone who is neither gets names only.
  */
-async function healthRowsFor(ctx: RequestContext, owner: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
+async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
   const conditions = await getEnabledConditions(ctx.env);
+
+  if (isAdmin && !owner) {
+    return conditions.map((c) => {
+      if (c.locus_code === null) {
+        return { code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false };
+      }
+      const result = conditionStatus(genotype, parseConditionTrigger(c.trigger));
+      return { code: c.code, name: c.name, teachingText: c.teaching_text, status: result.status, copies: result.copies, testedGameDay: null, observedOnly: false };
+    });
+  }
+
   if (!owner) {
     return conditions.map((c) => ({ code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false }));
   }
@@ -562,7 +575,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
-  const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
+  const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
   // modifier so the number shown here matches what a show would actually apply.
   const enabledConditions = await getEnabledConditions(ctx.env);

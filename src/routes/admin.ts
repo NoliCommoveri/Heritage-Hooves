@@ -17,6 +17,7 @@ import {
   renderCareAdminPage,
   renderAdminSecurityPage,
   renderAdminUnlockPage,
+  renderAdminHorseSearchPage,
 } from '../render/admin';
 import { renderAdminHorseNewPage } from '../render/horses';
 import {
@@ -39,7 +40,7 @@ import { decidePinAttempt } from '../lib/pin';
 import { nowUtcSeconds } from '../lib/time';
 import { listAllStables, getStableById } from '../db/stables';
 import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
-import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName } from '../db/horses';
+import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn } from '../db/npc';
@@ -63,6 +64,19 @@ import { getCareAdminData, makeAllHorsesOverdue } from '../db/care';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
+}
+
+/**
+ * /admin/horses (a follow-up to slice 0016): find any horse by name and jump straight to its full
+ * page. `/horses/:id` already shows an admin everything an owner sees - conformation, care,
+ * genotype - and now (per the same follow-up) true health status computed from the genotype
+ * directly rather than filtered through what any one stable has paid to learn. This page is just
+ * the missing way in: without it, an admin had to go stable by stable to find a horse.
+ */
+export async function adminHorseSearchRoute(ctx: RequestContext): Promise<Response> {
+  const query = new URL(ctx.request.url).searchParams.get('q')?.trim() ?? '';
+  const results = query.length > 0 ? await searchHorses(ctx.env, query, 50) : [];
+  return htmlResponse(renderAdminHorseSearchPage({ world: ctx.world, query, results }));
 }
 
 export async function adminAccountsRoute(ctx: RequestContext, method: string): Promise<Response> {

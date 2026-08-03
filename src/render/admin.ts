@@ -14,12 +14,15 @@ import type { ConditionCensusRow } from '../db/health';
 import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
 import type { CareAdminData } from '../db/care';
 import type { PinAttemptDisplayRow } from '../db/pin';
+import type { HorseSearchRow } from '../db/horses';
+import { horseDisplayName } from '../db/horses';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
 type AdminSubnavPage =
   | 'home'
   | 'accounts'
+  | 'horses'
   | 'config'
   | 'world'
   | 'breeding'
@@ -38,6 +41,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
     { label: 'Admin home', href: '/admin', active: active === 'home' },
     { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
+    { label: 'Search horses', href: '/admin/horses', active: active === 'horses' },
     { label: 'Config', href: '/admin/config', active: active === 'config' },
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
     { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
@@ -79,6 +83,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
       <p><strong>Paused:</strong> ${w.paused ? 'yes' : 'no'}</p>
     </div>
     <p><a class="button-link" href="/admin/accounts">Accounts</a></p>
+    <p><a class="button-link" href="/admin/horses">Search horses</a></p>
     <p><a class="button-link" href="/admin/config">Config</a></p>
     <p><a class="button-link" href="/admin/world">World clock</a></p>
     <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
@@ -1141,4 +1146,51 @@ export function renderAdminUnlockPage(params: { world: WorldRow; redirectTo: str
       <p><a href="/admin/unlock?redirect=${encodeURIComponent(params.redirectTo)}&forgot=1">I've forgotten the PIN</a></p>`;
 
   return pageShell({ title: 'Admin PIN', world: params.world, loggedIn: true, isAdmin: true, section: 'admin', actionsLeft: null, body });
+}
+
+/**
+ * /admin/horses: find any horse by name and jump to its full page. `/horses/:id` already shows an
+ * admin everything an owner sees, plus true health status computed straight from the genotype -
+ * this is just the way in, since going stable by stable to find one horse isn't practical once a
+ * family has more than a handful.
+ */
+export function renderAdminHorseSearchPage(params: { world: WorldRow; query: string; results: HorseSearchRow[] }): SafeHtml {
+  const rows = params.results.map(
+    (h) => html`
+    <tr>
+      <td><a href="/horses/${String(h.id)}">${horseDisplayName(h)}</a></td>
+      <td>${h.stable_name}</td>
+      <td>${h.breed_name ?? raw('&mdash;')}</td>
+      <td>${h.sex}</td>
+      <td>${h.status}</td>
+      <td>${String(h.born_game_day)}</td>
+    </tr>`
+  );
+
+  const noResults =
+    params.query.length === 0
+      ? raw('')
+      : params.results.length === 0
+        ? html`<p class="muted">No horse's registered or barn name matches "${params.query}".</p>`
+        : raw('');
+
+  const body = html`
+    <h1>Search horses</h1>
+    <p class="muted">Finds a horse by registered or barn name, from any stable - the horse's own page shows everything an owner sees, and (as an admin) the true health result straight from its genotype.</p>
+    <form method="get" action="/admin/horses">
+      <label>Name
+        <input type="text" name="q" value="${params.query}" autocomplete="off" autofocus>
+      </label>
+      <button type="submit">Search</button>
+    </form>
+    ${noResults}
+    ${rows.length
+      ? html`
+        <table>
+          <thead><tr><th>Name</th><th>Stable</th><th>Breed</th><th>Sex</th><th>Status</th><th>Born (game day)</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+      : raw('')}
+  `;
+  return shell(params.world, body, 'Search horses', 'horses');
 }

@@ -573,15 +573,17 @@ function healthStatusBadge(row: HealthConditionDisplay): SafeHtml {
   return html`<span class="badge badge-danger">${label}${copiesNote}</span>`;
 }
 
-/** Slice 0010 §8: the Health card, below Conformation. For the owner: one row per applicable
- * enabled condition with the status they are entitled to, a Test button, and a link to the test
- * page. For anyone else viewing (today, only an admin - horsePageRoute's own owner-or-admin gate)
- * the card shows nothing but the condition names (§1 step 5) - no results, no Test button, even
- * for a condition that would otherwise be visible without a test. That is a deliberate scope limit
- * for this slice's one non-owner viewer, not a rule about what visible-without-a-test means. */
-function healthCard(params: { owner: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number; gameDaysPerYear: number }): SafeHtml {
+/** Slice 0010 §8, revised by slice 0016's follow-up: the Health card, below Conformation. For the
+ * owner: one row per applicable enabled condition with the status they've paid to learn or can see
+ * for free (§2.4's knowledge boundary). For an admin viewing someone else's horse: the same full
+ * rows, but computed directly from the genotype (`conditionStatus`, not `ownerVisibleStatus`) - the
+ * operator asked to see everything, and the truth-vs-knowledge split that protects a player from
+ * another player was never meant to apply to the one person running the game. No Test button
+ * either way for a non-owner - buying a test is a purchase on a stable's own account, not
+ * something an admin does on someone else's behalf. */
+function healthCard(params: { canSeeFullHealth: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number; gameDaysPerYear: number }): SafeHtml {
   if (params.rows.length === 0) return raw('');
-  const rows = params.owner
+  const rows = params.canSeeFullHealth
     ? params.rows.map(
         (row) => html`
         <div class="health-row">
@@ -863,7 +865,7 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
-    ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
+    ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${careCard({
       care: params.care,
       feedLevelName: params.feedLevelName,

@@ -133,6 +133,39 @@ export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }
 
+export interface HorseSearchRow {
+  id: number;
+  registered_name: string | null;
+  barn_name: string | null;
+  sex: 'mare' | 'stallion' | 'gelding';
+  status: 'alive' | 'dead' | 'removed';
+  born_game_day: number;
+  owner_stable_id: number;
+  stable_name: string;
+  breed_name: string | null;
+}
+
+/** /admin/horses (a follow-up to slice 0016): find any horse by name, for an admin who wants the
+ * full owner-only page (conformation, true health status, genotype) without navigating through a
+ * stable. Matches either name field, case-insensitively - SQLite's LIKE is ASCII-case-insensitive
+ * by default, which is enough for this. */
+export async function searchHorses(env: Env, query: string, limit: number): Promise<HorseSearchRow[]> {
+  const like = `%${query}%`;
+  const result = await env.DB.prepare(
+    `SELECT h.id, h.registered_name, h.barn_name, h.sex, h.status, h.born_game_day, h.owner_stable_id,
+            st.name AS stable_name, b.name AS breed_name
+     FROM horses h
+     JOIN stables st ON st.id = h.owner_stable_id
+     LEFT JOIN breeds b ON b.id = h.breed_id
+     WHERE h.registered_name LIKE ? OR h.barn_name LIKE ?
+     ORDER BY h.id DESC
+     LIMIT ?`
+  )
+    .bind(like, like, limit)
+    .all<HorseSearchRow>();
+  return result.results ?? [];
+}
+
 /** The one place this rule lives: a registered name if there is one, else a barn name, else
  * "Unnamed filly/colt". render/horses.ts's displayNameFor is this function, kept there under its
  * existing name for the render-layer call sites that already import it from there - db-layer

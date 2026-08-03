@@ -53,8 +53,9 @@ import {
   adminCareRoute,
   adminSecurityRoute,
   adminUnlockRoute,
+  adminHorseSearchRoute,
 } from './routes/admin';
-import { readAdminUnlockPayload } from './lib/session';
+import { readAdminUnlockPayload, expireAdminUnlockCookie } from './lib/session';
 import { nowUtcSeconds } from './lib/time';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
@@ -95,6 +96,24 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (ctx.account.must_change_password && path !== '/account/password') {
     return redirect('/account/password');
   }
+
+  const response = await routeForLoggedInAccount(ctx, path, method, request, env);
+
+  // The admin PIN's "re-lock on leaving" behaviour, chosen over the earlier pure time-based grace
+  // (still kept as a secondary bound - see the gate check below): the moment an admin account's
+  // request lands on any page outside /admin, the unlock cookie is cleared, so navigating back into
+  // /admin - even seconds later - always asks again. Moving between admin pages in one visit does
+  // not re-prompt, since none of those requests hit this branch.
+  if (ctx.account.is_admin === 1 && !path.startsWith('/admin')) {
+    response.headers.append('Set-Cookie', expireAdminUnlockCookie());
+  }
+  return response;
+}
+
+async function routeForLoggedInAccount(ctx: RequestContext, path: string, method: string, request: Request, env: Env): Promise<Response> {
+  // The caller already checked this; re-asserted here so TypeScript narrows ctx.account for the
+  // rest of this function the way it already does in handleRequest.
+  if (!ctx.account) return notFound();
 
   if (path === '/account/password') return withReissuedCookie(ctx, await accountPasswordRoute(ctx, method));
 
@@ -195,6 +214,7 @@ async function dispatchAdminRoute(ctx: RequestContext, path: string, method: str
   if (path === '/admin/config') return adminConfigRoute(ctx, method);
   if (path === '/admin/config/history' && method === 'GET') return adminConfigHistoryRoute(ctx);
   if (path === '/admin/world') return adminWorldRoute(ctx, method);
+  if (path === '/admin/horses' && method === 'GET') return adminHorseSearchRoute(ctx);
   if (path === '/admin/horses/new') return adminHorseNewRoute(ctx, method);
   if (path === '/admin/breeding') return adminBreedingRoute(ctx, method);
   if (path === '/admin/founding') return adminFoundingRoute(ctx, method);
