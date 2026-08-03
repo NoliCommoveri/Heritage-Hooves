@@ -10,6 +10,7 @@ import { getWorld } from './world';
 import { getConfig } from '../lib/config-cache';
 import { nowUtcSeconds } from '../lib/time';
 import { resolveDueCoverings } from './coverings';
+import { runNpcBreedingDecisions } from './npcBreeding';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
@@ -54,6 +55,11 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       newGameDay = world.game_day + config.values.game_days_per_tick;
       newSeasonIndex = Math.floor(newGameDay / config.values.game_days_per_year);
       status = 'ok';
+      // Slice 0015 §6.2: immediately before resolveDueCoverings - a covering this stage books
+      // resolves the same way, and on the same or a later tick, as a covering a player books
+      // through the route. Idempotent on npc_policy.last_bred_game_day (§6.3), the same pattern
+      // stables.last_upkeep_game_day already establishes.
+      await runNpcBreedingDecisions(env, newGameDay, newTickSeq, config);
       // Slice 0003 §10: physics resolves against the tick's new game_day/tick_seq before the world
       // row itself is updated below, so a failure here leaves world untouched and a retry recomputes
       // the same newGameDay/newTickSeq and finds the same (still-pending) rows to process - both

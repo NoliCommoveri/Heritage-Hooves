@@ -16,6 +16,8 @@ import type { CareAdminData } from '../db/care';
 import type { PinAttemptDisplayRow } from '../db/pin';
 import type { HorseSearchRow } from '../db/horses';
 import { horseDisplayName } from '../db/horses';
+import type { NpcStableAdminRow, NpcCeilingScheduleRow } from '../db/npcBreeding';
+import type { DisciplineRow } from '../db/disciplines';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
@@ -33,6 +35,7 @@ type AdminSubnavPage =
   | 'health'
   | 'ageing'
   | 'care'
+  | 'npc'
   | 'security'
   | 'migrations'
   | 'reset';
@@ -52,6 +55,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Health', href: '/admin/health', active: active === 'health' },
     { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
     { label: 'Care', href: '/admin/care', active: active === 'care' },
+    { label: 'NPC stables', href: '/admin/npc', active: active === 'npc' },
     { label: 'Security', href: '/admin/security', active: active === 'security' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
@@ -1059,6 +1063,144 @@ export function renderCareAdminPage(params: { world: WorldRow; data: CareAdminDa
     </div>
   `;
   return shell(params.world, body, 'Care', 'care');
+}
+
+/**
+ * /admin/npc (slice 0015 §7.3): every NPC stable's roster, personality and breeding cycle, the
+ * externally-scheduled quality ceiling, and the three controls that let the operator move any of
+ * it from the browser - editing the ceiling schedule, founding a new personality stable, and adding
+ * an outcross batch by hand (the only way genetic material enters an NPC stable's closed
+ * population, §3.3). Otherwise read-only, per CLAUDE.md §13's "no polished admin UI".
+ */
+export function renderNpcAdminPage(params: {
+  world: WorldRow;
+  stables: NpcStableAdminRow[];
+  ceilingSchedule: NpcCeilingScheduleRow[];
+  breeds: BreedRow[];
+  disciplines: DisciplineRow[];
+  qualityBands: Record<string, number>;
+  defaultBand: string;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const stableRows = params.stables.map(
+    (s) => html`
+    <tr>
+      <td>${s.stableName}</td>
+      <td>${s.personalityCode}</td>
+      <td>${s.targetLabel}</td>
+      <td>${String(s.aliveCount)} / ${String(s.capacity)}</td>
+      <td>${String(s.balance)}</td>
+      <td>${s.lastBredGameDay === null ? raw('&mdash; (not yet)') : String(s.lastBredGameDay)}</td>
+      <td>${s.nextCycleDueGameDay === null ? raw('&mdash;') : String(s.nextCycleDueGameDay)}</td>
+      <td>${String(s.pairsLastCycle)}</td>
+    </tr>`
+  );
+
+  // Read-only display; the edit form below is the one place these numbers change (a <form> cannot
+  // legally wrap a single <tr>, so this stays a plain table rather than one form per row).
+  const sortedCeilings = [...params.ceilingSchedule].sort((a, b) => a.game_day_from - b.game_day_from);
+  const activeRow = [...sortedCeilings].reverse().find((r) => r.game_day_from <= params.world.game_day);
+  const ceilingRows = sortedCeilings.map(
+    (row) => html`
+    <tr class="${row.id === activeRow?.id ? 'active-row' : ''}">
+      <td>${String(row.game_day_from)}</td>
+      <td>${String(row.conformation_ceiling)}</td>
+      <td>${String(row.ability_ceiling)}</td>
+      <td>${row.id === activeRow?.id ? 'Active now' : ''}</td>
+    </tr>`
+  );
+  const ceilingRowOptions = html`${sortedCeilings.map(
+    (row) => html`<option value="${String(row.id)}">From day ${String(row.game_day_from)} (currently ${String(row.conformation_ceiling)} / ${String(row.ability_ceiling)})</option>`
+  )}`;
+
+  const breedOptions = html`${params.breeds
+    .filter((b) => b.ideal_vector !== null)
+    .map((b) => html`<option value="${String(b.id)}">${b.name}</option>`)}`;
+  const disciplineOptions = html`${params.disciplines.map((d) => html`<option value="${d.code}">${d.name}</option>`)}`;
+  const npcStableOptions = html`${params.stables.map((s) => html`<option value="${String(s.stableId)}">${s.stableName}</option>`)}`;
+  const bandOptions = html`${Object.keys(params.qualityBands).map(
+    (band) =>
+      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
+  )}`;
+
+  const body = html`
+    <h1>NPC stables</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Every NPC stable</h2>
+      <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after).</p>
+      <table>
+        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th></tr></thead>
+        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="8" class="muted">No NPC stables yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>The quality ceiling schedule</h2>
+      <p class="muted">The applicable row at any game day is the one with the largest "From game day" that has already arrived. Overview §10d calls keeping this adjustable the single most important thing about it - change a row's numbers and save, no deploy needed.</p>
+      <table>
+        <thead><tr><th>From game day</th><th>Conformation ceiling</th><th>Ability ceiling</th><th></th></tr></thead>
+        <tbody>${ceilingRows}</tbody>
+      </table>
+      <h3>Add a row, or edit an existing one</h3>
+      <p class="muted">Choose "Add a new row" to add one, or pick an existing row to overwrite its three numbers (retype all three - this replaces the row, it doesn't merge).</p>
+      <form method="post" action="/admin/npc">
+        <input type="hidden" name="action" value="edit_ceiling">
+        <label>Row
+          <select name="id">
+            <option value="">Add a new row</option>
+            ${ceilingRowOptions}
+          </select>
+        </label>
+        <label>From game day <input type="text" inputmode="numeric" name="game_day_from" required></label>
+        <label>Conformation ceiling <input type="text" inputmode="decimal" name="conformation_ceiling" required></label>
+        <label>Ability ceiling <input type="text" inputmode="decimal" name="ability_ceiling" required></label>
+        <button type="submit">Save</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Found a new NPC stable</h2>
+      <p class="muted">The admin equivalent of the migration that seeded Cedar Hollow and Willow Creek Barrels - a fourth or fifth personality doesn't need a deploy. A prefix is permanent once horses are bred under it, and cannot be changed later.</p>
+      <form method="post" action="/admin/npc">
+        <input type="hidden" name="action" value="found_stable">
+        <label>Stable name <input type="text" name="name" required></label>
+        <label>Prefix (stamped on every horse it breeds) <input type="text" name="prefix" required></label>
+        <label>Personality label (for this page only, e.g. "colour_barn") <input type="text" name="personality_code" required></label>
+        <label>Targets
+          <select name="target_kind" required>
+            <option value="conformation">A breed's conformation ideal</option>
+            <option value="ability">A discipline's ability weights</option>
+          </select>
+        </label>
+        <label>Breed (if targeting conformation) <select name="target_breed_id">${breedOptions}</select></label>
+        <label>Discipline (if targeting a discipline) <select name="target_discipline_code">${disciplineOptions}</select></label>
+        <label>Selection noise (standard deviation) <input type="text" inputmode="decimal" name="selection_noise_sd" required></label>
+        <label>Retention bias (0-1, chance to skip a horse this cycle) <input type="text" inputmode="decimal" name="retention_bias" required></label>
+        <label>Breeding interval (game days) <input type="text" inputmode="numeric" name="breeding_interval_game_days" required></label>
+        <label>Max pairs per cycle <input type="text" inputmode="numeric" name="max_pairs_per_cycle" required></label>
+        <label>Capacity <input type="text" inputmode="numeric" name="capacity" required></label>
+        <button type="submit">Found stable</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Add an outcross batch</h2>
+      <p class="muted">The only way genetic material enters an NPC stable's closed population - each one breeds only with itself, so its own inbreeding will otherwise climb the way an unmixed player pool's would (§3.3). Mints new horses; does not remove any.</p>
+      <form method="post" action="/admin/npc">
+        <input type="hidden" name="action" value="outcross">
+        <label>NPC stable <select name="stable_id" required>${npcStableOptions}</select></label>
+        <label>Breed <select name="breed_id" required>${breedOptions}</select></label>
+        <label>Quality band <select name="band" required>${bandOptions}</select></label>
+        <label>How many to add <input type="text" inputmode="numeric" name="count" required></label>
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, mint this many horses straight into that stable.
+        </label>
+        <button type="submit">Add batch</button>
+      </form>
+    </div>
+  `;
+  return shell(params.world, body, 'NPC stables', 'npc');
 }
 
 /**

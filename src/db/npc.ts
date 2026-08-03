@@ -9,8 +9,9 @@ import type { Env } from '../types';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import type { StableRow } from './stables';
-import { getBreeds } from './breeds';
-import { buildFoundingHorseInsertStatements, countAliveHorses } from './horses';
+import { getStableById } from './stables';
+import { getBreeds, type BreedRow } from './breeds';
+import { buildFoundingHorseInsertStatements, countAliveHorses, type HorseRow } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
@@ -45,42 +46,50 @@ async function resolveUniqueBarnName(env: Env, seed: number): Promise<{ register
   }
 }
 
+/**
+ * Slice 0015 §2.7/§7.2: an NPC-bred foal is named at birth, from its own breeder stable's prefix -
+ * nobody will ever name it by hand the way a player names their own foal. Walks the identical
+ * deterministic collision sequence resolveUniqueBarnName uses above, seeded from the foal's own
+ * foal_rng_seed so re-deriving it (a retried tick) always produces the same name. Only namePart is
+ * used - generateFoundingName's own originPrefix means "founding origin" (bred by someone outside
+ * the game), which would misdescribe a horse this stable bred itself.
+ */
+export async function resolveUniqueNpcFoalName(env: Env, prefix: string, seed: number): Promise<string> {
+  let attempt = 0;
+  for (;;) {
+    const { namePart } = generateFoundingName(seed, attempt);
+    const registeredName = `${prefix} ${namePart}`;
+    const existing = await env.DB.prepare('SELECT id FROM horses WHERE registered_name = ?').bind(registeredName).first<{ id: number }>();
+    if (!existing) return registeredName;
+    attempt++;
+  }
+}
+
 export interface StockShowBarnResult {
   minted: number;
   alreadyHad: number;
 }
 
 /**
- * Tops the barn up to targetSize Quarter Horses at the given quality band - idempotent in the
- * sense that pressing the button twice never over-fills it (slice 0008 §8.2), because it only ever
- * mints the shortfall. Sex is an even coin flip per candidate; this slice's class has no
- * sex_restriction, so the mix doesn't need to match any particular ratio.
+ * The mechanism underneath stockShowBarn and stockNpcStable below (slice 0015 §7.3): both the
+ * stable and the breed are parameters here, which is what "both become parameters" (the slice
+ * document's own words) actually means. Mints exactly `count` horses, no top-up logic - the two
+ * callers below each decide what `count` should be for their own purpose.
  */
-export async function stockShowBarn(
+async function mintFoundingHorses(
   env: Env,
-  params: { config: Config; gameDay: number; worldTickSeq: number; targetSize: number; band: string }
-): Promise<StockShowBarnResult> {
-  const stable = await getShowBarnStable(env);
-  if (!stable) {
-    throw new Error('stockShowBarn: the NPC show barn stable is missing - has migrations/0040_npc_show_barn.sql been applied?');
-  }
+  params: { stable: StableRow; breed: BreedRow; config: Config; gameDay: number; worldTickSeq: number; count: number; band: string }
+): Promise<number> {
+  if (params.count <= 0) return 0;
 
-  const alreadyHad = await countAliveHorses(env, stable.id);
-  const shortfall = Math.max(0, params.targetSize - alreadyHad);
-  if (shortfall === 0) return { minted: 0, alreadyHad };
-
-  const breeds = await getBreeds(env);
-  const qh = breeds.find((b) => b.code === 'QH');
-  if (!qh) throw new Error('stockShowBarn: the Quarter Horse breed is missing');
-  const pool = parseAllelePool(qh.founding_allele_pool);
-
+  const pool = parseAllelePool(params.breed.founding_allele_pool);
   const polygenicOneChance = params.config.values.quality_bands[params.band];
-  if (polygenicOneChance === undefined) throw new Error(`stockShowBarn: unknown quality band "${params.band}"`);
+  if (polygenicOneChance === undefined) throw new Error(`mintFoundingHorses: unknown quality band "${params.band}"`);
 
   const [conditions, lethalTriggers] = await Promise.all([getEnabledConditions(env), getLethalTriggers(env)]);
 
   const statements = [];
-  for (let i = 0; i < shortfall; i++) {
+  for (let i = 0; i < params.count; i++) {
     const seed = randomSeed();
     const generated = generateCandidate({
       pool,
@@ -96,10 +105,10 @@ export async function stockShowBarn(
 
     statements.push(
       ...buildFoundingHorseInsertStatements(env, {
-        stableId: stable.id,
+        stableId: params.stable.id,
         sex,
-        breedId: qh.id,
-        breedCode: qh.code,
+        breedId: params.breed.id,
+        breedCode: params.breed.code,
         registeredName,
         breederPrefix: originPrefix,
         bornGameDay: params.gameDay - generated.ageGameDays,
@@ -110,15 +119,15 @@ export async function stockShowBarn(
         conformationNoiseSd: params.config.values.conformation_noise_sd,
         conditions,
         lethalFoalDeathGameDays: params.config.values.lethal_foal_death_game_days,
-        // The NPC show barn has no account (SHOW_BARN_PREFIX's own file comment) - null here means
+        // No NPC stable has an account (this file's header comment) - null here means
         // buildConditionSignsEventStatement's own guard writes nothing, which is correct: its
-        // horses foal nothing a child reads (this file's header comment).
+        // horses foal nothing a child reads.
         accountId: null,
-        // Slice 0011 §2.3/§7.1: the show barn's horses age and die on the same code path as
+        // Slice 0011 §2.3/§7.1: an NPC stable's horses age and die on the same code path as
         // everyone else's (CLAUDE.md §13) - a lifespan is rolled for them here exactly like anyone
         // else's founding stock.
         lifespanConfig: params.config.values,
-        // Slice 0013 §2.6/§5.2: the show barn's horses are stamped current every tick regardless
+        // Slice 0013 §2.6/§5.2: an NPC stable's horses are stamped current every tick regardless
         // (noticeCareDue), but starting them current here too means they never read as overdue for
         // even the one tick between minting and the next tick running.
         careStartAgeGameDays: params.config.values.care_start_age_game_days,
@@ -128,5 +137,60 @@ export async function stockShowBarn(
   }
 
   await env.DB.batch(statements);
-  return { minted: shortfall, alreadyHad };
+  return params.count;
+}
+
+/**
+ * Tops the show barn up to targetSize Quarter Horses at the given quality band - idempotent in the
+ * sense that pressing the button twice never over-fills it (slice 0008 §8.2), because it only ever
+ * mints the shortfall.
+ */
+export async function stockShowBarn(
+  env: Env,
+  params: { config: Config; gameDay: number; worldTickSeq: number; targetSize: number; band: string }
+): Promise<StockShowBarnResult> {
+  const stable = await getShowBarnStable(env);
+  if (!stable) {
+    throw new Error('stockShowBarn: the NPC show barn stable is missing - has migrations/0040_npc_show_barn.sql been applied?');
+  }
+  const breeds = await getBreeds(env);
+  const qh = breeds.find((b) => b.code === 'QH');
+  if (!qh) throw new Error('stockShowBarn: the Quarter Horse breed is missing');
+
+  const alreadyHad = await countAliveHorses(env, stable.id);
+  const shortfall = Math.max(0, params.targetSize - alreadyHad);
+  const minted = await mintFoundingHorses(env, { stable, breed: qh, config: params.config, gameDay: params.gameDay, worldTickSeq: params.worldTickSeq, count: shortfall, band: params.band });
+  return { minted, alreadyHad };
+}
+
+/**
+ * Slice 0015 §3.3/§7.3: "add an outcross batch" - the only way genetic material enters an NPC
+ * stable's closed population (breeding stays same-stable-only, so left alone an NPC stable's own
+ * COI only ever climbs). The generalised form of the mechanism underneath stockShowBarn: any NPC
+ * stable, any breed with an ideal vector, picked from /admin/npc rather than hardcoded - and,
+ * unlike stockShowBarn's top-up-to-a-target shape, mints exactly `count` new horses regardless of
+ * how many the stable already has, since "add a batch" is not "top up to a total".
+ */
+export async function stockNpcStable(
+  env: Env,
+  params: { stableId: number; breedId: number; config: Config; gameDay: number; worldTickSeq: number; count: number; band: string }
+): Promise<StockShowBarnResult> {
+  const stable = await getStableById(env, params.stableId);
+  if (!stable || stable.is_npc !== 1) throw new Error(`stockNpcStable: NPC stable ${String(params.stableId)} not found`);
+  const breeds = await getBreeds(env);
+  const breed = breeds.find((b) => b.id === params.breedId);
+  if (!breed) throw new Error(`stockNpcStable: breed ${String(params.breedId)} not found`);
+
+  const alreadyHad = await countAliveHorses(env, stable.id);
+  const minted = await mintFoundingHorses(env, { stable, breed, config: params.config, gameDay: params.gameDay, worldTickSeq: params.worldTickSeq, count: params.count, band: params.band });
+  return { minted, alreadyHad };
+}
+
+/** Slice 0015 §7.1: every is_npc stable's alive horses, for judgeOneClass's show-field top-up -
+ * generalised from getShowBarnStable's single hardcoded stable to "every NPC stable's stock". */
+export async function listNpcStableHorses(env: Env): Promise<HorseRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT h.* FROM horses h JOIN stables s ON s.id = h.owner_stable_id WHERE s.is_npc = 1 AND h.status = 'alive'`
+  ).all<HorseRow>();
+  return result.results ?? [];
 }
