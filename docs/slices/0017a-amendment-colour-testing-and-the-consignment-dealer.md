@@ -82,6 +82,12 @@ Settled with the operator in conversation. Treat as standing.
    is a config key, not a constant: the day the drafted vectors in `docs/breed-ideal-vectors.md` are
    seeded, widening it is one edit at `/admin/config` with no deploy.
 6. **A breed can be taken in and out of play from admin, and that gates supply only.** §6.
+7. **Colour carries value in `appraise()`, game-wide.** Not a dealer-only premium. A cremello is
+   worth more whoever is selling it, including a child. §4.7 splits this into what anyone can see
+   and what only a test reveals — which makes testing a horse *raise its appraised value*, the same
+   loop the tested-clear health premium already runs.
+8. **A colour test costs the same as a health test.** Reuse `genotype_test_cost` and
+   `genotype_panel_cost`; add no new keys. §4.6.
 
 ---
 
@@ -208,14 +214,69 @@ genotype would be a better oracle and a worse game, and it would break §12.
    join that list. Offer the five individually and as one discounted panel, mirroring the disease
    panel.
 
-### 4.6 Config
+### 4.6 What the test costs — no new config keys
+
+`genotype_test_cost` and `genotype_panel_cost` already exist (`src/lib/config-cache.ts`, slice 0010
+§5.4) and are already on the admin config form's allow-list. **Reuse them. Add nothing.**
+
+The existing key is named `genotype_test_cost`, not `disease_test_cost`, and
+`horse_knowledge.kind = 'genotype'` already covers both subjects. The test page at
+`src/routes/horses.ts` prices per-code off that key, so colour loci join the list of testable
+subjects and are priced by the code path that already exists. This is most of why Part 1 is smaller
+than it looks: the purchase flow is built, and colour is a new kind of *subject* rather than a new
+kind of *transaction*.
+
+**Two panels, not one, each at `genotype_panel_cost`** — "the disease panel" and "the colour panel."
+Folding colour into the existing panel would silently double what that button buys for the same
+money, and `routes/horses.ts` already sets `totalCost = genotype_panel_cost` for the disease path.
+Same price for the same amount of work is what "the same as health testing" means.
+
+### 4.7 Colour in `appraise()` — and the one new thing it must never read
+
+Colour carries value game-wide (§3.7), so this is a term inside `src/engines/market/appraise.ts`,
+not a dealer multiplier. It multiplies in alongside `healthFactor`:
+
+```
+colourFactor = visibleColourFactor × carriedAlleleFactor
+```
+
+**The split is the design.** Colour differs from health in one way that matters: some of it is free
+to look at.
+
+- **`visibleColourFactor`** — keyed on the horse's expressed colour, from `expression.ts`. Needs no
+  test and no knowledge check: a cremello is visibly a cremello, and a stranger at a show can see it
+  (slice 0016 §2.2's rule). A config table maps expressed colour to a multiplier.
+- **`carriedAlleleFactor`** — `1 + market_carried_allele_premium × n`, capped, where `n` counts
+  alleles the horse carries that **a test has revealed and looking could not**. Reuse
+  `inferFromPhenotype` (§4.2) for exactly this: an allele inference alone already establishes is not
+  paid for twice. A palomino is visibly `Cr/cr` and earns nothing extra for a cream test; a bay that
+  tests `Cr/cr` is a genuine discovery and earns the premium.
+
+That second bullet is the good loop: **paying for a test raises what the horse is appraised at**,
+so the child who does the genetics work is rewarded by the market for it — the same shape as the
+tested-clear health premium in 0017 §4.3, and it is what makes a tested carrier the most interesting
+object on the market.
+
+**A new entry for 0017 §4.2's "must never read" list, and it belongs beside the lifespan rule:**
+
+> **`appraise()` must not read `horses.genotype` for the colour term.** It takes expressed phenotype
+> and knowledge rows, exactly as it already takes knowledge rows for health. Reading the genotype
+> would price in a hidden allele nobody has paid to learn — a seller could read a cream carrier off
+> their own guide value without ever buying the test, which breaks CLAUDE.md §12 and empties the
+> testing economy in one line of code.
+
+Config, all live:
 
 | Key | Suggested | Notes |
 |---|---|---|
-| `colour_test_price` | — | Live. Per locus. Set against the existing disease test price. |
-| `colour_panel_price` | — | Live. All five, discounted. |
+| `market_visible_colour_factors` | JSON, expressed colour → multiplier | Keep the whole range modest — see the risk in §8. |
+| `market_carried_allele_premium` | `0.10` | Per tested-and-not-visible allele. |
+| `market_carried_allele_cap` | `1.5` | Ceiling on `carriedAlleleFactor`. |
 
-### 4.7 Tests
+The `factors` array in `Appraisal` (0017 §4.5) gains its lines here too — *"Colour: palomino"*,
+*"Carries cream (tested)"* — because that array is what makes the guide teach rather than assert.
+
+### 4.8 Tests
 
 - `inferFromPhenotype` — one case per row of §4.2's table, including a chestnut returning all three
   agouti pairs and a grey returning every base colour.
@@ -226,6 +287,11 @@ genotype would be a better oracle and a worse game, and it would break §12.
   is tested must return `uncertain`, not the truth. Assert against a horse whose stored genotype is
   known to the test and must not appear in the output.
 - Sale copies `locus:` rows to the buyer (guards against a future `WHERE subject_code IN (...)`).
+- **`appraise()` never prices an untested allele.** Two horses with identical genotypes, one tested
+  and one not, must appraise differently — and the untested one must appraise as though the allele
+  were not there. This is the assertion that catches a future session "improving" the colour term by
+  reading `horses.genotype`.
+- A palomino does not earn the carried premium for a cream test (no double counting, §4.7).
 
 ---
 
@@ -349,15 +415,17 @@ Following CLAUDE.md §13 — a form, not a polished UI.
 
 ### 5.6 Pricing
 
-`appraise()` is not changed. It already handles quality, age, health knowledge and show record, so
-pre-performed disease tests move the price with no new code, and the dealer applies its own
-multipliers on top:
+**The dealer needs no carrier premium of its own.** An earlier draft gave it one; §3.7 made colour a
+term inside `appraise()` instead, which prices an injected-and-tested allele correctly for everyone
+— the dealer, and the child who later sells the colt on. One multiplier is left:
 
 ```
-price = appraise(...).value
-      × consignment_price_multiplier
-      × (1 + consignment_carrier_premium × injectedAndTestedAlleleCount)
+price = appraise(...).value × consignment_price_multiplier
 ```
+
+This is a better outcome than the draft it replaces. A dealer-only premium would have meant a
+carrier was worth more from the dealer than from a player, which is backwards — the whole purpose of
+the injection is that the allele becomes valuable *in the players' hands*.
 
 `listings.guide_value` stores the honest appraisal and `listings.price` stores the ask, so a dealer
 asking over the odds for a cream carrier is visible as exactly the gap that column pair was built to
@@ -408,8 +476,7 @@ feed scopes events — per account or per stable — before writing it.
 | `consignment_listing_game_days` | `90` | **Snapshotted** onto `expires_game_day` (CLAUDE.md §5.5). Retuning it must never move a standing listing's expiry. |
 | `consignment_batch_min` / `_max` | `1` / `2` | Live. |
 | `consignment_test_count_weights` | `{"0":55,"2":25,"3":13,"5":7}` | Live. Disease panel size, per horse. |
-| `consignment_price_multiplier` | `1.15` | Live. |
-| `consignment_carrier_premium` | `0.20` | Live. Per injected-and-tested allele. |
+| `consignment_price_multiplier` | `1.15` | Live. The dealer's whole markup — an injected allele is priced by `appraise()` (§4.7), not here. |
 | `consignment_breed_codes` | `["QH"]` | Live. §3.5. Intersected with the breeds in play (§6) — a breed must be both listed here and enabled for the dealer to stock it. |
 | `consignment_age_min/max_game_days` | reuse founding | Live. |
 
@@ -530,15 +597,13 @@ somebody will ask.
 
 ## 7. Decide before building
 
-Per CLAUDE.md §2, these are not for the building session to default.
+**Nothing is outstanding.** Every question this amendment raised has been answered by the operator
+and moved into §3: the dealer's breeds (§3.5), colour in `appraise()` (§3.7), and the test price
+(§3.8). A building session should not need to stop.
 
-1. **Should colour have value in `appraise()` game-wide?** §5.6 keeps the premium in the dealer's
-   own pricing, so nothing changes for players. The coherent alternative is that a cremello is worth
-   more whoever is selling it — which is a real economic decision about this game, and belongs to
-   the operator rather than to a session that happens to be in the file.
-2. **Colour test price**, per locus and as a panel, against the existing disease test price.
-
-*(The breed question that stood here has been answered: Quarter Horse only, §3.5.)*
+What it *should* stop for, per CLAUDE.md §2, is anything below that turns out to be wrong in
+practice — in particular the numbers in §4.7's colour table, which are the least-informed guesses in
+this document and are the direct cause of the risk in §8.
 
 ---
 
@@ -559,8 +624,24 @@ Per CLAUDE.md §2, these are not for the building session to default.
 - **Money leaves the game.** Payments to the dealer vanish, which is a healthy sink, but
   `ledger.counterparty_stable_id` will point at a stable whose balance means nothing. Say so in the
   migration comment.
-- **Colour testing could make health testing look cheap or dear by comparison.** The two prices sit
-  next to each other on one page and will be read against each other.
+- **Colour could out-compete conformation, and this is the serious one.** Now that colour is a term
+  in `appraise()`, breeding for colour and breeding for quality are two routes to the same money —
+  and colour is *far* easier. Five loci with published inheritance rules will be solved by a
+  determined ten-year-old in a fortnight; a polygenic conformation score across twenty alleles per
+  trait will not. If a cremello is worth double a bay, the rational play is to stop showing and
+  start breeding paint-by-numbers, and the shows quietly become decoration.
+
+  The defence is proportion, and it is a number rather than a rule: **keep the whole range of
+  `market_visible_colour_factors` small next to `market_quality_weight`.** That weight is `4.0`,
+  meaning a conformation score of 100 is worth five times base — so a colour range of roughly
+  0.9–1.4 leaves colour as a real bonus that never beats a good horse. Setting a rare colour to 3×
+  would invert the game's whole incentive structure in one config edit, from a screen with no
+  warning on it. **Put that sentence next to the field on `/admin/config`.**
+
+  This is the same class of failure as the NPC quality ceiling in CLAUDE.md — invisible while
+  building, and by the time it is visible the herd has already been bred for the wrong thing.
+- **Colour testing and health testing now share a price and a page.** They will be read against each
+  other, and the cheaper-feeling one will be bought first. Worth watching which.
 - **A half-wired `enabled`.** §6.2 lists five things the flag gates and four it must not. If a
   future session adds a sixth place that creates horses and forgets the check, breeds drift back
   into play silently. The check belongs in as few places as possible — prefer one
@@ -581,6 +662,9 @@ Per CLAUDE.md §2, these are not for the building session to default.
   infer from the column name.
 - **`docs/horse-game-schema.md`** — record `horse_knowledge` carrying locus rows, which its own
   comment predicted.
+- **`docs/slices/0017-market.md` §4.2** — the "must never read" list gains the genotype rule from
+  §4.7, and §4.3's factor list gains `colourFactor`. That document currently describes an
+  `appraise()` with no colour term, and will be wrong the moment this lands.
 - **`docs/slices/0017-market.md` §19** — the pointer to this document.
 - **`docs/slices/0005-founding-stock.md`** — a note that `generateCandidate` now has a second
   caller, so a change to it affects the dealer as well as founding batches; and that the breed
