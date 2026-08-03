@@ -9,6 +9,7 @@ import type { ShowRow, ShowClassRow, ClassEntryDisplayRow } from '../db/shows';
 import type { JudgeRow } from '../db/judges';
 import { ribbonFor } from '../engines/showing/placing';
 import type { EligibilityReason } from '../engines/showing/eligibility';
+import { formatCalendarDate } from '../lib/calendar';
 
 /** §8.1: "each refusal names the horse and says exactly which rule it failed" - the horse's own
  * name is prepended by the caller; this is just the rule fragment. */
@@ -109,6 +110,7 @@ export function renderShowsIndexPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   nextShow: { show: ShowRow; classes: ShowsIndexNextClass[] } | null;
   recentShows: { show: ShowRow; classes: ShowsIndexRecentClass[] }[];
 }): SafeHtml {
@@ -116,7 +118,7 @@ export function renderShowsIndexPage(params: {
     ? html`
       <div class="card">
         <h2>${params.nextShow.show.name}</h2>
-        <p><strong>Venue:</strong> ${params.nextShow.show.venue} &middot; <strong>Game day:</strong> ${String(params.nextShow.show.scheduled_game_day)}</p>
+        <p><strong>Venue:</strong> ${params.nextShow.show.venue} &middot; <strong>${formatCalendarDate(params.nextShow.show.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(params.nextShow.show.scheduled_game_day)})</span></p>
         ${params.nextShow.classes.map(
           (c) => html`
           <div class="card">
@@ -136,7 +138,7 @@ export function renderShowsIndexPage(params: {
         (r) => html`
         <div class="card">
           <h3><a href="/shows/${String(r.show.id)}">${r.show.name}</a></h3>
-          <p class="muted">${r.show.venue} &middot; game day ${String(r.show.scheduled_game_day)}</p>
+          <p class="muted">${r.show.venue} &middot; ${formatCalendarDate(r.show.scheduled_game_day, params.gameDaysPerYear)} (game day ${String(r.show.scheduled_game_day)})</p>
           ${r.classes.map(
             (c) => html`<p>${c.cls.name}, judged by ${c.judge?.name ?? 'an unnamed judge'}: <strong>${c.winnerName ?? 'no entries'}</strong> won.</p>`
           )}
@@ -151,7 +153,15 @@ export function renderShowsIndexPage(params: {
     <h2>Recent results</h2>
     ${recentBlock}
   `;
-  return pageShell({ title: 'Shows', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
+  return pageShell({
+    title: 'Shows',
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
 }
 
 export interface ShowPageEntryRow extends ClassEntryDisplayRow {
@@ -175,6 +185,7 @@ export function renderShowPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   show: ShowRow;
   classes: ShowPageClassView[];
   error?: string;
@@ -230,11 +241,19 @@ export function renderShowPage(params: {
     <h1>${s.name}</h1>
     ${errorBox(params.error)}
     ${noticeBox(params.notice)}
-    <p><strong>Venue:</strong> ${s.venue} &middot; <strong>Game day:</strong> ${String(s.scheduled_game_day)} &middot; <strong>Status:</strong> ${s.status === 'entries_open' ? 'open for entries' : 'judged'}</p>
+    <p><strong>Venue:</strong> ${s.venue} &middot; <strong>${formatCalendarDate(s.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(s.scheduled_game_day)})</span> &middot; <strong>Status:</strong> ${s.status === 'entries_open' ? 'open for entries' : 'judged'}</p>
     ${classBlocks}
     <p><a href="/shows">Back to shows</a></p>
   `;
-  return pageShell({ title: s.name, world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
+  return pageShell({
+    title: s.name,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
 }
 
 export type EntryResultTraitRow =
@@ -251,6 +270,7 @@ export function renderEntryResultPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   show: ShowRow;
   cls: ShowClassRow;
   horseName: string;
@@ -339,6 +359,7 @@ export function renderEntryResultPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     body,
   });
 }

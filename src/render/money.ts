@@ -12,6 +12,7 @@ export function renderMoneyPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   rows: (LedgerRow & { runningBalance: number })[];
@@ -43,6 +44,7 @@ export function renderMoneyPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(s.id, 'money', params.hasFoundingOffer),
     body,
   });

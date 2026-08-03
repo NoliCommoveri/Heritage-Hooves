@@ -35,6 +35,7 @@ export async function stablesPickerRoute(ctx: RequestContext): Promise<Response>
       world: ctx.world,
       isAdmin: account.is_admin === 1,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
       stables,
       canCreateMore: stables.length < max,
       maxStables: max,
@@ -58,8 +59,10 @@ export async function stablesNewRoute(ctx: RequestContext, method: string): Prom
   const currentCount = await countActiveStablesForAccount(ctx.env, account.id);
   if (currentCount >= max) return redirect('/stables');
 
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+
   if (method === 'GET') {
-    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft }));
+    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear }));
   }
   if (method !== 'POST') return notFound();
 
@@ -69,13 +72,13 @@ export async function stablesNewRoute(ctx: RequestContext, method: string): Prom
 
   if (name.length < 1 || name.length > 60) {
     return htmlResponse(
-      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: 'Stable name is required (up to 60 characters).', name, prefix: prefixInput })
+      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, error: 'Stable name is required (up to 60 characters).', name, prefix: prefixInput })
     );
   }
 
   const validation = validatePrefix(prefixInput);
   if (!validation.ok) {
-    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: validation.error, name, prefix: prefixInput }));
+    return htmlResponse(renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, error: validation.error, name, prefix: prefixInput }));
   }
 
   const result = await createStableWithPrefix(ctx.env, {
@@ -87,7 +90,7 @@ export async function stablesNewRoute(ctx: RequestContext, method: string): Prom
 
   if (!result.ok) {
     return htmlResponse(
-      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, error: 'That prefix is already taken. Try another.', name, prefix: prefixInput })
+      renderNewStablePage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, error: 'That prefix is already taken. Try another.', name, prefix: prefixInput })
     );
   }
 
@@ -116,6 +119,7 @@ export async function stableHomeRoute(ctx: RequestContext, stableId: number): Pr
       world: ctx.world,
       isAdmin: ctx.account!.is_admin === 1,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
       stable,
       hasFoundingOffer,
       aliveHorseCount,
@@ -137,7 +141,15 @@ export async function stableMoneyRoute(ctx: RequestContext, stableId: number): P
   const withBalances = withRunningBalance([...ledgerNewestFirst].reverse());
   const rows = [...withBalances].reverse();
   return htmlResponse(
-    renderMoneyPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, rows })
+    renderMoneyPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
+      stable,
+      hasFoundingOffer,
+      rows,
+    })
   );
 }
 
@@ -157,8 +169,10 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const actionsLeft = actionsLeftFor(ctx);
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+
   if (method === 'GET' || stable.prefix_locked) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer }));
   }
   if (method !== 'POST') return notFound();
 
@@ -166,13 +180,13 @@ export async function stablePrefixRoute(ctx: RequestContext, method: string, sta
   const prefixInput = form.prefix ?? '';
   const validation = validatePrefix(prefixInput);
   if (!validation.ok) {
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, error: validation.error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer, error: validation.error }));
   }
 
   const result = await renamePrefix(ctx.env, { stableId, newPrefix: normalizePrefix(prefixInput), gameDay: ctx.world.game_day });
   if (!result.ok) {
     const error = result.error === 'locked' ? 'This prefix is locked and can no longer change.' : 'That prefix is already taken. Try another.';
-    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, error }));
+    return htmlResponse(renderPrefixPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer, error }));
   }
 
   return redirect(`/stables/${stableId}`);

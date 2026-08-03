@@ -38,6 +38,7 @@ import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
 import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
+import { formatCalendarDate } from '../lib/calendar';
 import { buildEndHorseParticipationStatements, ageModifierForHorse } from '../db/ageing';
 import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
@@ -184,6 +185,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       world: ctx.world,
       isAdmin: ctx.account!.is_admin === 1,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       stable,
       hasFoundingOffer,
       horses: rows,
@@ -204,7 +206,15 @@ export async function stablePastHorsesRoute(ctx: RequestContext, stableId: numbe
 
   const [horses, hasFoundingOffer] = await Promise.all([listPastHorses(ctx.env, stableId), hasWaitingFoundingOffer(ctx.env, stableId)]);
   return htmlResponse(
-    renderPastHorsesPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), stable, hasFoundingOffer, horses })
+    renderPastHorsesPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
+      stable,
+      hasFoundingOffer,
+      horses,
+    })
   );
 }
 
@@ -281,7 +291,8 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
   const cfg = ctx.config.values;
   if (!isInBreedingSeason(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year)) {
     const next = nextSeasonStartGameDay(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year);
-    return `It's out of season for breeding right now. The season next opens around game day ${String(next)}.`;
+    const openingNote = next !== null ? ` The season next opens around ${formatCalendarDate(next, cfg.game_days_per_year)}.` : '';
+    return `It's out of season for breeding right now.${openingNote}`;
   }
 
   const aliveCount = await countAliveHorses(ctx.env, stable.id);
@@ -304,7 +315,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   if (method === 'GET') {
-    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, stable, hasFoundingOffer, mares, stallions, describe }));
+    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer, mares, stallions, describe }));
   }
   if (method !== 'POST') return notFound();
 
@@ -320,6 +331,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         stable,
         hasFoundingOffer,
         mares,
@@ -357,6 +369,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         stable,
         hasFoundingOffer,
         mares,
@@ -377,6 +390,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
           world: ctx.world,
           isAdmin,
           actionsLeft,
+          gameDaysPerYear,
           stable,
           hasFoundingOffer,
           mares,
@@ -399,6 +413,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
           world: ctx.world,
           isAdmin,
           actionsLeft,
+          gameDaysPerYear,
           stable,
           hasFoundingOffer,
           mares,
@@ -526,7 +541,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
 
   const showSummary = await getShowSummary(ctx.env, horse.id);
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
-  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
+  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
@@ -547,6 +562,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       world: ctx.world,
       isAdmin,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       owner,
       ownerStable,
       hasFoundingOffer,
@@ -601,7 +617,7 @@ async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<stri
   const pregnancy: PregnancyRow | null = await getActivePregnancyForMare(ctx.env, mare.id);
   if (pregnancy) {
     const sire = await getHorse(ctx.env, pregnancy.sire_id);
-    return `In foal to ${sire ? displayNameFor(sire) : 'an unknown stallion'}, due around game day ${String(pregnancy.due_game_day)}.`;
+    return `In foal to ${sire ? displayNameFor(sire) : 'an unknown stallion'}, due around ${formatCalendarDate(pregnancy.due_game_day, cfg.game_days_per_year)}.`;
   }
 
   const covering: CoveringRow | null = await getBookedCoveringForMare(ctx.env, mare.id);
@@ -620,13 +636,13 @@ async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<stri
       cfg.breeding_season_length_game_days,
       cfg.game_days_per_year
     );
-    return next !== null ? ` The breeding season opens again around game day ${String(next)}.` : '';
+    return next !== null ? ` The breeding season opens again around ${formatCalendarDate(next, cfg.game_days_per_year)}.` : '';
   };
 
   if (mare.last_foaled_game_day !== null) {
     const recoverUntil = mare.last_foaled_game_day + cfg.mare_recovery_game_days;
     if (ctx.world.game_day < recoverUntil) {
-      return `Recovering from foaling; can breed again from around game day ${String(recoverUntil)}.${seasonNote()}`;
+      return `Recovering from foaling; can breed again from around ${formatCalendarDate(recoverUntil, cfg.game_days_per_year)}.${seasonNote()}`;
     }
   }
 
@@ -638,7 +654,7 @@ async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<stri
   if (ticksUntil === 0) return `In season now.${seasonNote()}`;
 
   const estimatedDay = ctx.world.game_day + ticksUntil * cfg.game_days_per_tick;
-  return `Due back in season around game day ${String(estimatedDay)}.${seasonNote()}`;
+  return `Due back in season around ${formatCalendarDate(estimatedDay, cfg.game_days_per_year)}.${seasonNote()}`;
 }
 
 export async function horseNameRoute(ctx: RequestContext, horseId: number): Promise<Response> {
@@ -763,6 +779,7 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
       world: ctx.world,
       isAdmin,
       actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
       ownerStable,
       hasFoundingOffer,
       horse,
@@ -841,6 +858,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
         world: ctx.world,
         isAdmin: ctx.account!.is_admin === 1,
         actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
         ownerStable,
         hasFoundingOffer,
         horse,
@@ -956,7 +974,7 @@ async function turnOutBlockedReason(ctx: RequestContext, horse: HorseRow): Promi
 
   const pregnancy = await getActivePregnancyForMare(ctx.env, horse.id);
   if (pregnancy) {
-    return `${displayNameFor(horse)} is in foal, due around game day ${String(pregnancy.due_game_day)}. She stays in the barn until she has foaled - then she can go out.`;
+    return `${displayNameFor(horse)} is in foal, due around ${formatCalendarDate(pregnancy.due_game_day, ctx.config.values.game_days_per_year)}. She stays in the barn until she has foaled - then she can go out.`;
   }
   return undefined;
 }
@@ -1018,10 +1036,11 @@ async function buildRetireWarnings(ctx: RequestContext, horse: HorseRow): Promis
     const isDam = p.dam_id === horse.id;
     const other = await getHorse(ctx.env, isDam ? p.sire_id : p.dam_id);
     const otherName = other ? displayNameFor(other) : isDam ? 'a stallion' : 'a mare';
+    const dueLabel = formatCalendarDate(p.due_game_day, ctx.config.values.game_days_per_year);
     warnings.push(
       isDam
-        ? `${name} is in foal to ${otherName}, due around game day ${String(p.due_game_day)}. Retiring ${name} away ends the pregnancy.`
-        : `${otherName} is in foal to ${name}, due around game day ${String(p.due_game_day)}. Retiring ${name} away ends that pregnancy too.`
+        ? `${name} is in foal to ${otherName}, due around ${dueLabel}. Retiring ${name} away ends the pregnancy.`
+        : `${otherName} is in foal to ${name}, due around ${dueLabel}. Retiring ${name} away ends that pregnancy too.`
     );
   }
 
@@ -1132,6 +1151,7 @@ export async function horseRetireRoute(ctx: RequestContext, method: string, hors
         world: ctx.world,
         isAdmin: ctx.account!.is_admin === 1,
         actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
         ownerStable,
         hasFoundingOffer,
         horse,
