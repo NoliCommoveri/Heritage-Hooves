@@ -204,6 +204,13 @@ export interface ConfigValues {
   market_place_bonus: number;
   market_record_cap: number;
   market_min_value: number;
+  /** Slice 0017 §11 (Part B). Live. An NPC stable lists surplus once its free stalls drop below
+   * this many; how many personality/spread/asking-price all come from npc_policy, not here (§11's
+   * "a property of the personality, not a game-wide tunable"). */
+  npc_market_capacity_buffer: number;
+  /** Live. Caps how many horses one NPC stable lists in a single tick, so a sudden overflow (a
+   * batch of foals all reaching capacity at once) doesn't dump the whole barn on the market. */
+  npc_market_max_listings_per_tick: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

@@ -45,6 +45,11 @@ export interface NpcPolicyRow {
   breeding_interval_game_days: number;
   max_pairs_per_cycle: number;
   last_bred_game_day: number | null;
+  /** Slice 0017 §11 (Part B): the market's per-personality asking-price multiplier and modest
+   * seeded spread - src/db/npcMarket.ts's own tunables, kept on this row because they are a
+   * property of the personality, not a game-wide config value (see migrations/0093). */
+  market_price_multiplier: number;
+  market_price_spread: number;
 }
 
 export async function listNpcPolicies(env: Env): Promise<NpcPolicyRow[]> {
@@ -121,6 +126,7 @@ export interface NpcStableAdminRow {
   lastBredGameDay: number | null;
   nextCycleDueGameDay: number | null;
   pairsLastCycle: number;
+  marketPriceMultiplier: number;
 }
 
 /** /admin/npc's per-stable table (§7.3). One pass over every npc_policy row - three stables at
@@ -156,6 +162,7 @@ export async function listNpcStablesForAdmin(env: Env): Promise<NpcStableAdminRo
       lastBredGameDay: policy.last_bred_game_day,
       nextCycleDueGameDay: policy.last_bred_game_day === null ? null : policy.last_bred_game_day + policy.breeding_interval_game_days,
       pairsLastCycle,
+      marketPriceMultiplier: policy.market_price_multiplier,
     });
   }
   return rows;
@@ -181,6 +188,8 @@ export async function foundNpcStable(
     breedingIntervalGameDays: number;
     maxPairsPerCycle: number;
     capacity: number;
+    marketPriceMultiplier: number;
+    marketPriceSpread: number;
     gameDay: number;
   }
 ): Promise<FoundNpcStableResult> {
@@ -196,8 +205,8 @@ export async function foundNpcStable(
          VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, NULL, NULL, ?)`
       ).bind(params.prefix, params.gameDay, nowSeconds),
       env.DB.prepare(
-        `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle)
-         VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread)
+         VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         params.personalityCode,
         params.targetKind,
@@ -206,7 +215,9 @@ export async function foundNpcStable(
         params.selectionNoiseSd,
         params.retentionBias,
         params.breedingIntervalGameDays,
-        params.maxPairsPerCycle
+        params.maxPairsPerCycle,
+        params.marketPriceMultiplier,
+        params.marketPriceSpread
       ),
     ]);
   } catch (err) {
@@ -221,7 +232,10 @@ export async function foundNpcStable(
 // The tick stage (§4.2/§6.1)
 // ---------------------------------------------------------------------------
 
-function resolveSelectionTarget(policy: NpcPolicyRow, config: Config, breedById: Map<number, BreedRow>, disciplineByCode: Map<string, DisciplineRow>): SelectionTarget | null {
+/** Exported for src/db/npcMarket.ts (slice 0017 §11): the same "what is this policy chasing"
+ * resolution the breeding stage uses, reused rather than re-derived, so a policy's target always
+ * means the same thing whether it's picking a covering or picking which horse to sell. */
+export function resolveSelectionTarget(policy: NpcPolicyRow, config: Config, breedById: Map<number, BreedRow>, disciplineByCode: Map<string, DisciplineRow>): SelectionTarget | null {
   if (policy.target_kind === 'conformation') {
     const breed = policy.target_breed_id !== null ? breedById.get(policy.target_breed_id) : undefined;
     if (!breed?.ideal_vector) return null;
@@ -237,7 +251,9 @@ function resolveSelectionTarget(policy: NpcPolicyRow, config: Config, breedById:
   return { kind: 'ability', weights: parseAbilityWeights(discipline.ability_weights) };
 }
 
-function expressedFor(horse: HorseRow, kind: 'conformation' | 'ability', gameDay: number, config: Config): Partial<Record<TraitCode, number>> {
+/** Exported for src/db/npcMarket.ts - the same expressed-trait computation, so a policy's market
+ * ranking of its own stock is read off the identical values its breeding selection already uses. */
+export function expressedFor(horse: HorseRow, kind: 'conformation' | 'ability', gameDay: number, config: Config): Partial<Record<TraitCode, number>> {
   const genotype = parseGenotype(horse.genotype);
   const ageYears = (gameDay - horse.born_game_day) / config.values.game_days_per_year;
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);

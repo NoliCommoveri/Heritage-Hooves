@@ -247,6 +247,8 @@ const NUMERIC_CONFIG_KEYS = [
   'market_max_price',
   'market_base_value',
   'market_min_value',
+  'npc_market_capacity_buffer',
+  'npc_market_max_listings_per_tick',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -846,12 +848,14 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
     const breedingIntervalGameDays = Number(form.breeding_interval_game_days);
     const maxPairsPerCycle = Number(form.max_pairs_per_cycle);
     const capacity = Number(form.capacity);
+    const marketPriceMultiplier = Number(form.market_price_multiplier);
+    const marketPriceSpread = Number(form.market_price_spread);
 
     if (!name || !prefix || !personalityCode || !targetKind) return page('Fill in a name, a prefix, a personality label and a target kind.');
     if (targetKind === 'conformation' && !targetBreedId) return page('Choose a breed for a conformation-specialist stable.');
     if (targetKind === 'ability' && !targetDisciplineCode) return page('Choose a discipline for a discipline-barn stable.');
-    if (![selectionNoiseSd, retentionBias, breedingIntervalGameDays, maxPairsPerCycle, capacity].every(Number.isFinite)) {
-      return page('Every breeding-policy number must be filled in.');
+    if (![selectionNoiseSd, retentionBias, breedingIntervalGameDays, maxPairsPerCycle, capacity, marketPriceMultiplier, marketPriceSpread].every(Number.isFinite)) {
+      return page('Every breeding-policy number, including the market price multiplier and spread, must be filled in.');
     }
 
     const result = await foundNpcStable(ctx.env, {
@@ -866,6 +870,8 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
       breedingIntervalGameDays,
       maxPairsPerCycle,
       capacity,
+      marketPriceMultiplier,
+      marketPriceSpread,
       gameDay: ctx.world.game_day,
     });
     if (!result.ok) return page('That prefix is already taken - choose another.');

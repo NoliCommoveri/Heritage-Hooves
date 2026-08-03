@@ -93,6 +93,8 @@ import m0089 from '../../migrations/0089_config_admin_and_ui.sql';
 import m0090 from '../../migrations/0090_listings.sql';
 import m0091 from '../../migrations/0091_ledger_add_market_kinds.sql';
 import m0092 from '../../migrations/0092_config_market.sql';
+import m0093 from '../../migrations/0093_npc_policy_market_columns.sql';
+import m0094 from '../../migrations/0094_config_npc_market.sql';
 
 export interface MigrationFile {
   name: string;
@@ -202,6 +204,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0090_listings.sql', sql: m0090 },
   { name: '0091_ledger_add_market_kinds.sql', sql: m0091 },
   { name: '0092_config_market.sql', sql: m0092 },
+  { name: '0093_npc_policy_market_columns.sql', sql: m0093 },
+  { name: '0094_config_npc_market.sql', sql: m0094 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
