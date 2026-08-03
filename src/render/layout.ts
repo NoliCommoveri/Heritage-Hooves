@@ -59,6 +59,7 @@ export function pageShell(params: ShellParams): SafeHtml {
       : html`<nav class="nav">
           <a href="/stables">Stables</a>
           <a href="/shows">Shows</a>
+          <a href="/market">Market</a>
           <a href="/world">Everyone</a>
           <span class="nav-spacer"></span>
           ${params.isAdmin ? html`<a href="/admin" class="admin-chip">Admin</a>` : raw('')}

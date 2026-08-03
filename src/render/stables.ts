@@ -98,6 +98,18 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = `${name} died peacefully in ${possessive} paddock at ${age}, after a long life.${foalsSentence} ${subject === 'She' ? 'Her' : 'His'} page is still there whenever you want to look.`;
       break;
     }
+    // Slice 0017 §7.2/§8: both written for the seller only - the buyer was there, pressing the
+    // button, and an expiry is news only to the stable whose horse did not sell.
+    case 'horse_sold': {
+      const price = typeof payload.price === 'number' ? String(payload.price) : 'an agreed price';
+      sentence = `${str('horse_name', 'A horse')} was sold to ${str('buyer_stable_name', 'another stable')} for ${price}.`;
+      break;
+    }
+    case 'listing_expired': {
+      const price = typeof payload.price === 'number' ? String(payload.price) : null;
+      sentence = `${str('horse_name', 'A horse')} didn't sell${price ? ` at ${price}` : ''} and has come off the market. You can put them back on at any time, at any price you like.`;
+      break;
+    }
     default:
       sentence = row.kind;
   }

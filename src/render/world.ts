@@ -123,6 +123,10 @@ export interface PublicHorseView {
   /** "Died" / "Retired away" / null when alive. */
   statusLabel: string | null;
   atPasture: boolean;
+  /** Slice 0017 §9: this horse's open listing, or null. Public information - an asking price is not
+   * a measured value, so this does not breach §2.2's rule about what a stranger can see. The guide
+   * value never appears here; only what the seller is asking. */
+  listing: { listingId: number; price: number } | null;
 }
 
 function pedigreeSlot(slot: { id: number; name: string } | null): SafeHtml {
@@ -155,6 +159,7 @@ export function renderWorldHorsePage(params: {
       <p><strong>Breed:</strong> ${h.breedName ?? (h.isCross ? 'Cross' : 'Unknown')}</p>
       <p><strong>Bred by:</strong> ${h.bredByLabel}</p>
       <p><strong>Stable:</strong> <a href="/world/stables/${String(h.currentStable.id)}">${h.currentStable.name}</a></p>
+      ${h.listing ? html`<p><strong>For sale — ${String(h.listing.price)}</strong> · <a href="/market/${String(h.listing.listingId)}">see the listing</a></p>` : raw('')}
     </div>
     <div class="card">
       <h2>Pedigree</h2>

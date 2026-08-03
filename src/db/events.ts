@@ -26,6 +26,12 @@ import { nowUtcSeconds } from '../lib/time';
 // Slice 0013 §7.4 adds one more, same no-migration-needed reasoning - a stable-level event
 // (subject_horse_id is NULL), one per stable per tick, never one per horse:
 //   care_due -> {"v":1,"farrier_count":3,"wellness_count":1}
+// Slice 0017 §9 adds two more, same no-migration-needed reasoning - both written for the SELLER
+// only (the buyer was there, and the expiring seller was not):
+//   horse_sold      -> {"v":1,"horse_name":"...","price":4000,"buyer_stable_name":"..."}
+//   listing_expired -> {"v":1,"horse_name":"...","price":4000}
+// Both payload shapes are also documented in src/db/listings.ts's file header, since
+// migrations/0048_events.sql is already applied and must not be edited (CLAUDE.md §8).
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -35,7 +41,9 @@ export type EventKind =
   | 'horse_died'
   | 'horse_failing'
   | 'horse_died_old_age'
-  | 'care_due';
+  | 'care_due'
+  | 'horse_sold'
+  | 'listing_expired';
 
 export interface EventRow {
   id: number;

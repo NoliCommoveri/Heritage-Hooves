@@ -90,6 +90,9 @@ import m0086 from '../../migrations/0086_npc_stables_no_upkeep.sql';
 import m0087 from '../../migrations/0087_accounts_pin_hash.sql';
 import m0088 from '../../migrations/0088_pin_attempts.sql';
 import m0089 from '../../migrations/0089_config_admin_and_ui.sql';
+import m0090 from '../../migrations/0090_listings.sql';
+import m0091 from '../../migrations/0091_ledger_add_market_kinds.sql';
+import m0092 from '../../migrations/0092_config_market.sql';
 
 export interface MigrationFile {
   name: string;
@@ -196,6 +199,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0087_accounts_pin_hash.sql', sql: m0087 },
   { name: '0088_pin_attempts.sql', sql: m0088 },
   { name: '0089_config_admin_and_ui.sql', sql: m0089 },
+  { name: '0090_listings.sql', sql: m0090 },
+  { name: '0091_ledger_add_market_kinds.sql', sql: m0091 },
+  { name: '0092_config_market.sql', sql: m0092 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

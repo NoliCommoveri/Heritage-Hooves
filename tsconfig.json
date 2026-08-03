@@ -13,5 +13,12 @@
     "isolatedModules": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  // test/market/sale-d1.test.ts is the one file in this repo that talks to Node itself (node:sqlite,
+  // node:fs) rather than to the Workers runtime, so it needs @types/node - and @types/node's globals
+  // conflict with @cloudflare/workers-types, which every other file here is checked against. Adding
+  // @types/node to make one test file type-check would weaken the type checking on all of src/, so
+  // the file is excluded from tsc instead. It still runs under vitest, which type-strips rather than
+  // type-checks. See that file's own header for what it is and why it exists.
+  "exclude": ["test/market/sale-d1.test.ts"]
 }

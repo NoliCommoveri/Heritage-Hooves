@@ -174,6 +174,36 @@ export interface ConfigValues {
   pin_lockout_window_seconds: number;
   /** Slice 0016 §9.5. How long one admin-door unlock lasts, in real seconds. */
   admin_pin_grace_seconds: number;
+  /** Slice 0017 §5.4. What the seller loses out of the proceeds of a completed sale, as a percent -
+   * applied as Math.floor(price * pct / 100), integer arithmetic, never a float multiply. Live: a
+   * rate change never re-prices a sale already written (listings.commission_paid snapshots it). */
+  market_commission_percent: number;
+  /** **Snapshotted** onto listings.expires_game_day at listing time (CLAUDE.md §5.5) - retuning
+   * this must never move the expiry of a listing already posted. */
+  market_listing_game_days: number;
+  /** Live. A typo guard on the asking price, not a balance lever. */
+  market_max_price: number;
+  /** Live. Overview §10f's global price multiplier - the one lever that moves every guide value at
+   * once, because the first pricing model will be wrong. Multiplies the appraisal only; it never
+   * touches an asking price a player typed. */
+  market_price_multiplier: number;
+  /** Slice 0017 §4.3's appraisal coefficients. All live - read fresh every time a guide value is
+   * computed, and nothing here is ever snapshotted onto a horse. What is snapshotted is the guide
+   * value a listing was actually posted with (listings.guide_value). */
+  market_base_value: number;
+  market_quality_weight: number;
+  market_foal_value_factor: number;
+  /** Applied on horses.frailty_notice_game_day - the announced Failing notice - never on the rolled
+   * lifespan, which the appraisal must never read in any form (slice 0017 §4.2). */
+  market_failing_factor: number;
+  market_clear_premium: number;
+  market_clear_premium_cap: number;
+  market_carrier_factor: number;
+  market_affected_factor: number;
+  market_win_bonus: number;
+  market_place_bonus: number;
+  market_record_cap: number;
+  market_min_value: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;
