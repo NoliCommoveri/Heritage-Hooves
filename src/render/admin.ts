@@ -942,6 +942,11 @@ export function renderCareAdminPage(params: { world: WorldRow; data: CareAdminDa
       <table><thead><tr><th>Range</th><th>Horses</th></tr></thead><tbody>${bucketRows}</tbody></table>
     </div>
     <div class="card">
+      <h2>Where the horses are</h2>
+      <p class="muted">The location flag. Horses at pasture cost no board and run no care timers, and neither they nor a horse still settling in can be bred or shown - so these two numbers are the first thing to check when a show field looks unexpectedly thin.</p>
+      <p><strong>At pasture:</strong> ${String(d.atPasture)} &middot; <strong>Settling in:</strong> ${String(d.settlingIn)}</p>
+    </div>
+    <div class="card">
       <h2>Feed by stable</h2>
       <table><thead><tr><th>Stable</th><th>Feed</th><th>Board per game day</th></tr></thead><tbody>${stableRows.length ? stableRows : html`<tr><td colspan="3" class="muted">No player stables yet.</td></tr>`}</tbody></table>
     </div>

@@ -97,7 +97,7 @@ async function loadAccountEligibility(
   for (const stable of stables) {
     const horses = await listStableHorses(ctx.env, stable.id);
     for (const horse of horses) {
-      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear);
+      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear, ctx.config);
       if (result.ok) eligible.push({ horseId: horse.id, name: displayNameFor(horse) });
       else ineligibleCount++;
     }
@@ -187,6 +187,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
     gameDay: ctx.world.game_day,
     gameDaysPerYear: ctx.config.values.game_days_per_year,
     conformationConfig: ctx.config.values,
+    config: ctx.config,
   });
 
   if (!result.ok) {

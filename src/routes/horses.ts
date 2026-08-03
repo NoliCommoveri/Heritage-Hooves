@@ -45,6 +45,7 @@ import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { canTakeOnCost } from '../lib/money';
+import { availabilityForHorse, turnOutToPasture, bringInFromPasture } from '../db/care';
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
@@ -102,7 +103,7 @@ async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow, breeds:
 
   return Promise.all(
     openClasses.map(async (cls) => {
-      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear);
+      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear, ctx.config);
       if (result.ok) return { classId: cls.id, className: cls.name, eligible: true };
 
       const breedName = breeds.find((b) => b.id === cls.breed_id)?.name ?? 'that breed';
@@ -151,6 +152,8 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
       // already has that logic; this is additive to it, not a replacement).
       ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, cfg),
+      // The location flag: one badge per row, so a barn with three horses out reads at a glance.
+      availability: horse.status === 'alive' ? availabilityForHorse(horse, cfg, ctx.world.game_day) : null,
       // Slice 0013 §8.2: null for an ended horse - care means nothing for a horse that isn't being
       // kept anymore, and stableHorsesWithDead's rows never had their care columns written for one.
       care: horse.status === 'alive' ? careCardViewFor(horse, stable.feed_level, cfg, ctx.world.game_day) : null,
@@ -233,6 +236,21 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
   // this rule. Checked here, and nowhere else in this slice.
   if (!canTakeOnCost(stable.balance)) {
     return `${stable.name} is ${String(Math.abs(stable.balance))} in the red. Win a show, or ask a grown-up to add money, before breeding again.`;
+  }
+
+  // The location flag, checked before every fact about the horses themselves: a horse that is not
+  // in work is not a breeding candidate, and saying so plainly beats "she is not old enough" style
+  // reasons that are true of a different horse. Both sides are checked - a mare in the barn booked
+  // to a stallion at grass is just as impossible as the reverse.
+  for (const horse of [mare, stallion]) {
+    const availability = availabilityForHorse(horse, ctx.config.values, ctx.world.game_day);
+    if (availability.available) continue;
+    const name = displayNameFor(horse);
+    const subject = horse.sex === 'mare' ? 'she' : 'he';
+    if (availability.reason === 'at_pasture') {
+      return `${name} is out at pasture. Bring ${horse.sex === 'mare' ? 'her' : 'him'} into the barn first - ${subject} will need a little while to settle in before ${subject} can be bred.`;
+    }
+    return `${name} came in from pasture recently and is still settling in - ${subject} can be bred again in ${String(availability.daysRemaining)} more day${availability.daysRemaining === 1 ? '' : 's'}.`;
   }
 
   if (stallion.sex === 'gelding') return 'Geldings cannot breed.';
@@ -484,6 +502,10 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   if (isAdmin) loci = await getLoci(ctx.env);
 
   const mareStatus = horse.sex === 'mare' && horse.status === 'alive' ? await mareStatusLine(ctx, horse) : undefined;
+  // The operator's third rule: a mare carrying a foal stays in until she has foaled. Explained on
+  // the card in place of the Turn out button rather than as an error after pressing it - a child
+  // should not have to press a button to find out it was never going to work.
+  const locationBlockedReason = await turnOutBlockedReason(ctx, horse);
   const hasFoundingOffer = owner ? await hasWaitingFoundingOffer(ctx.env, ownerStable.id) : false;
   const traitRows = await getConformationTraits(ctx.env);
   const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
@@ -531,6 +553,11 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       enterShowNotice,
       ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, ctx.config.values),
       canManage,
+      // The location flag. Null for an ended horse - the card renders nothing for one, the same way
+      // every other action is hidden once a horse has died or been retired away.
+      availability: horse.status === 'alive' ? availabilityForHorse(horse, ctx.config.values, ctx.world.game_day) : null,
+      locationBlockedReason,
+      locationError: params.get('location_error') ?? undefined,
       health,
       care,
       careError,
@@ -653,6 +680,7 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
     gameDay: ctx.world.game_day,
     gameDaysPerYear: ctx.config.values.game_days_per_year,
     conformationConfig: ctx.config.values,
+    config: ctx.config,
   });
 
   if (!result.ok) {
@@ -883,6 +911,70 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
   return redirect(`/horses/${String(horseId)}`);
+}
+
+/**
+ * Why this horse cannot be turned out right now, or undefined if it can be. The operator's third
+ * rule: a mare carrying a foal stays in until she has foaled.
+ *
+ * The reasoning behind that rule rather than the obvious alternative (let her foal at grass, which
+ * is what actually happens on a real farm): "at pasture" in this game means "nothing is happening
+ * to this horse". A pregnancy is something happening. Letting a mare foal out there would mean a
+ * newborn arriving into a location whose whole definition is that its care timers do not run, on
+ * the one day of a horse's life when that matters most.
+ *
+ * Used by both the page (to explain instead of offering the button) and the POST (to refuse), so
+ * the two can never disagree - the same shape buildRetireWarnings uses for the same reason.
+ */
+async function turnOutBlockedReason(ctx: RequestContext, horse: HorseRow): Promise<string | undefined> {
+  if (horse.status !== 'alive' || horse.location !== 'barn') return undefined;
+  if (horse.sex !== 'mare') return undefined;
+
+  const pregnancy = await getActivePregnancyForMare(ctx.env, horse.id);
+  if (pregnancy) {
+    return `${displayNameFor(horse)} is in foal, due around game day ${String(pregnancy.due_game_day)}. She stays in the barn until she has foaled - then she can go out.`;
+  }
+  return undefined;
+}
+
+/**
+ * /horses/:id/location - the location flag's one route. Owner-only, the same
+ * notFound()-for-a-non-owner shape every horse-scoped route in this file uses.
+ *
+ * Costs no turn and no money, in either direction. Turning a horse out is a management decision,
+ * not a purchase, and the whole point of pasture is that it is the lever a stable reaches for when
+ * money is tight - gating it behind the debt rule or the action budget would take it away from
+ * exactly the player who needs it. (Contrast horseCareRoute above, which is a purchase and is
+ * blocked by canTakeOnCost.)
+ *
+ * Both directions re-check server-side rather than trusting that the button was rendered, and both
+ * are idempotent at the database (the UPDATEs carry their own location guard), so a double-tap on
+ * a phone changes nothing the second time.
+ */
+export async function horseLocationRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const action = form.action === 'turn_out' ? 'turn_out' : form.action === 'bring_in' ? 'bring_in' : null;
+  if (!action) return redirect(`/horses/${String(horseId)}`);
+
+  const fail = (message: string) => redirect(`/horses/${String(horseId)}?location_error=${encodeURIComponent(message)}`);
+
+  if (action === 'turn_out') {
+    const blocked = await turnOutBlockedReason(ctx, horse);
+    if (blocked) return fail(blocked);
+    // A horse already at pasture is not an error worth a message - the page it lands on already
+    // shows where the horse is.
+    await turnOutToPasture(ctx.env, horseId, ctx.world.game_day);
+    return redirect(`/horses/${String(horseId)}?location_done=out`);
+  }
+
+  await bringInFromPasture(ctx.env, horse, ctx.world.game_day);
+  return redirect(`/horses/${String(horseId)}?location_done=in`);
 }
 
 /** Slice 0011 §6.2: what retiring this horse away is about to cancel or withdraw, named plainly -

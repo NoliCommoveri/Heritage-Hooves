@@ -32,6 +32,12 @@ export function eligibilityMessage(reason: EligibilityReason | 'class_closed' | 
       return 'is already entered in this class.';
     case 'barred_by_condition':
       return "can't be shown - a condition bars it from the ring.";
+    // The location flag. Both name the way out, because both are entirely the owner's to undo -
+    // unlike every other reason in this list, which is a fact about the horse.
+    case 'at_pasture':
+      return "is out at pasture. Bring it into the barn first - it'll need a little while to settle in before it can be shown.";
+    case 'settling_in':
+      return 'came in from pasture recently and is still settling back into work.';
     case 'class_closed':
       return "can't enter - this class isn't open for entries anymore.";
     case 'not_found':

@@ -4,12 +4,19 @@
 // stored feed level and game_day. Two horses with the same care state always produce the same
 // modifier.
 
-export type CareStatus = 'not_yet' | 'fresh' | 'due_soon' | 'due' | 'overdue';
+/** 'at_pasture' is the location flag's addition to the five slice 0013 defined - a horse at grass
+ * has no running timer at all, which is a different thing from being current. */
+export type CareStatus = 'not_yet' | 'fresh' | 'due_soon' | 'due' | 'overdue' | 'at_pasture';
 
 export interface TimerState {
   /** null = never called; the ramp then runs from careStartGameDay. */
   lastCallGameDay: number | null;
   careStartGameDay: number;
+  /** The location flag. A horse at pasture is not on the clock: its timers are frozen, and the time
+   * out is credited back onto them when it is brought in (src/db/care.ts's bringInFromPasture), so
+   * the ramp below never has to know about location. Optional, defaulting to false, so every
+   * existing caller and test that predates the flag keeps meaning what it meant. */
+  atPasture?: boolean;
 }
 
 export interface TimerConfig {
@@ -45,6 +52,11 @@ const DUE_SOON_FRACTION = 0.8;
  * overdue for a farrier visit it is too young to need.
  */
 export function timerState(state: TimerState, cfg: TimerConfig, gameDay: number): TimerResult {
+  // Checked before everything else: a horse at grass is not fresh, not due and not overdue - it is
+  // simply not on the clock, and nothing about its stored dates means anything until it comes home.
+  if (state.atPasture === true) {
+    return { status: 'at_pasture', delta: 0, daysUntilDue: 0, needsCall: false };
+  }
   if (state.lastCallGameDay === null && gameDay < state.careStartGameDay) {
     return {
       status: 'not_yet',

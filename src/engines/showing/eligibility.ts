@@ -3,6 +3,8 @@
 // code rather than a sentence, so the wording lives at the edges (render/routes) and can be tuned
 // for a seven-year-old without touching this file.
 
+import type { WorkAvailability } from '../care/location';
+
 export type EligibilityReason =
   | 'wrong_breed'
   | 'crossbred_not_eligible'
@@ -12,7 +14,12 @@ export type EligibilityReason =
   | 'requires_gait'
   | 'entry_cap_reached'
   | 'already_entered'
-  | 'barred_by_condition';
+  | 'barred_by_condition'
+  // The location flag. Two reasons rather than one because they call for completely different
+  // sentences on screen: "she's out at pasture" is a thing the owner chose and can undo today,
+  // "she came in four days ago" is a wait with an end date.
+  | 'at_pasture'
+  | 'settling_in';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: EligibilityReason };
 
@@ -28,6 +35,11 @@ export interface EligibilityHorse {
    * this is truth already visible without a test (§2.4), not knowledge, so no boundary is crossed
    * reading it here. */
   barredByCondition: boolean;
+  /** src/engines/care/location.ts's workAvailability, already evaluated by the caller. Passed in
+   * resolved rather than as (location, changedDay, settleDays) so there is exactly one
+   * implementation of the settling rule in the codebase - breeding, which is not a show and never
+   * comes through this file, shares that same function rather than a copy of the arithmetic. */
+  availability: WorkAvailability;
 }
 
 export interface EligibilityClass {
@@ -49,6 +61,10 @@ export interface EligibilityClass {
 export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass, stableEntryCountInClass: number): EligibilityResult {
   if (horse.alreadyEntered) return { ok: false, reason: 'already_entered' };
   if (horse.barredByCondition) return { ok: false, reason: 'barred_by_condition' };
+  // Checked high, above every fact about the horse itself: a horse at pasture has not failed a
+  // rule, it is simply not in work. Being told "she's out at pasture" is more use than being told
+  // she is the wrong breed for a class she was never going to enter this month.
+  if (!horse.availability.available) return { ok: false, reason: horse.availability.reason };
 
   if (horse.isCross) {
     if (!cls.crossesEligible) return { ok: false, reason: 'crossbred_not_eligible' };

@@ -26,7 +26,7 @@ import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
 import { isBarredFromShowing } from './health';
-import { careModifierForHorse } from './care';
+import { careModifierForHorse, availabilityForHorse } from './care';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -337,7 +337,8 @@ export async function checkHorseEligibilityForClass(
   cls: ShowClassRow,
   horse: HorseRow,
   gameDay: number,
-  gameDaysPerYear: number
+  gameDaysPerYear: number,
+  config: Config
 ): Promise<{ ok: true } | { ok: false; reason: EligibilityReason }> {
   const [existing, stableCount] = await Promise.all([
     getEntryByClassAndHorse(env, cls.id, horse.id),
@@ -357,6 +358,9 @@ export async function checkHorseEligibilityForClass(
       gaited: phenotype.gaited,
       alreadyEntered: existing !== null,
       barredByCondition,
+      // The location flag: needs pasture_settle_game_days, which is why this function now takes the
+      // live config rather than the two loose numbers it used to.
+      availability: availabilityForHorse(horse, config.values, gameDay),
     },
     {
       breedId: cls.breed_id,
@@ -383,14 +387,14 @@ export type EnterHorseResult = { ok: true } | { ok: false; reason: EligibilityRe
  */
 export async function enterHorseInClass(
   env: Env,
-  params: { classId: number; horseId: number; gameDay: number; gameDaysPerYear: number; conformationConfig: RealizationConfig }
+  params: { classId: number; horseId: number; gameDay: number; gameDaysPerYear: number; conformationConfig: RealizationConfig; config: Config }
 ): Promise<EnterHorseResult> {
   const cls = await getShowClass(env, params.classId);
   if (!cls || cls.status !== 'scheduled') return { ok: false, reason: 'class_closed' };
   const horse = await getHorse(env, params.horseId);
   if (!horse) return { ok: false, reason: 'not_found' };
 
-  const eligibility = await checkHorseEligibilityForClass(env, cls, horse, params.gameDay, params.gameDaysPerYear);
+  const eligibility = await checkHorseEligibilityForClass(env, cls, horse, params.gameDay, params.gameDaysPerYear, params.config);
   if (!eligibility.ok) return eligibility;
 
   const snapshot = traitSnapshot(horse, cls.class_type, params.gameDay, params.conformationConfig, params.gameDaysPerYear);
@@ -583,7 +587,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
       const eligible: HorseRow[] = [];
       for (const horse of candidates) {
         if (alreadyIn.has(horse.id)) continue;
-        const result = await checkHorseEligibilityForClass(env, cls, horse, gameDay, gameDaysPerYear);
+        const result = await checkHorseEligibilityForClass(env, cls, horse, gameDay, gameDaysPerYear, config);
         if (result.ok) eligible.push(horse);
       }
       const rng = makeRng(deriveSeed(cls.rng_seed, 'npc_field'));
