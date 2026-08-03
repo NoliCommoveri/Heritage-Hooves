@@ -897,3 +897,16 @@ On a deployed world with two player stables:
   deliberately.
 - **Anything in §13.4.** Those are Part D's questions and they should not be answered by a session
   building Part A.
+
+---
+
+## 19. Amendments
+
+- **`docs/slices/0017a-amendment-colour-testing-and-the-consignment-dealer.md`** (3 Aug 2026) —
+  adds **Part E, a consignment dealer**: an NPC middleman that offers one or two outside-bred horses
+  on the open market every 90 game days, removes them if unclaimed, and lets the operator queue an
+  allele from `/admin` to be seeded into the next batch — the only mechanism in the game that can
+  introduce a colour nobody owns. It also specifies **colour testing** for players, which Part E
+  depends on and which must be built first.
+
+  It is **not** Part B and changes nothing in §11. Its §2 lists every place the two touch.
