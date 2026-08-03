@@ -247,8 +247,7 @@ export type ClaimOfferResult =
   | { ok: true }
   | { ok: false; error: 'not_open' }
   | { ok: false; error: 'expired' }
-  | { ok: false; error: 'wrong_mare_count'; expected: number }
-  | { ok: false; error: 'wrong_stallion_count'; expected: number }
+  | { ok: false; error: 'too_many_chosen'; max: number }
   | { ok: false; error: 'no_room'; stableName: string }
   | { ok: false; error: 'name_taken' };
 
@@ -290,10 +289,11 @@ export async function claimOffer(env: Env, params: ClaimOfferParams): Promise<Cl
   const chosenIds = new Set(params.chosenCandidateIds);
   const chosen = candidates.filter((c) => chosenIds.has(c.id));
 
-  const mareCount = chosen.filter((c) => c.sex === 'mare').length;
-  const stallionCount = chosen.filter((c) => c.sex === 'stallion').length;
-  if (mareCount !== offer.mare_claims) return { ok: false, error: 'wrong_mare_count', expected: offer.mare_claims };
-  if (stallionCount !== offer.stallion_claims) return { ok: false, error: 'wrong_stallion_count', expected: offer.stallion_claims };
+  // A player may claim any mix of genders, from none up to this batch's max (offer.mare_claims +
+  // offer.stallion_claims - still 3, unchanged from the original 2-mare/1-stallion split) - see the
+  // build log's founding-stock claim-flexibility entry for why the per-gender floor was dropped.
+  const maxClaims = offer.mare_claims + offer.stallion_claims;
+  if (chosen.length > maxClaims) return { ok: false, error: 'too_many_chosen', max: maxClaims };
 
   const aliveCount = await countAliveHorses(env, params.stableId);
   if (aliveCount + chosen.length > params.stableCapacity) return { ok: false, error: 'no_room', stableName: params.stableName };

@@ -29,10 +29,8 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
 
 function claimErrorMessage(result: Extract<ClaimOfferResult, { ok: false }>): string {
   switch (result.error) {
-    case 'wrong_mare_count':
-      return `Choose exactly ${String(result.expected)} mare${result.expected === 1 ? '' : 's'}.`;
-    case 'wrong_stallion_count':
-      return `Choose exactly ${String(result.expected)} stallion${result.expected === 1 ? '' : 's'}.`;
+    case 'too_many_chosen':
+      return `Choose at most ${String(result.max)} horses.`;
     case 'no_room':
       return `${result.stableName} doesn't have room for that many more horses.`;
     case 'expired':
