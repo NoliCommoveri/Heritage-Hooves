@@ -321,6 +321,78 @@ function careBarnControls(params: {
     </div>`;
 }
 
+/** Slice 0017 §6.5: a horse with an open listing carries its asking price on the barn list - a
+ * child listing eight horses needs to see at a glance which are up. Neutral styling: putting a horse
+ * on the market is an ordinary decision, not a warning. */
+function listingBarnBadge(price: number | null): SafeHtml {
+  if (price === null) return raw('');
+  return html`<span class="badge">For sale — ${String(price)}</span>`;
+}
+
+/**
+ * Slice 0017 §6.3: the "Sell this horse" section, alongside the test, care, show-entry and
+ * retire-away controls that already live on this page.
+ *
+ * **The guide value is shown here and to nobody else** (§2.7) - not on /market, not on /market/:id,
+ * not on /world. It is advice: any price from 1 to market_max_price is accepted, no warning blocks a
+ * submission, and finding out an over-priced horse does not sell is the lesson. The `factors` list
+ * is what makes it teach something rather than assert a number.
+ */
+function sellCard(params: {
+  horse: HorseRow;
+  canManage: boolean;
+  listing: { listingId: number; price: number; expiresGameDay: number } | null;
+  guide: { value: number; factors: { label: string; detail: string }[]; qualityUnknown: boolean } | null;
+  commissionPercent: number;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  if (!params.canManage) return raw('');
+  const h = params.horse;
+  const object = h.sex === 'mare' ? 'her' : 'him';
+
+  if (params.listing) {
+    return html`
+      <div class="card">
+        <h2>On the market</h2>
+        ${errorBox(params.error)}
+        ${noticeBox(params.notice)}
+        <p><a href="/market/${String(params.listing.listingId)}">Listed for ${String(params.listing.price)}</a>, until game day ${String(params.listing.expiresGameDay)}.</p>
+        <p class="muted">${displayNameFor(h)} is still completely yours until somebody buys ${object} - show ${object}, breed ${object}, call the farrier, turn ${object} out. A listing is an advert, not a deposit.</p>
+        <form method="post" action="/market/${String(params.listing.listingId)}/withdraw">
+          <input type="hidden" name="return_to" value="horse">
+          <button type="submit" class="secondary">Take off the market</button>
+        </form>
+      </div>`;
+  }
+
+  const guide = params.guide;
+  const guideBlock = guide
+    ? html`
+      ${guide.qualityUnknown
+        ? html`<p class="notice">We can't judge conformation for this breed yet, so this is a rough guess based on age, health and show record.</p>`
+        : raw('')}
+      <p><strong>What we reckon ${object} is worth:</strong> ${String(guide.value)}</p>
+      <ul>${guide.factors.map((f) => html`<li><strong>${f.label}:</strong> ${f.detail}</li>`)}</ul>
+      <p class="muted">That is our guess, not a rule. Ask whatever you like - if nobody buys, nothing is lost but the wait.</p>`
+    : raw('');
+
+  return html`
+    <div class="card">
+      <h2>Sell this horse</h2>
+      ${errorBox(params.error)}
+      ${noticeBox(params.notice)}
+      ${guideBlock}
+      <p class="muted">Listing is free and costs no turn. If ${object} sells, ${String(params.commissionPercent)}% of the price goes to the market and the rest is yours. ${displayNameFor(h)}'s barn name is cleared when the horse changes hands - the registered name never changes - your test results go with ${object}, and anything ${object} is carrying or entered in goes too.</p>
+      <form method="post" action="/horses/${String(h.id)}/list">
+        <label>Asking price
+          <input type="text" inputmode="numeric" name="price" value="${guide ? String(guide.value) : ''}" required>
+        </label>
+        <button type="submit">Put ${object} on the market</button>
+      </form>
+    </div>`;
+}
+
 /** Slice 0016 §4.1: the barn list's tabs - plain links with a query parameter, no JavaScript
  * (§3). Counts come off the full, unfiltered horse list (§4.5). Geldings only appears when the
  * stable actually has one (§4.1) - there is no gelding path in the game today. */
@@ -359,6 +431,8 @@ export function renderBarnList(params: {
     ageModifier: AgeModifierResult | null;
     care: CareCardView | null;
     availability: WorkAvailability | null;
+    /** Slice 0017 §6.5: the asking price when this horse has an open listing, else null. */
+    listingPrice: number | null;
   }[];
   feedLevels: Record<string, FeedLevelDefinition>;
   careSummary: { farrierDue: number; wellnessDue: number };
@@ -372,11 +446,11 @@ export function renderBarnList(params: {
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability, listingPrice }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)} ${listingBarnBadge(listingPrice)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -721,6 +795,14 @@ export function renderHorsePage(params: {
    * horse's page must hide (Enter in a show, Test, Choose/Change picture, Retire away). Reading
    * content (pedigree, conformation, health, show record, picture) is never gated by this. */
   canManage: boolean;
+  /** Slice 0017 §6.3: this horse's open listing, or null. */
+  listing: { listingId: number; price: number; expiresGameDay: number } | null;
+  /** The guide value and its reasons - **the owner sees this and nobody else** (§2.7). Null for a
+   * viewer who is not the owner, and for an ended horse. */
+  guideValue: { value: number; factors: { label: string; detail: string }[]; qualityUnknown: boolean } | null;
+  marketCommissionPercent: number;
+  marketError?: string;
+  marketNotice?: string;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -884,6 +966,15 @@ export function renderHorsePage(params: {
       enterShowError: params.enterShowError,
       enterShowNotice: params.enterShowNotice,
       horseId: h.id,
+    })}
+    ${sellCard({
+      horse: h,
+      canManage: params.canManage,
+      listing: params.listing,
+      guide: params.guideValue,
+      commissionPercent: params.marketCommissionPercent,
+      error: params.marketError,
+      notice: params.marketNotice,
     })}
     <h2>Pedigree</h2>
     ${pedigreeTable}

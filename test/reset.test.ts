@@ -8,6 +8,7 @@ import { RESET_TABLES, RESET_TABLE_LABELS, tablesForScope, type ResetTable } fro
  * up as a failed reset in front of the children, which is exactly when nobody can debug it.
  */
 const REFERENCES: Record<ResetTable, string[]> = {
+  listings: ['horses', 'stables'],
   import_candidates: ['import_offers', 'horses'],
   import_offers: ['stables', 'accounts', 'breeds'],
   show_entries: ['show_classes', 'horses', 'stables'],

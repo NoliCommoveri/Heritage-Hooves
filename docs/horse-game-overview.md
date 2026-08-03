@@ -28,6 +28,7 @@ What this settles is where scarcity lives. **Anything scarce per human belongs t
 
 - **Stables trade with each other through the market like anyone else.** No direct transfer between one owner's own barns. It costs nothing, since the market already exists, and it keeps the separate-books claim honest.
 - **The obvious leak is worth naming rather than plugging.** A horse listed by stable A and bought by stable B moves money between two books that were meant to be independent. A minimum listing duration, so a sibling could plausibly have bought it first, plus a marker on transactions where buyer and seller share an account, are both cheap and probably sufficient. At five players nobody may care.
+  - **Settled 3 Aug 2026, when the market was specified, and built the same day.** The operator was offered the minimum listing duration and **declined it** — listings are buyable the moment they are posted, by anyone, including the seller's own other stable. The other half of the recommendation is what was built, and it is not optional: every ledger row from a sale carries `counterparty_stable_id`, and `same_account` is set to 1 when the two stables share an `account_id`. Completed sales are also public to every player at `/market/sold`. The leak is named, visible and queryable rather than prevented, which at five players is very likely the right trade — the cost of the duration rule is a real sale between two siblings being made to wait, and the benefit is stopping something anybody can see in the ledger anyway. **Do not quietly add the rule back.** If the pattern actually shows up, it returns as one config key (`market_min_listing_game_days`, default 0) and one check, once somebody has seen it.
 - **A cap on stables per account** is probably wise. Unlimited invites a stable per horse.
 
 ### 1b. The parent's PIN, and the household layer
@@ -733,7 +734,7 @@ The common failure is building forty conformation traits and never shipping a sh
 
 **NPC breeding, ageing, and the ceiling parameter.** Where the escalation tuning in §10d gets its first real test.
 
-**Market** — NPC sale listings, buy offers, stud services, player-to-player trading, and the minimum listing duration that keeps same-owner sales public.
+**Market** — NPC sale listings, buy offers, stud services, player-to-player trading. (Player-to-player trading is built as of 3 Aug 2026; the other three are specified in `docs/slices/0017-market.md` §11-§13 and not built. The minimum listing duration this line used to promise was considered and declined — see §1a.)
 
 **Tack** (§8b) — tiers, wear, repair or replace, and discipline specificity. **Separated from care and moved here on 2 Aug 2026**, for three reasons: discipline specificity is most of tack's design and needs more than one discipline seeded to be exercised at all; every price and wear rate in it is set against a market that does not exist until the stage above; and §8b's pay-to-win risk is worth taking deliberately, after the money in this game has been watched for a while, rather than on the same afternoon as the farrier. Care and tack share nothing structurally — they are two independent multipliers on one score line, and both scorers already take them as two separate parameters — so the split costs nothing.
 

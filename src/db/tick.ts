@@ -16,6 +16,7 @@ import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { noticeCareDue } from './care';
 import { deleteOldEvents } from './events';
+import { expireListings } from './listings';
 import { killDueLethalFoals } from './health';
 import { assignLifespansAndNoticeFrailty, killDueOldHorses } from './ageing';
 
@@ -100,6 +101,12 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // deleteOldEvents (an event written this tick is subject to the same retention pass as any
       // other, the same reasoning every other event-writing stage above already follows).
       await noticeCareDue(env, newGameDay, config);
+      // Slice 0017 §8: after noticeCareDue and before deleteOldEvents, inside this same paused === 0
+      // branch. Both reasons matter - a paused world must not expire listings (a family on holiday
+      // should not come back to an empty market), and an event written by this stage is subject to
+      // the same retention pass as any other, which is the ordering rule every event-writing stage
+      // already follows. Idempotent by its own `status = 'open'` guard, no marker column needed.
+      await expireListings(env, newGameDay);
       // Slice 0009 Part B §6.4: a notice board, not an archive - deletes every event (read or not)
       // older than events_retention_game_days. Sits inside this same paused === 0 branch so it
       // never runs on a paused tick either, matching upkeep's own reasoning above.

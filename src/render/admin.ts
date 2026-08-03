@@ -321,6 +321,58 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="genotype_panel_cost" value="${String(v.genotype_panel_cost)}">
       </label>
       <p class="muted">Both read live, at the moment a test is bought - a price change affects the next purchase, never re-prices a receipt already written. Too cheap and everyone tests everything; too expensive and children breed blind. Tune by watching /admin/health.</p>
+      <h2>Market</h2>
+      <label>Commission on a completed sale (%)
+        <input type="text" inputmode="numeric" name="market_commission_percent" value="${String(v.market_commission_percent)}">
+      </label>
+      <label>How long a listing stays up (game days)
+        <input type="text" inputmode="numeric" name="market_listing_game_days" value="${String(v.market_listing_game_days)}">
+      </label>
+      <label>Highest price the market accepts
+        <input type="text" inputmode="numeric" name="market_max_price" value="${String(v.market_max_price)}">
+      </label>
+      <p class="muted">Commission is the market's only money sink and the only one that scales with the size of a trade - it is never charged on a sale that does not happen. Listing itself is free and costs no turn; buying costs one. How long a listing stays up is copied onto each listing when it is posted, so changing it here only affects listings put up afterwards, never one already on the market.</p>
+      <label>Global price multiplier
+        <input type="text" inputmode="decimal" name="market_price_multiplier" value="${String(v.market_price_multiplier)}">
+      </label>
+      <p class="muted">The one lever that moves every guide value at once, because the first pricing model will be wrong. It changes what the game <em>suggests</em> a horse is worth; it never touches a price a player has already typed.</p>
+      <label>Base value of an unremarkable adult horse
+        <input type="text" inputmode="numeric" name="market_base_value" value="${String(v.market_base_value)}">
+      </label>
+      <label>Conformation weight
+        <input type="text" inputmode="decimal" name="market_quality_weight" value="${String(v.market_quality_weight)}">
+      </label>
+      <label>Newborn value factor
+        <input type="text" inputmode="decimal" name="market_foal_value_factor" value="${String(v.market_foal_value_factor)}">
+      </label>
+      <label>Failing-horse factor
+        <input type="text" inputmode="decimal" name="market_failing_factor" value="${String(v.market_failing_factor)}">
+      </label>
+      <label>Premium per tested-clear condition
+        <input type="text" inputmode="decimal" name="market_clear_premium" value="${String(v.market_clear_premium)}">
+      </label>
+      <label>Ceiling on the whole tested-clear premium
+        <input type="text" inputmode="decimal" name="market_clear_premium_cap" value="${String(v.market_clear_premium_cap)}">
+      </label>
+      <label>Known-carrier factor
+        <input type="text" inputmode="decimal" name="market_carrier_factor" value="${String(v.market_carrier_factor)}">
+      </label>
+      <label>Known-affected factor
+        <input type="text" inputmode="decimal" name="market_affected_factor" value="${String(v.market_affected_factor)}">
+      </label>
+      <label>Bonus per win
+        <input type="text" inputmode="decimal" name="market_win_bonus" value="${String(v.market_win_bonus)}">
+      </label>
+      <label>Bonus per other top-three placing
+        <input type="text" inputmode="decimal" name="market_place_bonus" value="${String(v.market_place_bonus)}">
+      </label>
+      <label>Ceiling on the show-record bonus
+        <input type="text" inputmode="decimal" name="market_record_cap" value="${String(v.market_record_cap)}">
+      </label>
+      <label>Lowest a guide value ever goes
+        <input type="text" inputmode="numeric" name="market_min_value" value="${String(v.market_min_value)}">
+      </label>
+      <p class="muted">Every number in this block is a guess. They were chosen so an average adult horse is worth somewhere around 800-1,500 against a starting balance of 10,000, which means a child can buy two or three horses from their opening balance and it costs them something. Nobody has watched this economy run yet - expect to retune all of them. A tested-clear horse is worth more only because someone paid for the tests; an untested one is neither penalised nor rewarded, which is what keeps buying an untested horse a real gamble.</p>
       <label>Lethal foal death window (game days)
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>

@@ -242,6 +242,11 @@ const NUMERIC_CONFIG_KEYS = [
   'pin_max_attempts',
   'pin_lockout_window_seconds',
   'admin_pin_grace_seconds',
+  'market_commission_percent',
+  'market_listing_game_days',
+  'market_max_price',
+  'market_base_value',
+  'market_min_value',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -259,6 +264,17 @@ const DECIMAL_CONFIG_KEYS = [
   'vet_wellness_penalty',
   'care_modifier_min',
   'care_modifier_max',
+  'market_price_multiplier',
+  'market_quality_weight',
+  'market_foal_value_factor',
+  'market_failing_factor',
+  'market_clear_premium',
+  'market_clear_premium_cap',
+  'market_carrier_factor',
+  'market_affected_factor',
+  'market_win_bonus',
+  'market_place_bonus',
+  'market_record_cap',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {

@@ -72,11 +72,18 @@ import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../e
 import type { Genotype } from '../engines/genetics/genotype';
 import { careCardViewFor, callOneHorseCare, callOneConditionManagement, managementPlanRowsForHorse, type CareService } from '../db/care';
 import { bucketFor, type BarnBucket } from '../lib/barnFilter';
+import {
+  appraiseHorseForStable,
+  createListing,
+  getOpenListingForHorse,
+  openListingsBySellerStable,
+  buildWithdrawListingsForHorseStatement,
+} from '../db/listings';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
  * rather than a second copy. */
-export function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
+export function describeHorseRow(horse: Pick<HorseRow, 'genotype' | 'born_game_day' | 'sex'>, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = gameDay - horse.born_game_day;
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
@@ -134,10 +141,12 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   // a while after they ended, marked Died/Retired away - every other reader of a stable's horses
   // (breeding, the NPC show barn's field, the image picker) still wants listStableHorses'
   // alive-only rows, unchanged.
-  const [allHorses, traitRows, conditions] = await Promise.all([
+  const [allHorses, traitRows, conditions, openListings] = await Promise.all([
     listStableHorsesWithDead(ctx.env, stableId, ctx.world.game_day - cfg.barn_shows_ended_game_days),
     getConformationTraits(ctx.env),
     getEnabledConditions(ctx.env),
+    // Slice 0017 §6.5: one query for the whole barn's open listings, not one per row.
+    openListingsBySellerStable(ctx.env, stableId),
   ]);
 
   // Slice 0016 §4.5: counts come off the full list, filtering happens before the per-horse
@@ -177,6 +186,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       // Slice 0013 §8.2: null for an ended horse - care means nothing for a horse that isn't being
       // kept anymore, and stableHorsesWithDead's rows never had their care columns written for one.
       care: horse.status === 'alive' ? careCardViewFor(horse, stable.feed_level, cfg, ctx.world.game_day) : null,
+      listingPrice: openListings.get(horse.id)?.price ?? null,
     }))
   );
 
@@ -589,6 +599,13 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       : null;
   const ageModifier = ageModifierForHorse(horse.born_game_day, ctx.config.values, ctx.world.game_day);
 
+  // Slice 0017 §6.3/§2.7: the listing state, and the guide value - which the owner sees and nobody
+  // else does, admin included. It is computed against the OWNER's knowledge rows, since a
+  // tested-clear premium belongs to whoever paid for the tests.
+  const listingRow = await getOpenListingForHorse(ctx.env, horse.id);
+  const guideValue =
+    owner && horse.status === 'alive' ? await appraiseHorseForStable(ctx.env, horse, ownerStable.id, ctx.world.game_day, ctx.config.values) : null;
+
   return htmlResponse(
     renderHorsePage({
       world: ctx.world,
@@ -635,8 +652,52 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       careError,
       careNotice,
       feedLevelName: ctx.config.values.feed_levels.levels[ownerStable.feed_level]?.name ?? ownerStable.feed_level,
+      listing: listingRow ? { listingId: listingRow.id, price: listingRow.price, expiresGameDay: listingRow.expires_game_day } : null,
+      guideValue,
+      marketCommissionPercent: ctx.config.values.market_commission_percent,
+      marketError: params.get('market_error') ?? undefined,
+      marketNotice: params.get('market_notice') ?? undefined,
     })
   );
+}
+
+/**
+ * /horses/:id/list - slice 0017 §6.3. Owner-only, the same notFound()-for-a-non-owner shape every
+ * horse-scoped route in this file uses. **Free: no turn, no fee** (§2.5). The guide value is advice
+ * and nothing enforces it - any whole number from 1 to market_max_price is accepted, and an
+ * over-priced listing is a choice (§2.7).
+ *
+ * A listed horse is still fully its owner's (§2.8), so there is nothing here that freezes, escrows
+ * or blocks anything - listing a horse changes exactly one thing about it, which is that a row now
+ * exists in `listings`.
+ */
+export async function horseListRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const fail = (message: string) => redirect(`/horses/${String(horseId)}?market_error=${encodeURIComponent(message)}`);
+
+  const form = await parseForm(ctx.request);
+  const price = Number((form.price ?? '').trim());
+  const maxPrice = ctx.config.values.market_max_price;
+  if (!Number.isInteger(price) || price < 1) return fail('Type a whole number for the asking price - at least 1.');
+  if (price > maxPrice) return fail(`That's more than the highest price the market takes (${String(maxPrice)}).`);
+
+  const guide = await appraiseHorseForStable(ctx.env, horse, ownerStable.id, ctx.world.game_day, ctx.config.values);
+  const result = await createListing(ctx.env, {
+    horseId,
+    sellerStableId: ownerStable.id,
+    price,
+    guideValue: guide.value,
+    gameDay: ctx.world.game_day,
+    listingGameDays: ctx.config.values.market_listing_game_days,
+  });
+
+  if (!result.ok) return fail(`${displayNameFor(horse)} is already on the market.`);
+  return redirect(`/market/${String(result.listingId)}`);
 }
 
 /** Slice 0003 §7: one line of state on a mare's page - in season now, due back in season around a
@@ -1091,6 +1152,13 @@ async function buildRetireWarnings(ctx: RequestContext, horse: HorseRow): Promis
     warnings.push(`${name} is entered in ${entry.className}, not yet judged. Retiring ${name} away withdraws ${possessive === 'her' ? 'her' : 'his'} entry.`);
   }
 
+  // Slice 0017 §7.4/§2.8: retiring a listed horse away takes it off the market, named here beside
+  // the pregnancies, coverings and entries this page already names.
+  const listing = await getOpenListingForHorse(ctx.env, horse.id);
+  if (listing) {
+    warnings.push(`${name} is on the market for ${String(listing.price)}. Retiring ${name} away takes ${possessive === 'her' ? 'her' : 'him'} off it - nobody can buy ${possessive === 'her' ? 'her' : 'him'} afterwards.`);
+  }
+
   return warnings;
 }
 
@@ -1200,15 +1268,18 @@ export async function horseRetireRoute(ctx: RequestContext, method: string, hors
   const form = await parseForm(ctx.request);
   if (form.confirm !== 'yes') return render("Tick the box to confirm - retiring a horse away can't be undone.");
 
-  await ctx.env.DB.batch(
-    buildEndHorseParticipationStatements(ctx.env, {
+  await ctx.env.DB.batch([
+    ...buildEndHorseParticipationStatements(ctx.env, {
       horseId,
       sex: horse.sex,
       gameDay: ctx.world.game_day,
       status: 'removed',
       endReason: 'retired_away',
-    })
-  );
+    }),
+    // Slice 0017 §7.4: in the same batch as the horse's own status change, so no `status = 'open'`
+    // race can leave a live listing pointing at a retired horse.
+    ...buildWithdrawListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
+  ]);
 
   return redirect(`/stables/${String(ownerStable.id)}/horses`);
 }

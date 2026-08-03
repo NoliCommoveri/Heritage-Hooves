@@ -14,7 +14,11 @@ import { nowUtcSeconds } from '../lib/time';
 // constraint was widened in the matching migration each time (0057_ledger_add_vet_kind.sql,
 // 0070_ledger_add_farrier_kind.sql); this union must keep matching it exactly, the same way the
 // schema's CHECK and this type always have.
-export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier';
+// Slice 0017 §5.3 adds three more - 'sale' (the seller's receipt), 'purchase' (the buyer's payment)
+// and 'commission' (what the market takes out of the seller's proceeds), widened in
+// 0091_ledger_add_market_kinds.sql. Three kinds rather than one net movement because the ledger is
+// a thing a child reads.
+export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier' | 'sale' | 'purchase' | 'commission';
 
 export interface LedgerEntry {
   stableId: number;
@@ -27,6 +31,14 @@ export interface LedgerEntry {
   /** One short sentence a child can read. "Board for 4 horses, 10 days." */
   description: string;
   gameDay: number;
+  /** The stable on the other side of this movement. Null (the default) for everything that is not a
+   * trade - board, prizes, vet bills. Slice 0009 left this column unwritten for exactly slice
+   * 0017's sale path. */
+  counterpartyStableId?: number | null;
+  /** 1 when buyer and seller share an account_id (schema §2.4). The whole of slice 0017 §2.2's
+   * defence: a minimum listing duration was considered and declined, so a same-account sale is
+   * named, visible and queryable rather than prevented. */
+  sameAccount?: boolean;
 }
 
 export interface LedgerRow {
@@ -55,18 +67,42 @@ export function buildLedgerStatements(env: Env, entries: LedgerEntry[]): D1Prepa
   for (const entry of entries) {
     statements.push(
       env.DB.prepare(
-        `INSERT INTO ledger (stable_id, amount, kind, reference_type, reference_id, description, game_day, created_real_ts)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(entry.stableId, entry.amount, entry.kind, entry.referenceType, entry.referenceId, entry.description, entry.gameDay, nowSeconds)
+        `INSERT INTO ledger (stable_id, amount, kind, reference_type, reference_id, description, game_day, created_real_ts, counterparty_stable_id, same_account)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        entry.stableId,
+        entry.amount,
+        entry.kind,
+        entry.referenceType,
+        entry.referenceId,
+        entry.description,
+        entry.gameDay,
+        nowSeconds,
+        entry.counterpartyStableId ?? null,
+        entry.sameAccount ? 1 : 0
+      )
     );
     statements.push(env.DB.prepare('UPDATE stables SET balance = balance + ? WHERE id = ?').bind(entry.amount, entry.stableId));
   }
   return statements;
 }
 
+export interface LedgerDisplayRow extends LedgerRow {
+  /** Slice 0017 §9: the stable on the other side of a trade, resolved in the same query rather than
+   * a lookup per row. Null for every movement that has no counterparty - board, prizes, vet bills,
+   * and the commission (which is paid to the market, not to anybody). */
+  counterparty_stable_name: string | null;
+}
+
 /** The Money page's one stable, newest first, capped at `limit` rows. */
-export async function getLedgerForStable(env: Env, stableId: number, limit: number): Promise<LedgerRow[]> {
-  const result = await env.DB.prepare('SELECT * FROM ledger WHERE stable_id = ? ORDER BY id DESC LIMIT ?').bind(stableId, limit).all<LedgerRow>();
+export async function getLedgerForStable(env: Env, stableId: number, limit: number): Promise<LedgerDisplayRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT l.*, s.name AS counterparty_stable_name
+     FROM ledger l LEFT JOIN stables s ON s.id = l.counterparty_stable_id
+     WHERE l.stable_id = ? ORDER BY l.id DESC LIMIT ?`
+  )
+    .bind(stableId, limit)
+    .all<LedgerDisplayRow>();
   return result.results ?? [];
 }
 

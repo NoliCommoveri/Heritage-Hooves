@@ -31,10 +31,12 @@ import {
   horseRetireRoute,
   horseCareRoute,
   horseLocationRoute,
+  horseListRoute,
 } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
 import { worldIndexRoute, worldStableRoute, worldHorseRoute } from './routes/world';
+import { marketIndexRoute, marketSoldRoute, listingPageRoute, listingBuyRoute, listingWithdrawRoute } from './routes/market';
 import {
   adminHomeRoute,
   adminAccountsRoute,
@@ -60,7 +62,8 @@ import { readAdminUnlockPayload, expireAdminUnlockCookie } from './lib/session';
 import { nowUtcSeconds } from './lib/time';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location|\/list)?$/;
+const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 const WORLD_STABLE_ROUTE = /^\/world\/stables\/(\d+)$/;
 const WORLD_HORSE_ROUTE = /^\/world\/horses\/(\d+)$/;
@@ -152,6 +155,22 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
+    if (sub === '/list' && method === 'POST') return withReissuedCookie(ctx, await horseListRoute(ctx, horseId));
+    return notFound();
+  }
+
+  // Slice 0017 §6: /market sits beside /shows and /world - any logged-in account, no ownership
+  // required to look. /market/sold is matched before the numeric listing route, since "sold" is not
+  // a listing id.
+  if (path === '/market' && method === 'GET') return withReissuedCookie(ctx, await marketIndexRoute(ctx));
+  if (path === '/market/sold' && method === 'GET') return withReissuedCookie(ctx, await marketSoldRoute(ctx));
+  const listingMatch = path.match(LISTING_ROUTE);
+  if (listingMatch) {
+    const listingId = Number(listingMatch[1]);
+    const sub = listingMatch[2];
+    if (!sub && method === 'GET') return withReissuedCookie(ctx, await listingPageRoute(ctx, listingId));
+    if (sub === '/buy' && method === 'POST') return withReissuedCookie(ctx, await listingBuyRoute(ctx, listingId));
+    if (sub === '/withdraw' && method === 'POST') return withReissuedCookie(ctx, await listingWithdrawRoute(ctx, listingId));
     return notFound();
   }
 

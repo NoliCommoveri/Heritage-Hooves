@@ -158,8 +158,8 @@ This needs no schema of its own — the existing `listings` table already handle
 
 Two cheap defences, both recommended, neither structural:
 
-- **A minimum listing duration** before any sale completes, from config. A horse sitting on the open market for a real day is one a sibling could have bought, which is what makes the sale genuinely public rather than nominally so.
-- **A `same_account` flag computed on the ledger row** when buyer and seller share an account. Costs one column, makes the pattern visible in the audit trail, and means the question can be answered by looking rather than by arguing.
+- ~~**A minimum listing duration** before any sale completes, from config. A horse sitting on the open market for a real day is one a sibling could have bought, which is what makes the sale genuinely public rather than nominally so.~~ **Declined by the operator, 3 Aug 2026** — see overview §1a for the reasoning and for what would bring it back.
+- **A `same_account` flag computed on the ledger row** when buyer and seller share an account. Costs one column, makes the pattern visible in the audit trail, and means the question can be answered by looking rather than by arguing. **Built 3 Aug 2026**, and with the duration rule declined it is now the whole defence rather than half of it — which is why completed sales are also public at `/market/sold` (slice 0017 §2.9): a sale a sibling can no longer notice *before* it happens must at least be one they can see afterwards.
 
 ### 2.5 `pin_attempts` and the parent's PIN
 
@@ -418,7 +418,9 @@ Genotype rows are permanent and have no expiry. Screening rows carry an observat
 
 **What this buys, and what it costs.** It makes "tested clear" a genuine premium rather than a public fact, it makes §3e's market price signal real, and it means a horse's history of being tested travels with it. It also means a child can sell a carrier without disclosing, which will eventually produce an argument. That is arguably the lesson, but it is worth being ready for rather than surprised by. A per-stable "disclosed" flag on listings, or an admin view showing all knowledge, are both available mitigations that do not change the schema. **Nothing about disclosure is built in slice 0010** — there is no market yet to disclose on (§3.7 of that slice's own document).
 
-**On transfer:** copy the seller's knowledge rows to the buyer rather than reassigning them. The seller remembers what they knew about a horse they no longer own, which is both realistic and useful for their own breeding records. **Not built** — there is no market yet, so nothing transfers. The table is per-stable from its first row, which is the part that matters; retrofitting that structural decision later would be a rewrite, so it was not deferred even though transfer itself was.
+**On transfer:** copy the seller's knowledge rows to the buyer rather than reassigning them. The seller remembers what they knew about a horse they no longer own, which is both realistic and useful for their own breeding records. **Built 3 Aug 2026** (slice 0017 §7.2 step 4): the sale batch runs `INSERT OR IGNORE INTO horse_knowledge ... SELECT <buyer>, ... FROM horse_knowledge WHERE stable_id = <seller>`, with `cost_paid` set to 0 — the buyer did not pay for these — and `OR IGNORE` against the existing unique index handling a buyer who already tested this horse during a previous ownership. The seller's own rows are untouched. The table being per-stable from its first row is what made this a five-line statement rather than a rewrite.
+
+The "a child can sell a carrier without disclosing" worry above is **also closed, in the opposite direction to what this paragraph anticipated**: disclosure is compulsory, not optional (§7.1, slice 0017 §2.3). A listing shows every condition the game tests for, each marked with the seller's result or "not tested", so silence cannot be made to read as clear. What a seller can still do is decline to *buy* a test — which leaves the row reading "not tested" to everyone including themselves, and is exactly the gamble the testing economy is meant to create.
 
 ### 4.5 `horse_conditions` — what is actually true
 
@@ -576,10 +578,13 @@ Updated incrementally when a class resolves. Permanent — survives the horse. T
 
 ### 7.1 `listings`
 
-- `id`, `horse_id`, `seller_stable_id`, `price`, `listed_game_day`, `expires_game_day` (**snapshot**), `status`, `buyer_stable_id`, `sold_game_day`
-- `disclosed_knowledge` — JSON (optional): which of the seller's knowledge rows are shown on the listing
+**Built 3 Aug 2026** (`migrations/0090_listings.sql`, slice 0017 Part A). The built shape, against the sketch this section used to carry:
 
-That last column is the hook for the disclosure question raised in §4.4. Including it now costs one nullable column; adding it after children have been trading for a month is a conversation about fairness rather than a schema change.
+- `id`, `horse_id`, `seller_stable_id`, `price`, `listed_game_day`, `expires_game_day` (**snapshot**), `status`, `buyer_stable_id`, `sold_game_day` — all as sketched.
+- Added while building: `guide_value` (the appraisal at listing time, snapshotted, shown to the seller only), `commission_paid` (what the seller actually lost to commission, snapshotted at sale, for the same reason `horse_knowledge.cost_paid` is), and `closed_game_day` (set for withdrawn and expired too, so "when did this stop being open" is one column rather than three).
+- `status` is `open` / `sold` / `withdrawn` / `expired`, with a partial unique index on `horse_id WHERE status = 'open'` — that index, not a check somebody forgets, is what makes "a horse is on the market once at a time" true.
+- **No `sold_price`.** Buy-now means the sale price is the asking price. An auction, if one ever arrives, is a second listing type on this same table (`listings.kind`) and it is what would need one.
+- **`disclosed_knowledge` is deliberately not built.** §11's disclosure question is closed: disclosure is always compulsory, so there is no per-listing choice for the column to record, and a column nothing writes is a column a future session has to work out the meaning of. A listing renders one row per condition the game tests for, showing the seller's `horse_knowledge` result or "not tested". See §4.4 — the truth-versus-knowledge separation is what the whole decision rests on.
 
 ### 7.2 `buy_offers`
 

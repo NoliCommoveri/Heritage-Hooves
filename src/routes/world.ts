@@ -13,6 +13,7 @@ import { listStablesForWorld, getStableById } from '../db/stables';
 import { countAliveHorsesByStable, getHorse, listStableHorses, horseDisplayName, type HorseRow } from '../db/horses';
 import { getBreedById } from '../db/breeds';
 import { getShowSummary, listRecentResultsForHorse } from '../db/shows';
+import { getOpenListingForHorse } from '../db/listings';
 import { formatCalendarDate } from '../lib/calendar';
 
 export async function worldIndexRoute(ctx: RequestContext): Promise<Response> {
@@ -104,6 +105,8 @@ export function buildPublicHorseView(params: {
   dam: { id: number; name: string } | null;
   showSummary: { starts: number; wins: number; best_placing: number | null } | null;
   recentResults: string[];
+  /** Slice 0017 §9: the open listing, if there is one. An asking price is public. */
+  listing: { listingId: number; price: number } | null;
 }): PublicHorseView {
   const h = params.horse;
   const bredByLabel = h.breeder_prefix
@@ -131,6 +134,7 @@ export function buildPublicHorseView(params: {
     recentResults: params.recentResults,
     statusLabel: h.status === 'dead' ? 'Died' : h.status === 'removed' ? 'Retired away' : null,
     atPasture: h.status === 'alive' && h.location === 'pasture',
+    listing: params.listing,
   };
 }
 
@@ -153,9 +157,10 @@ export async function worldHorseRoute(ctx: RequestContext, horseId: number): Pro
     horse.dam_id ? getHorse(ctx.env, horse.dam_id) : Promise.resolve(null),
   ]);
 
-  const [showSummary, recentResultsRaw] = await Promise.all([
+  const [showSummary, recentResultsRaw, listingRow] = await Promise.all([
     getShowSummary(ctx.env, horseId),
     listRecentResultsForHorse(ctx.env, horseId, 5),
+    getOpenListingForHorse(ctx.env, horseId),
   ]);
   const recentResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
 
@@ -170,6 +175,7 @@ export async function worldHorseRoute(ctx: RequestContext, horseId: number): Pro
     dam: damRow ? { id: damRow.id, name: horseDisplayName(damRow) } : null,
     showSummary,
     recentResults,
+    listing: listingRow ? { listingId: listingRow.id, price: listingRow.price } : null,
   });
 
   return htmlResponse(
