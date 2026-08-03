@@ -78,6 +78,7 @@ export async function stockShowBarn(
     const generated = generateCandidate({
       pool,
       polygenicOneChance,
+      robustnessOneChance: params.config.values.robustness_one_chance,
       ageMinGameDays: params.config.values.founding_age_min_game_days,
       ageMaxGameDays: params.config.values.founding_age_max_game_days,
       seed,

@@ -94,6 +94,8 @@ Say so plainly in the summary if you build any of these anyway.
 ### 3.2 No management, so "manageable" means "diagnosed"
 HYPP and PSSM1 are manageable through diet and workload, and neither diet nor workload exists. In this slice an affected horse is identified and displayed and nothing can be done about it. This is the honest first pass, and it is why `conditions.onset_model` and `conditions.management_options` from the schema document's §3.3 sketch are **not built as columns** — a nullable column nothing writes and nothing reads is a promise to a future session that nobody has kept. The care and tack stage adds them.
 
+**This promise was kept 3 Aug 2026, in `docs/slices/0014-before-the-children-play.md` §5** (built as `docs/slices/0013-care-and-condition.md` §4.5 specified, which is the "care and tack stage" this paragraph points at). `horse_conditions` gained `management_state`/`management_until_game_day`; `conditions.onset_model` is still not built — the polygenic category still has no onset model — but `management_options` shipped as `management_text` (plain text, since nothing reads a structure) rather than the JSON originally sketched. See slice 0014 §7 for why.
+
 ### 3.3 No vet, no service calls, no turnaround time
 There is no professions system, so testing is a direct purchase from the horse page and results are instant. `horse_knowledge.service_call_id` from the schema sketch is **not built** for the same reason as §3.2. When the vet profession lands, testing becomes a service call and that column arrives with it.
 

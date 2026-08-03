@@ -7,8 +7,20 @@ import type { Env } from '../types';
 import type { Config } from '../lib/config-cache';
 import { deriveSeed, makeRng } from '../lib/rng';
 import { rollLifespanGameDays, ageState, type AgeState } from '../engines/ageing/lifespan';
+import { agePerformanceModifier, type AgeModifierResult } from '../engines/ageing/performance';
 import { horseDisplayName } from './horses';
 import { buildEventStatement } from './events';
+
+// ---------------------------------------------------------------------------
+// Slice 0014 §4.3: the scorer's other entry point (careModifierForHorse in src/db/care.ts is the
+// first) - a horse's age in game days, handed to the pure engine. Live tunables, read fresh - §4.1
+// is explicit that nothing here is snapshotted onto a horse; what is snapshotted is the modifier a
+// judged entry actually scored with (show_entries.age_modifier_applied).
+// ---------------------------------------------------------------------------
+
+export function ageModifierForHorse(bornGameDay: number, cfg: Config['values'], gameDay: number): AgeModifierResult {
+  return agePerformanceModifier(gameDay - bornGameDay, cfg);
+}
 
 // ---------------------------------------------------------------------------
 // §6.5: the shared exit path - death and removal both call this for the statements that end a
@@ -227,6 +239,8 @@ export interface LivingHorseAdminDisplay {
   stableName: string;
   bornGameDay: number;
   ageState: AgeState;
+  /** Slice 0014 §8.5. */
+  ageModifier: AgeModifierResult;
 }
 
 /**
@@ -249,7 +263,24 @@ export async function listLivingHorsesForAdmin(env: Env, gameDay: number, config
     stableName: row.stable_name,
     bornGameDay: row.born_game_day,
     ageState: ageState({ bornGameDay: row.born_game_day, naturalDeathGameDay: row.natural_death_game_day, status: row.status }, gameDay, config.values),
+    ageModifier: agePerformanceModifier(gameDay - row.born_game_day, config.values),
   }));
+}
+
+/** §8.5: "how many at 1.0, how many between, how many at the floor" - the three phases
+ * agePerformanceModifier already names, counted rather than bucketed continuously like
+ * getCareAdminData's modifierBuckets, per the slice's own wording. Pure - takes the list
+ * listLivingHorsesForAdmin already builds, no second query. */
+export function ageModifierDistribution(horses: LivingHorseAdminDisplay[]): { prime: number; pastPeak: number; floor: number } {
+  let prime = 0;
+  let pastPeak = 0;
+  let floor = 0;
+  for (const h of horses) {
+    if (h.ageModifier.phase === 'prime') prime++;
+    else if (h.ageModifier.phase === 'floor') floor++;
+    else pastPeak++;
+  }
+  return { prime, pastPeak, floor };
 }
 
 interface RecentDeathAdminRow {

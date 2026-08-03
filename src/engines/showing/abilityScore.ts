@@ -52,12 +52,15 @@ export interface ScoreAbilityEntryParams {
   careModifier?: number;
   tackModifier?: number;
   trainingFactor?: number;
+  /** Slice 0014 §2.3/§4.3: a horse's age-based decline. Same reasoning as scoreEntry's own
+   * ageModifier - a separate parameter, not folded into careModifier, defaulting to 1.0. */
+  ageModifier?: number;
 }
 
 /**
- * §7's formula, exactly:
+ * §7's formula (slice 0014 §4.3 appends ageModifier as a fourth multiplier):
  *   rawScore   = Sum(weight_t * expressed_t) / Sum(weight_t)
- *   finalScore = rawScore * careModifier * tackModifier * trainingFactor + noise
+ *   finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier + noise
  *
  * Iterates ABILITY_TRAITS, never Object.keys(weights) - the same discipline scoreEntry applies to
  * CONFORMATION_TRAITS, so a result's breakdown always reads in a stable order regardless of how
@@ -67,6 +70,7 @@ export function scoreAbilityEntry(params: ScoreAbilityEntryParams): AbilityScore
   const careModifier = params.careModifier ?? 1.0;
   const tackModifier = params.tackModifier ?? 1.0;
   const trainingFactor = params.trainingFactor ?? 1.0;
+  const ageModifier = params.ageModifier ?? 1.0;
 
   const traits: AbilityTraitBreakdown[] = [];
   let weightedSum = 0;
@@ -83,7 +87,7 @@ export function scoreAbilityEntry(params: ScoreAbilityEntryParams): AbilityScore
   }
 
   const rawScore = weightSum > 0 ? weightedSum / weightSum : 0;
-  const finalScore = rawScore * careModifier * tackModifier * trainingFactor + params.noise;
+  const finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier + params.noise;
 
   return { traits, weightSum, rawScore, noise: params.noise, finalScore };
 }

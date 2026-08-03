@@ -799,7 +799,7 @@ export function renderMoneyAdminPage(params: {
  */
 export function renderHealthAdminPage(params: { world: WorldRow; census: ConditionCensusRow[] }): SafeHtml {
   const rows = params.census.map(
-    ({ condition, clear, carrier, affected }) => html`
+    ({ condition, clear, carrier, affected, unmanaged }) => html`
     <tr>
       <td>${condition.name} (${condition.code})</td>
       <td>${condition.severity_class}</td>
@@ -807,6 +807,7 @@ export function renderHealthAdminPage(params: { world: WorldRow; census: Conditi
       <td>${String(clear)}</td>
       <td>${String(carrier)}</td>
       <td>${String(affected)}</td>
+      <td>${condition.severity_class === 'manageable' ? String(unmanaged) : raw('&mdash;')}</td>
     </tr>`
   );
 
@@ -815,9 +816,10 @@ export function renderHealthAdminPage(params: { world: WorldRow; census: Conditi
     <p class="muted">Counts across every living horse in the game, read straight from genotypes - this is the truth, not what any one player knows.</p>
     <div class="card">
       <table>
-        <thead><tr><th>Condition</th><th>Severity</th><th>Enabled</th><th>Clear</th><th>Carrier</th><th>Affected</th></tr></thead>
-        <tbody>${rows.length ? rows : html`<tr><td colspan="6" class="muted">No conditions seeded yet.</td></tr>`}</tbody>
+        <thead><tr><th>Condition</th><th>Severity</th><th>Enabled</th><th>Clear</th><th>Carrier</th><th>Affected</th><th>Unmanaged</th></tr></thead>
+        <tbody>${rows.length ? rows : html`<tr><td colspan="7" class="muted">No conditions seeded yet.</td></tr>`}</tbody>
       </table>
+      <p class="muted">Unmanaged (slice 0014 §5): affected horses of a manageable condition with no current plan, from truth - not from what any one stable knows. The number a child complaining "my horse keeps losing" is really asking about.</p>
     </div>
     <p class="muted">If a condition is firing too often or almost never, the lever is the breed's founding_allele_pool frequency, not this page - see CLAUDE.md's slice 0010 entry.</p>
   `;
@@ -837,6 +839,8 @@ export function renderAgeingAdminPage(params: {
   livingHorses: LivingHorseAdminDisplay[];
   recentDeaths: RecentDeathAdminDisplay[];
   recentDeathsWindowGameDays: number;
+  /** Slice 0014 §8.5. */
+  ageModifierDistribution: { prime: number; pastPeak: number; floor: number };
   error?: string;
   notice?: string;
 }): SafeHtml {
@@ -847,6 +851,7 @@ export function renderAgeingAdminPage(params: {
       <td>${h.stableName}</td>
       <td>${String(h.bornGameDay)}</td>
       <td>${h.ageState}</td>
+      <td>${h.ageModifier.modifier.toFixed(3)}</td>
     </tr>`
   );
 
@@ -871,8 +876,20 @@ export function renderAgeingAdminPage(params: {
     <div class="card">
       <h2>Oldest living horses</h2>
       <table>
-        <thead><tr><th>Horse</th><th>Stable</th><th>Born (game day)</th><th>State</th></tr></thead>
-        <tbody>${oldestRows.length ? oldestRows : html`<tr><td colspan="4" class="muted">No living horses yet.</td></tr>`}</tbody>
+        <thead><tr><th>Horse</th><th>Stable</th><th>Born (game day)</th><th>State</th><th>Age modifier</th></tr></thead>
+        <tbody>${oldestRows.length ? oldestRows : html`<tr><td colspan="5" class="muted">No living horses yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Age modifier distribution (slice 0014 §2.1)</h2>
+      <p class="muted">Watch this if the children complain either way: nobody ever showing a horse over eighteen means the floor may be too harsh; a twenty-four-year-old still routinely winning means the start day is too late.</p>
+      <table>
+        <thead><tr><th>Phase</th><th>Living horses</th></tr></thead>
+        <tbody>
+          <tr><td>Prime (1.000)</td><td>${String(params.ageModifierDistribution.prime)}</td></tr>
+          <tr><td>Past peak (between)</td><td>${String(params.ageModifierDistribution.pastPeak)}</td></tr>
+          <tr><td>At the floor</td><td>${String(params.ageModifierDistribution.floor)}</td></tr>
+        </tbody>
       </table>
     </div>
     <div class="card">

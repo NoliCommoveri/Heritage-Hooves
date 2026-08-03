@@ -158,7 +158,7 @@ export type ChooseBreedResult = { ok: true } | { ok: false; error: 'not_pending'
  * double-submitted form, a re-fired request) could regenerate a different set of candidates for
  * the same offer. The WHERE status = 'pending' guard on the update makes that atomic.
  */
-export async function chooseBreedForOffer(env: Env, offerId: number, breedId: number, gameDay: number): Promise<ChooseBreedResult> {
+export async function chooseBreedForOffer(env: Env, offerId: number, breedId: number, gameDay: number, config: Config): Promise<ChooseBreedResult> {
   const offer = await getOffer(env, offerId);
   if (!offer || offer.status !== 'pending') return { ok: false, error: 'not_pending' };
 
@@ -189,6 +189,7 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
     const generated = generateCandidate({
       pool,
       polygenicOneChance: offer.polygenic_one_chance,
+      robustnessOneChance: config.values.robustness_one_chance,
       ageMinGameDays: offer.age_min_game_days,
       ageMaxGameDays: offer.age_max_game_days,
       seed: candidateSeed,

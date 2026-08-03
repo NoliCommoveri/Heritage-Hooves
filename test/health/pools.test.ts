@@ -29,7 +29,7 @@ describe('generateCandidate - Quarter Horse disease loci vs Hardy-Weinberg', () 
     let nh = 0;
     let hh = 0;
     for (let i = 0; i < n; i++) {
-      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 9_000_000 + i });
+      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 9_000_000 + i });
       const [a, b] = genotype.mendelian.HYPP;
       if (a === 'N' && b === 'N') nn++;
       else if (a === 'H' && b === 'H') hh++;
@@ -44,7 +44,7 @@ describe('generateCandidate - Quarter Horse disease loci vs Hardy-Weinberg', () 
     const n = 20000;
     let carriers = 0;
     for (let i = 0; i < n; i++) {
-      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 10_000_000 + i });
+      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 10_000_000 + i });
       const [a, b] = genotype.mendelian.HERDA;
       if (a !== b) carriers++;
     }
@@ -59,7 +59,7 @@ describe('generateCandidate - the lethal clamp (slice 0010 §4.3)', () => {
     for (let i = 0; i < n; i++) {
       const { genotype } = generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance: 0.5,
+        polygenicOneChance: 0.5, robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,
         seed: 11_000_000 + i,
@@ -79,7 +79,7 @@ describe('generateCandidate - the lethal clamp (slice 0010 §4.3)', () => {
   it('without the clamp (no lethalTriggers passed), the same seeds do occasionally draw homozygous-affected', () => {
     let sawHomozygousAffected = false;
     for (let i = 0; i < 20000; i++) {
-      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 11_000_000 + i });
+      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 11_000_000 + i });
       const [a, b] = genotype.mendelian.GBED;
       if (a === 'Gb' && b === 'Gb') {
         sawHomozygousAffected = true;
@@ -94,7 +94,7 @@ describe('generateCandidate - the other seven pools never carry a disease mutant
   it.each(OTHER_BREEDS)('%s never produces a mutant allele at any of the four disease loci', (code) => {
     const pool = parseAllelePool(poolJsonForBreed(code));
     for (let i = 0; i < 500; i++) {
-      const { genotype } = generateCandidate({ pool, polygenicOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
+      const { genotype } = generateCandidate({ pool, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
       for (const locus of ['HYPP', 'PSSM1', 'HERDA', 'GBED']) {
         expect(genotype.mendelian[locus]).toEqual(['N', 'N']);
       }

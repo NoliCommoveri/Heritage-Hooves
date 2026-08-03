@@ -13,8 +13,9 @@ import type { HorseShowSummaryRow } from '../db/shows';
 import { placingText } from './shows';
 import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
+import type { AgeModifierResult } from '../engines/ageing/performance';
 import { originStableFullName } from '../engines/founding/names';
-import type { CareCardView, CareLineView } from '../db/care';
+import type { CareCardView, CareLineView, ManagementPlanRow } from '../db/care';
 import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 
@@ -68,6 +69,15 @@ function locationBarnBadge(horse: HorseRow, availability: WorkAvailability | nul
   return html`<span class="badge">Settling in</span>`;
 }
 
+/** Slice 0014 §8.4: a quiet marker when the age modifier is below 1.0 - same place and weight as
+ * the care badge, but never badge-warning. Being old is not neglect. Null for an ended horse,
+ * mirroring careBarnBadge's own null-for-ended convention - the Died/Retired away badge already
+ * covers it. */
+function ageModifierBarnBadge(ageModifier: AgeModifierResult | null): SafeHtml {
+  if (!ageModifier || ageModifier.phase === 'prime') return raw('');
+  return html`<span class="badge">Past its peak</span>`;
+}
+
 const CARE_STATUS_LABEL: Record<CareStatus, string> = {
   not_yet: 'Not yet',
   fresh: 'Fresh',
@@ -88,7 +98,47 @@ function careDueSentence(line: CareLineView): string {
 
 /** Slice 0013 §8.1: the Care card, between Health and Show record. §2.3's discipline applies here
  * too - this card never touches the Conformation card's numbers, only its own modifier line. */
-function careCard(params: { care: CareCardView | null; feedLevelName: string; horseId: number; canManage: boolean; pronoun: string; careError?: string; careNotice?: string }): SafeHtml {
+/** Slice 0014 §5.3/§8.2: one row per manageable condition the viewing stable is entitled to know
+ * about - the section itself does not render at all when the list is empty, which is part of the
+ * knowledge boundary (§5.1). Same page, same shape, same buttons as the farrier/wellness rows
+ * above it - a button that either buys or renews, worded the same way the farrier row's "overdue"
+ * language is, per §5.3's own instruction that vocabulary consistency here matters more than
+ * variety. */
+function managementSection(params: { plans: ManagementPlanRow[]; horseId: number; canManage: boolean }): SafeHtml {
+  if (params.plans.length === 0) return raw('');
+
+  const rows = params.plans.map((plan) => {
+    const statusLine = plan.current
+      ? html`<p><strong>${plan.conditionName}:</strong> managed, current until game day ${String(plan.managementUntilGameDay)}.</p>`
+      : html`<p><strong>${plan.conditionName}:</strong> ${plan.managementUntilGameDay === null ? 'no plan on file' : 'overdue'}.</p>`;
+    const button = params.canManage
+      ? html`
+        <form method="post" action="/horses/${String(params.horseId)}/care">
+          <input type="hidden" name="condition_code" value="${plan.conditionCode}">
+          <button type="submit" class="secondary">${plan.current ? 'Renew plan' : 'Start plan'} — ${String(plan.cost)}</button>
+        </form>`
+      : raw('');
+    return html`
+      ${statusLine}
+      ${plan.managementText ? html`<p class="muted">${plan.managementText}</p>` : raw('')}
+      ${button}`;
+  });
+
+  return html`
+    <h3>Management</h3>
+    ${rows}`;
+}
+
+function careCard(params: {
+  care: CareCardView | null;
+  feedLevelName: string;
+  horseId: number;
+  canManage: boolean;
+  pronoun: string;
+  careError?: string;
+  careNotice?: string;
+  managementPlans: ManagementPlanRow[];
+}): SafeHtml {
   const c = params.care;
   if (!c) return raw('');
 
@@ -103,7 +153,8 @@ function careCard(params: { care: CareCardView | null; feedLevelName: string; ho
   }
 
   // At pasture the two timers are frozen and the modifier is exactly 1.00, so the ramp lines and
-  // the call buttons would both be lies. One honest sentence instead.
+  // the call buttons would both be lies. One honest sentence instead. Management plans still run at
+  // pasture (§5 has no location clause of its own), so that section still renders below.
   if (c.farrier.status === 'at_pasture') {
     return html`
       <div class="card">
@@ -111,6 +162,7 @@ function careCard(params: { care: CareCardView | null; feedLevelName: string; ho
         ${errorBox(params.careError)}
         ${noticeBox(params.careNotice)}
         <p class="muted">Out at pasture - no farrier or vet visits needed while ${params.pronoun} is turned out. The clock on both starts again when ${params.pronoun} comes in.</p>
+        ${managementSection({ plans: params.managementPlans, horseId: params.horseId, canManage: params.canManage })}
       </div>`;
   }
 
@@ -139,6 +191,7 @@ function careCard(params: { care: CareCardView | null; feedLevelName: string; ho
       ${callButton('wellness', 'Book a visit', c.wellness.cost)}
       <p><strong>Feed:</strong> ${params.feedLevelName} <span class="muted">(set for the whole barn)</span></p>
       ${modifierLine}
+      ${managementSection({ plans: params.managementPlans, horseId: params.horseId, canManage: params.canManage })}
     </div>`;
 }
 
@@ -244,6 +297,10 @@ function careBarnControls(params: {
         <input type="hidden" name="service" value="wellness">
         <button type="submit" class="secondary">Wellness round</button>
       </form>
+      <form method="post" action="/stables/${String(params.stableId)}/care">
+        <input type="hidden" name="service" value="management">
+        <button type="submit" class="secondary">Management round</button>
+      </form>
       <form method="post" action="/stables/${String(params.stableId)}/feed">
         <label>Feed
           <select name="feed_level">${feedOptions}</select>
@@ -267,6 +324,7 @@ export function renderBarnList(params: {
     showSummary: HorseShowSummaryRow | null;
     visibleConditions: ConditionRow[];
     ageState: AgeState;
+    ageModifier: AgeModifierResult | null;
     care: CareCardView | null;
     availability: WorkAvailability | null;
   }[];
@@ -277,11 +335,11 @@ export function renderBarnList(params: {
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, care, availability }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -568,6 +626,9 @@ export function renderHorsePage(params: {
    * choice is made with the truth in view, per slice 0007 §2.1's required mitigation. */
   visibleColour: string;
   ageYears: number;
+  /** Slice 0014 §4/§8.1: the age-based show performance decline. Beside the age in the vitals, not
+   * a card of its own - silence is the correct display when phase is 'prime' (§8.1). */
+  ageModifier: AgeModifierResult;
   breed: BreedRow | undefined;
   gaited: boolean;
   breederStableName: string | null;
@@ -600,6 +661,9 @@ export function renderHorsePage(params: {
   careError?: string;
   careNotice?: string;
   feedLevelName: string;
+  /** Slice 0014 §5.3: the Management section's rows - empty for an ended horse or one with nothing
+   * this stable is entitled to know about, either of which means the section doesn't render at all. */
+  managementPlans: ManagementPlanRow[];
   /** Slice 0011 §4.3/§8.1: this living horse's own Veteran/Failing/young/adult state - never
    * consulted for an ended horse (the status badge below covers that case instead). */
   ageState: AgeState;
@@ -708,6 +772,16 @@ export function renderHorsePage(params: {
     ? html`<p><a href="/horses/${String(h.id)}/retire">Retire ${displayNameFor(h)} away</a></p>`
     : raw('');
 
+  // Slice 0014 §8.1: silence for 'prime' is the correct display for "no effect" - only past_peak
+  // and floor get a line, beside the age rather than in a card of their own.
+  const ageDeclineLine = (() => {
+    const { phase, ageYears, modifier } = params.ageModifier;
+    if (phase === 'prime') return raw('');
+    const percentBelow = Math.round((1 - modifier) * 100);
+    const clause = phase === 'floor' ? 'well past its peak' : 'past its peak';
+    return html`<p class="muted">${String(ageYears)} years old &mdash; ${clause}. Scores about ${String(percentBelow)}% below what it would have in its prime.</p>`;
+  })();
+
   const genotypeBlock =
     params.isAdmin && params.genotype && params.loci
       ? html`
@@ -732,6 +806,7 @@ export function renderHorsePage(params: {
       ${pictureLink}
       <p>${params.description}</p>
       <p><strong>Sex:</strong> ${h.sex} &middot; <strong>Age:</strong> ${params.ageYears < 1 ? 'under a year' : `${Math.floor(params.ageYears)} years`} ${statusMarker}</p>
+      ${ageDeclineLine}
       ${failingParagraph}
       <p><strong>Breed:</strong> ${params.breed ? params.breed.name : h.is_cross ? 'Cross' : 'Unknown'} ${params.gaited ? html`<span class="badge badge-success">gaited</span>` : raw('')}</p>
       <p><strong>Bred by:</strong> ${bredByLine}</p>
@@ -746,7 +821,16 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id })}
-    ${careCard({ care: params.care, feedLevelName: params.feedLevelName, horseId: h.id, canManage: params.canManage, pronoun: h.sex === 'mare' ? 'she' : 'he', careError: params.careError, careNotice: params.careNotice })}
+    ${careCard({
+      care: params.care,
+      feedLevelName: params.feedLevelName,
+      horseId: h.id,
+      canManage: params.canManage,
+      pronoun: h.sex === 'mare' ? 'she' : 'he',
+      careError: params.careError,
+      careNotice: params.careNotice,
+      managementPlans: params.managementPlans,
+    })}
     ${locationCard({ horse: h, availability: params.availability, canManage: params.canManage, blockedReason: params.locationBlockedReason, error: params.locationError })}
     ${showRecordCard({
       summary: params.showSummary,

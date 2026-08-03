@@ -231,6 +231,12 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
     wellness_status: string;
   }
 
+  interface AgeBreakdown {
+    modifier: number;
+    phase: 'prime' | 'past_peak' | 'floor';
+    age_years: number;
+  }
+
   const breakdown = JSON.parse(entry.score_breakdown) as
     | {
         kind?: 'conformation';
@@ -240,6 +246,7 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
         noise: number;
         final_score: number;
         care?: CareBreakdown;
+        age?: AgeBreakdown;
       }
     | {
         kind: 'ability';
@@ -249,6 +256,7 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
         noise: number;
         final_score: number;
         care?: CareBreakdown;
+        age?: AgeBreakdown;
       };
 
   // Slice 0013 §8.4: named from the breakdown's own snapshot, not recomputed - a horse's care state
@@ -262,6 +270,14 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
     return notes.length ? notes.join(', ') : undefined;
   }
   const careNote = breakdown.care ? careNoteFor(breakdown.care) : undefined;
+
+  // Slice 0014 §8.3: named from the breakdown's own snapshot, same discipline as careNoteFor -
+  // never recomputed against the horse's current age, which keeps moving after judging.
+  function ageNoteFor(age: AgeBreakdown): string | undefined {
+    if (age.phase === 'prime') return undefined;
+    return `${String(age.age_years)} years old`;
+  }
+  const ageNote = breakdown.age ? ageNoteFor(breakdown.age) : undefined;
 
   const traitRows = breakdown.kind === 'ability' ? await getAbilityTraits(ctx.env) : await getConformationTraits(ctx.env);
   const traits: EntryResultTraitRow[] =
@@ -300,6 +316,8 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
       finalScore: breakdown.final_score,
       careModifierApplied: entry.care_modifier_applied,
       careNote,
+      ageModifierApplied: entry.age_modifier_applied,
+      ageNote,
     })
   );
 }

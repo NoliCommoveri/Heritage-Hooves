@@ -432,8 +432,9 @@ Distinct from knowledge. This is the horse's real state.
 - `terminal_game_day` (nullable) — set only on lethal rows, to `born_game_day + lethal_foal_death_game_days` **as that config value stood at the moment of birth** (CLAUDE.md §5.5's snapshotting rule) — retuning the window later never moves a foal's death date once it has one
 - `last_evaluated_game_day`
 
-**Not built**: `risk_score` and `severity` (no polygenic conditions exist yet — §3.4 above) and `management_state` (no management system exists yet — same reasoning as `conditions.onset_model`). All three arrive together with the polygenic predispositions and the care/tack stage respectively.
-- `last_evaluated_game_day`
+**`management_state` and `management_until_game_day` are built (slice 0014, 3 Aug 2026)** — `management_state` (`unmanaged`/`managed`) and `management_until_game_day` (nullable, currency derived at read time against `game_day`, nothing sweeps it). Applies only to `severity_class = 'manageable'` rows (HYPP, PSSM1 today); lethal and degenerative rows never read these columns.
+
+**Still not built**: `risk_score` and `severity` — no polygenic conditions exist yet (§3.4 above still holds; slice 0014 built the three heritable robustness traits' *substrate* but no condition maps to one). Both arrive together with the consequence stage the polygenic predispositions still need.
 
 Polygenic predispositions get a row at birth with `state = at_risk` and a heritable risk score. Single-gene conditions get a row only when the genotype triggers them.
 
@@ -740,7 +741,7 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Turns and tick | `ledger`, `events` |
 | Tokens | `token_ledger`, `token_grants`, `token_products`, `token_purchases` — over the PIN and attempt log already in place |
 | Health, first pass | `conditions`, `horse_conditions`, `horse_knowledge`, `services`, `service_calls`; the Quarter Horse's panel only |
-| Care | `horses.last_farrier_game_day`, `horses.last_vet_game_day`, `horses.care_notice_game_day`, `stables.feed_level`; Part B adds `horse_conditions.management_state` and `conditions.management_options`. **Not `horses.care` and not `horses.care_modifier`** — `docs/slices/0013-care-and-condition.md` §2.1 replaces the JSON blob with plain columns and drops the cache, for the reasons §4.1 above already gives about `phenotype_cache`. **Not `service_calls` either** — §5.6 of that slice defers it to the professions stage, where there is a provider to be null instead of |
+| Care | `horses.last_farrier_game_day`, `horses.last_vet_game_day`, `horses.care_notice_game_day`, `stables.feed_level`; Part B (built slice 0014) adds `horse_conditions.management_state`/`management_until_game_day` and `conditions.management_text` (plain text, not the `management_options` JSON originally sketched — nothing reads a structure). **Not `horses.care` and not `horses.care_modifier`** — `docs/slices/0013-care-and-condition.md` §2.1 replaces the JSON blob with plain columns and drops the cache, for the reasons §4.1 above already gives about `phenotype_cache`. **Not `service_calls` either** — §5.6 of that slice defers it to the professions stage, where there is a provider to be null instead of |
 | Tack (now its own stage, after the market) | `tack_types`, `tack_items` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` |

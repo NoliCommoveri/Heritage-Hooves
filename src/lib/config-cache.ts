@@ -149,6 +149,20 @@ export interface ConfigValues {
   /** Slice 0013 §2.4. The clamp - not the components - is what guarantees the ±5% band. */
   care_modifier_min: number;
   care_modifier_max: number;
+  /** Slice 0014 §4.1. Live - read fresh on every scoring run and every page view; nothing here is
+   * snapshotted onto a horse. What is snapshotted is the modifier a judged entry actually scored
+   * with (show_entries.age_modifier_applied). */
+  age_decline_start_game_days: number;
+  age_decline_floor_game_days: number;
+  age_modifier_floor: number;
+  /** Slice 0014 §5. The Part B management-plan tunables - a manageable-and-unmanaged condition's
+   * penalty, a plan's cost, and how long a plan lasts before it must be renewed. */
+  unmanaged_condition_penalty: number;
+  condition_management_cost: number;
+  condition_management_interval_game_days: number;
+  /** Slice 0014 §2.8: the fixed draw chance for ROBUSTNESS_TRAITS in founding generation,
+   * regardless of quality band - see src/engines/founding/generate.ts. */
+  robustness_one_chance: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

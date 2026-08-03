@@ -37,6 +37,13 @@ export const TRAITS = [
   // work around above - if a future trait is ever added WITHOUT a reset, it needs its own
   // "*Potential()" stand-in before anything reads it, not a silent zero.
   'agility',
+  // Added in slice 0014 §2.6/§2.7. Appended, like fertility and agility before them, so every
+  // earlier trait's RNG draw sequence is untouched. Nothing reads these yet - they exist because
+  // TRAITS is append-only and a genotype is written once at birth, so a heritable trait added after
+  // a horse is born can never be given to that horse. See slice 0014 §2.6 before removing them.
+  'foot_robustness',
+  'joint_robustness',
+  'ligament_robustness',
 ] as const;
 
 export type TraitCode = (typeof TRAITS)[number];

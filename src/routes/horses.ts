@@ -38,7 +38,7 @@ import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
 import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
-import { buildEndHorseParticipationStatements } from '../db/ageing';
+import { buildEndHorseParticipationStatements, ageModifierForHorse } from '../db/ageing';
 import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
@@ -64,11 +64,12 @@ import {
   visibleAffectedConditions,
   buildKnowledgePurchaseStatements,
   breedingHealthWarningsFor,
+  conditionDeltaMapForHorses,
 } from '../db/health';
 import { buildLedgerStatements } from '../db/ledger';
 import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../engines/health/status';
 import type { Genotype } from '../engines/genetics/genotype';
-import { careCardViewFor, callOneHorseCare, type CareService } from '../db/care';
+import { careCardViewFor, callOneHorseCare, callOneConditionManagement, managementPlanRowsForHorse, type CareService } from '../db/care';
 
 function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
@@ -152,6 +153,9 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
       // already has that logic; this is additive to it, not a replacement).
       ageState: ageState({ bornGameDay: horse.born_game_day, naturalDeathGameDay: horse.natural_death_game_day, status: horse.status }, ctx.world.game_day, cfg),
+      // Slice 0014 §8.4: null for an ended horse, mirroring the care row just below - the
+      // Died/Retired away badge already covers it.
+      ageModifier: horse.status === 'alive' ? ageModifierForHorse(horse.born_game_day, cfg, ctx.world.game_day) : null,
       // The location flag: one badge per row, so a barn with three horses out reads at a glance.
       availability: horse.status === 'alive' ? availabilityForHorse(horse, cfg, ctx.world.game_day) : null,
       // Slice 0013 §8.2: null for an ended horse - care means nothing for a horse that isn't being
@@ -496,7 +500,14 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const enterShowError = params.get('show_error') ?? undefined;
   const enterShowNotice = params.get('entered_show') ? 'Entered!' : undefined;
   const careError = params.get('care_error') ?? undefined;
-  const careNotice = params.get('care_done') === 'farrier' ? 'Farrier called.' : params.get('care_done') === 'wellness' ? 'Vet visit booked.' : undefined;
+  const careNotice =
+    params.get('care_done') === 'farrier'
+      ? 'Farrier called.'
+      : params.get('care_done') === 'wellness'
+        ? 'Vet visit booked.'
+        : params.get('care_done') === 'management'
+          ? 'Management plan booked.'
+          : undefined;
 
   let loci: LocusRow[] | undefined;
   if (isAdmin) loci = await getLoci(ctx.env);
@@ -518,7 +529,18 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (game day ${String(r.scheduled_game_day)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
-  const care = horse.status === 'alive' ? careCardViewFor(horse, ownerStable.feed_level, ctx.config.values, ctx.world.game_day) : null;
+  // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
+  // modifier so the number shown here matches what a show would actually apply.
+  const enabledConditions = await getEnabledConditions(ctx.env);
+  const managementPlans =
+    horse.status === 'alive' ? await managementPlanRowsForHorse(ctx.env, horse, enabledConditions, ctx.world.game_day, ctx.config.values) : [];
+  const conditionDeltaMap =
+    horse.status === 'alive' ? await conditionDeltaMapForHorses(ctx.env, [horse], enabledConditions, ctx.world.game_day, ctx.config.values.unmanaged_condition_penalty) : null;
+  const care =
+    horse.status === 'alive'
+      ? careCardViewFor(horse, ownerStable.feed_level, ctx.config.values, ctx.world.game_day, conditionDeltaMap?.get(horse.id)?.delta ?? 0)
+      : null;
+  const ageModifier = ageModifierForHorse(horse.born_game_day, ctx.config.values, ctx.world.game_day);
 
   return htmlResponse(
     renderHorsePage({
@@ -532,6 +554,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       description,
       visibleColour: phenotype.visibleColour,
       ageYears,
+      ageModifier,
       breed,
       gaited: phenotype.gaited,
       breederStableName: breederStable ? breederStable.name : null,
@@ -560,6 +583,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       locationError: params.get('location_error') ?? undefined,
       health,
       care,
+      managementPlans,
       careError,
       careNotice,
       feedLevelName: ctx.config.values.feed_levels.levels[ownerStable.feed_level]?.name ?? ownerStable.feed_level,
@@ -1033,10 +1057,39 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
   if (horse.status !== 'alive') return notFound();
 
   const form = await parseForm(ctx.request);
+  const cfg = ctx.config.values;
+
+  // Slice 0014 §5.3: a management plan purchase/renewal, distinguished from the farrier/wellness
+  // POST by carrying condition_code instead of service.
+  if (typeof form.condition_code === 'string' && form.condition_code.length > 0) {
+    if (!canTakeOnCost(ownerStable.balance)) {
+      return redirect(
+        `/horses/${String(horseId)}?care_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`)}`
+      );
+    }
+    const conditions = await getEnabledConditions(ctx.env);
+    // Re-derived from the horse's own entitlement, never trusted from the form (the same discipline
+    // slice 0010 §7.1 step 1 uses for a test purchase) - a form field naming a condition this stable
+    // is not entitled to know about, or one that isn't manageable, is simply ignored.
+    const rows = await managementPlanRowsForHorse(ctx.env, horse, conditions, ctx.world.game_day, cfg);
+    const row = rows.find((r) => r.conditionCode === form.condition_code);
+    if (!row) return redirect(`/horses/${String(horseId)}`);
+
+    await callOneConditionManagement(ctx.env, {
+      horseId: horse.id,
+      horseName: displayNameFor(horse),
+      ownerStableId: ownerStable.id,
+      conditionCode: row.conditionCode,
+      cost: cfg.condition_management_cost,
+      intervalGameDays: cfg.condition_management_interval_game_days,
+      gameDay: ctx.world.game_day,
+    });
+    return redirect(`/horses/${String(horseId)}?care_done=management`);
+  }
+
   const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
   if (!service) return redirect(`/horses/${String(horseId)}`);
 
-  const cfg = ctx.config.values;
   const careView = careCardViewFor(horse, ownerStable.feed_level, cfg, ctx.world.game_day);
   if (careView.tooYoung) {
     return redirect(`/horses/${String(horseId)}?care_error=${encodeURIComponent('Too young to need the farrier yet - care starts at three.')}`);
