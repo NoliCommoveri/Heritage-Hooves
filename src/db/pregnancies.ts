@@ -8,6 +8,7 @@ import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { getConfig } from '../lib/config-cache';
 import { getHorse, horseDisplayName, loadAncestorEdges, buildFoalInsertStatements } from './horses';
 import { getStableById } from './stables';
+import { resolveUniqueNpcFoalName } from './npc';
 import { parseGenotype, serializeGenotype, type Genotype } from '../engines/genetics/genotype';
 import { buildAncestorRows } from '../engines/genetics/pedigree';
 import { foalComposition } from '../engines/genetics/composition';
@@ -157,6 +158,13 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
   const cycleAnchorTickSeq =
     sex === 'mare' ? tickSeq + makeRng(deriveSeed(pregnancy.foal_rng_seed, 'cycle_slot')).int(config.values.estrous_cycle_ticks) : null;
 
+  // Slice 0015 §2.7/§7.2: nobody will ever name an NPC stable's foal by hand, and an unnamed horse
+  // reads as "Unnamed colt/filly" (horseDisplayName) forever - resolved here, before the insert, so
+  // it lands in the same row rather than as a follow-up update. A player's foal is untouched: still
+  // born with registered_name = NULL (registeredName stays undefined below).
+  const registeredName =
+    ownerStable.is_npc === 1 ? await resolveUniqueNpcFoalName(env, ownerStable.prefix, pregnancy.foal_rng_seed) : undefined;
+
   const statements = [
     ...buildFoalInsertStatements(env, {
       sex,
@@ -180,6 +188,7 @@ async function foalOnePregnancy(env: Env, pregnancy: PregnancyRow, gameDay: numb
       lethalFoalDeathGameDays: config.values.lethal_foal_death_game_days,
       accountId: ownerStable.account_id,
       lifespanConfig: config.values,
+      registeredName,
     }),
     // Foal heat (slice 0003 §10.2): resetting to tickSeq + 1 also desynchronises mares whose cycles
     // happened to have lined up.

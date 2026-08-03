@@ -15,6 +15,7 @@ import {
   renderHealthAdminPage,
   renderAgeingAdminPage,
   renderCareAdminPage,
+  renderNpcAdminPage,
   renderAdminSecurityPage,
   renderAdminUnlockPage,
   renderAdminHorseSearchPage,
@@ -43,8 +44,10 @@ import { getBreeds, getLoci, updateBreedImageCounts } from '../db/breeds';
 import { createFoundingHorse, countAliveHorses, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
-import { getShowBarnStable, stockShowBarn } from '../db/npc';
+import { getShowBarnStable, stockShowBarn, stockNpcStable } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
+import { listNpcStablesForAdmin, listNpcCeilingSchedule, upsertNpcCeilingScheduleRow, foundNpcStable } from '../db/npcBreeding';
+import { getDisciplines } from '../db/disciplines';
 import { buildLedgerStatements, listStableBalancesForAdmin, listRecentAdjustments } from '../db/ledger';
 import { hashPassword, verifyPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
@@ -757,6 +760,125 @@ export async function adminCareRoute(ctx: RequestContext, method: string): Promi
 
   await makeAllHorsesOverdue(ctx.env, ctx.world.game_day, ctx.config.values);
   return redirect('/admin/care?forced=1');
+}
+
+/**
+ * /admin/npc (slice 0015 §7.3): every NPC stable's roster, personality and breeding cycle, the
+ * ceiling schedule, and three controls - editing the schedule, founding a new personality stable,
+ * and adding an outcross batch to any NPC stable by hand (§3.3's only way genetic material enters a
+ * closed NPC population). Read-only otherwise, per CLAUDE.md §13.
+ */
+export async function adminNpcRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [stables, ceilingSchedule, breeds, disciplines] = await Promise.all([
+      listNpcStablesForAdmin(ctx.env),
+      listNpcCeilingSchedule(ctx.env),
+      getBreeds(ctx.env),
+      getDisciplines(ctx.env),
+    ]);
+    return htmlResponse(
+      renderNpcAdminPage({
+        world: ctx.world,
+        stables,
+        ceilingSchedule,
+        breeds,
+        disciplines,
+        qualityBands: ctx.config.values.quality_bands,
+        defaultBand: ctx.config.values.founding_quality_band,
+        error,
+        notice,
+      })
+    );
+  }
+
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('ceiling_saved')
+      ? 'Ceiling schedule saved.'
+      : params.get('founded')
+        ? 'New NPC stable founded.'
+        : params.get('stocked')
+          ? 'Outcross batch added.'
+          : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+
+  if (form.action === 'edit_ceiling') {
+    const id = form.id ? Number(form.id) : undefined;
+    const gameDayFrom = Number(form.game_day_from);
+    const conformationCeiling = Number(form.conformation_ceiling);
+    const abilityCeiling = Number(form.ability_ceiling);
+    if (!Number.isFinite(gameDayFrom) || !Number.isFinite(conformationCeiling) || !Number.isFinite(abilityCeiling)) {
+      return page('Every ceiling-schedule field must be a number.');
+    }
+    await upsertNpcCeilingScheduleRow(ctx.env, { id, gameDayFrom, conformationCeiling, abilityCeiling });
+    return redirect('/admin/npc?ceiling_saved=1');
+  }
+
+  if (form.action === 'found_stable') {
+    const name = (form.name ?? '').trim();
+    const prefix = (form.prefix ?? '').trim();
+    const personalityCode = (form.personality_code ?? '').trim();
+    const targetKind: 'conformation' | 'ability' | null = form.target_kind === 'ability' ? 'ability' : form.target_kind === 'conformation' ? 'conformation' : null;
+    const targetBreedId = form.target_breed_id ? Number(form.target_breed_id) : null;
+    const targetDisciplineCode = form.target_discipline_code || null;
+    const selectionNoiseSd = Number(form.selection_noise_sd);
+    const retentionBias = Number(form.retention_bias);
+    const breedingIntervalGameDays = Number(form.breeding_interval_game_days);
+    const maxPairsPerCycle = Number(form.max_pairs_per_cycle);
+    const capacity = Number(form.capacity);
+
+    if (!name || !prefix || !personalityCode || !targetKind) return page('Fill in a name, a prefix, a personality label and a target kind.');
+    if (targetKind === 'conformation' && !targetBreedId) return page('Choose a breed for a conformation-specialist stable.');
+    if (targetKind === 'ability' && !targetDisciplineCode) return page('Choose a discipline for a discipline-barn stable.');
+    if (![selectionNoiseSd, retentionBias, breedingIntervalGameDays, maxPairsPerCycle, capacity].every(Number.isFinite)) {
+      return page('Every breeding-policy number must be filled in.');
+    }
+
+    const result = await foundNpcStable(ctx.env, {
+      name,
+      prefix,
+      personalityCode,
+      targetKind,
+      targetBreedId: targetKind === 'conformation' ? targetBreedId : null,
+      targetDisciplineCode: targetKind === 'ability' ? targetDisciplineCode : null,
+      selectionNoiseSd,
+      retentionBias,
+      breedingIntervalGameDays,
+      maxPairsPerCycle,
+      capacity,
+      gameDay: ctx.world.game_day,
+    });
+    if (!result.ok) return page('That prefix is already taken - choose another.');
+    return redirect('/admin/npc?founded=1');
+  }
+
+  if (form.action === 'outcross') {
+    if (form.confirm !== 'yes') return page('Tick the box to confirm before adding an outcross batch.');
+    const stableId = Number(form.stable_id);
+    const breedId = Number(form.breed_id);
+    const band = form.band ?? '';
+    const count = Number(form.count);
+    if (!Number.isFinite(stableId) || !Number.isFinite(breedId)) return page('Choose a stable and a breed.');
+    if (ctx.config.values.quality_bands[band] === undefined) return page('Choose a quality band.');
+    if (!Number.isInteger(count) || count <= 0) return page('The number to add must be a positive whole number.');
+
+    await stockNpcStable(ctx.env, {
+      stableId,
+      breedId,
+      config: ctx.config,
+      gameDay: ctx.world.game_day,
+      worldTickSeq: ctx.world.tick_seq,
+      count,
+      band,
+    });
+    return redirect('/admin/npc?stocked=1');
+  }
+
+  return notFound();
 }
 
 /**

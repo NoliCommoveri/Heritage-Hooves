@@ -17,11 +17,11 @@ import { conformationValues, abilityValues, noiseFor, type RealizationConfig } f
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
-import { getHorse, horseDisplayName, listStableHorses, type HorseRow } from './horses';
+import { getHorse, horseDisplayName, type HorseRow } from './horses';
 import { getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
-import { getShowBarnStable } from './npc';
+import { listNpcStableHorses } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
@@ -661,18 +661,18 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const shortfall = existingEntries.length > 0 ? Math.max(0, cls.target_field_size - existingEntries.length) : 0;
   const npcHorses: HorseRow[] = [];
   if (shortfall > 0) {
-    const barn = await getShowBarnStable(env);
-    if (barn) {
-      const candidates = await listStableHorses(env, barn.id);
-      const eligible: HorseRow[] = [];
-      for (const horse of candidates) {
-        if (alreadyIn.has(horse.id)) continue;
-        const result = await checkHorseEligibilityForClass(env, cls, horse, gameDay, gameDaysPerYear, config);
-        if (result.ok) eligible.push(horse);
-      }
-      const rng = makeRng(deriveSeed(cls.rng_seed, 'npc_field'));
-      npcHorses.push(...rng.shuffle(eligible).slice(0, shortfall));
+    // Slice 0015 §7.1: every NPC stable's stock, not one hardcoded stable - everything else here
+    // (the shuffle, the eligibility check, the is_npc flag on the resulting show_entries row, the
+    // never-top-up-an-empty-field rule above) is unchanged.
+    const candidates = await listNpcStableHorses(env);
+    const eligible: HorseRow[] = [];
+    for (const horse of candidates) {
+      if (alreadyIn.has(horse.id)) continue;
+      const result = await checkHorseEligibilityForClass(env, cls, horse, gameDay, gameDaysPerYear, config);
+      if (result.ok) eligible.push(horse);
     }
+    const rng = makeRng(deriveSeed(cls.rng_seed, 'npc_field'));
+    npcHorses.push(...rng.shuffle(eligible).slice(0, shortfall));
   }
   const allHorseIds = [...existingEntries.map((e) => e.horse_id), ...npcHorses.map((h) => h.id)];
   if (allHorseIds.length === 0) {
