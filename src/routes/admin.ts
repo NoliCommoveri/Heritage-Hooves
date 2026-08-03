@@ -59,6 +59,10 @@ import { getShowBarnStable, stockShowBarn, stockNpcStable } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
 import { listNpcStablesForAdmin, listNpcCeilingSchedule, upsertNpcCeilingScheduleRow, foundNpcStable } from '../db/npcBreeding';
 import { getDisciplines } from '../db/disciplines';
+import { getConformationTraits, getAbilityTraits } from '../db/quantitativeTraits';
+import { parseIdealVector } from '../engines/showing/score';
+import { parseAbilityWeights } from '../engines/showing/abilityScore';
+import { CONFORMATION_TRAITS, ABILITY_TRAITS } from '../engines/conformation/traits';
 import { buildLedgerStatements, listStableBalancesForAdmin, listRecentAdjustments } from '../db/ledger';
 import { hashPassword, verifyPassword } from '../lib/password';
 import { writeConfig, type ConfigValues } from '../lib/config-cache';
@@ -652,6 +656,45 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
       name: horseDisplayName(h),
       ageState: ageState({ bornGameDay: h.born_game_day, naturalDeathGameDay: h.natural_death_game_day, status: h.status }, ctx.world.game_day, ctx.config.values),
     }));
+
+    // Asked for directly: the standards each class actually scores against, readable without
+    // digging through a breed's or discipline's raw JSON column. One dropdown per breed (for
+    // conformation) and per discipline, in the same trait order scoreEntry/scoreAbilityEntry
+    // themselves iterate (CLAUDE.md §11) so this can never disagree with what judging does.
+    const [breeds, disciplines, conformationTraitNames, abilityTraitNames] = await Promise.all([
+      getBreeds(ctx.env),
+      getDisciplines(ctx.env),
+      getConformationTraits(ctx.env),
+      getAbilityTraits(ctx.env),
+    ]);
+
+    const conformationCriteria = breeds
+      .filter((b): b is BreedRow & { ideal_vector: string } => b.ideal_vector !== null)
+      .map((b) => {
+        const ideal = parseIdealVector(b.ideal_vector);
+        return {
+          breedName: b.name,
+          enabled: b.enabled === 1,
+          traits: CONFORMATION_TRAITS.filter((code) => ideal[code] !== undefined).map((code) => ({
+            name: conformationTraitNames.find((t) => t.code === code)?.name ?? code,
+            target: ideal[code]!.target,
+            weight: ideal[code]!.weight,
+          })),
+        };
+      });
+
+    const disciplineCriteria = disciplines.map((d) => {
+      const weights = parseAbilityWeights(d.ability_weights);
+      return {
+        disciplineName: d.name,
+        enabled: d.enabled === 1,
+        traits: ABILITY_TRAITS.filter((code) => weights[code] !== undefined).map((code) => ({
+          name: abilityTraitNames.find((t) => t.code === code)?.name ?? code,
+          weight: weights[code]!,
+        })),
+      };
+    });
+
     return htmlResponse(
       renderShowsAdminPage({
         world: ctx.world,
@@ -661,6 +704,8 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
         qualityBands: ctx.config.values.quality_bands,
         defaultBand: ctx.config.values.npc_show_barn_quality_band,
         recentShows,
+        conformationCriteria,
+        disciplineCriteria,
         error,
         notice,
       })
