@@ -807,6 +807,18 @@ export function renderResetPage(params: {
  * one form per action, both behind the `required`-checkbox confirm pattern the world-clock page
  * established.
  */
+export interface AdminConformationCriteria {
+  breedName: string;
+  enabled: boolean;
+  traits: { name: string; target: number; weight: number }[];
+}
+
+export interface AdminDisciplineCriteria {
+  disciplineName: string;
+  enabled: boolean;
+  traits: { name: string; weight: number }[];
+}
+
 export function renderShowsAdminPage(params: {
   world: WorldRow;
   barnCount: number;
@@ -817,6 +829,12 @@ export function renderShowsAdminPage(params: {
   qualityBands: Record<string, number>;
   defaultBand: string;
   recentShows: AdminShowSummary[];
+  /** Asked for directly: what each breed's conformation class actually scores against, one dropdown
+   * per breed - only breeds with an ideal vector at all appear (§4.2's "no ideal vector means no
+   * class"), enabled or not. */
+  conformationCriteria: AdminConformationCriteria[];
+  /** The discipline counterpart - one dropdown per discipline, enabled or not. */
+  disciplineCriteria: AdminDisciplineCriteria[];
   error?: string;
   notice?: string;
 }): SafeHtml {
@@ -844,6 +862,35 @@ export function renderShowsAdminPage(params: {
       : raw('');
 
   const oldestBarnRows = params.oldestBarnHorses.map((h) => html`<tr><td>${h.name}</td><td>${h.ageState}</td></tr>`);
+
+  // Asked for directly: the standards each class is actually judged against, one <details> dropdown
+  // per breed/discipline rather than a form or a JSON blob - reading them needs no editing control,
+  // and CLAUDE.md §13 wants the simplest thing that shows the data, not a polished UI.
+  const conformationDropdowns = params.conformationCriteria.map(
+    (c) => html`
+    <details class="section-collapse">
+      <summary>${c.breedName}${c.enabled ? raw('') : html` <span class="muted">(not in play)</span>`}</summary>
+      <table>
+        <thead><tr><th>Trait</th><th>Target</th><th>Weight</th></tr></thead>
+        <tbody>
+          ${c.traits.map((t) => html`<tr><td>${t.name}</td><td>${String(t.target)}</td><td>${t.weight.toFixed(2)}</td></tr>`)}
+        </tbody>
+      </table>
+    </details>`
+  );
+
+  const disciplineDropdowns = params.disciplineCriteria.map(
+    (d) => html`
+    <details class="section-collapse">
+      <summary>${d.disciplineName}${d.enabled ? raw('') : html` <span class="muted">(disabled)</span>`}</summary>
+      <table>
+        <thead><tr><th>Trait</th><th>Weight</th></tr></thead>
+        <tbody>
+          ${d.traits.map((t) => html`<tr><td>${t.name}</td><td>${t.weight.toFixed(2)}</td></tr>`)}
+        </tbody>
+      </table>
+    </details>`
+  );
 
   const body = html`
     <h1>Shows</h1>
@@ -879,6 +926,16 @@ export function renderShowsAdminPage(params: {
         <input type="hidden" name="action" value="judge_now">
         <button type="submit" class="secondary">Judge now</button>
       </form>
+    </div>
+    <div class="card">
+      <h2>Conformation criteria, by breed</h2>
+      <p class="muted">What each breed's conformation class scores a horse against - target value and weight per trait, exactly as the judge applies them.</p>
+      ${conformationDropdowns.length ? conformationDropdowns : html`<p class="muted">No breed has a conformation standard set yet.</p>`}
+    </div>
+    <div class="card">
+      <h2>Discipline criteria, by discipline</h2>
+      <p class="muted">What each discipline class scores a horse against - weight per ability trait. A discipline has no target, only how much that ability counts.</p>
+      ${disciplineDropdowns.length ? disciplineDropdowns : html`<p class="muted">No discipline is seeded yet.</p>`}
     </div>
     <div class="card">
       <h2>Recent shows</h2>

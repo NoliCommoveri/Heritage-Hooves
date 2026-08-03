@@ -44,6 +44,16 @@ function nameForEntry(row: { registered_name: string | null; barn_name: string |
   return row.sex === 'mare' ? 'Unnamed filly' : 'Unnamed colt';
 }
 
+/** A missing or empty `breed` param must parse as "no breed filter" (null), not breed id 0 -
+ * `Number(null)` and `Number('')` both evaluate to 0, so an absent/blank param has to be caught
+ * before Number() ever sees it, or "All breeds" silently filters every class out (breed_id is
+ * never 0, and a discipline class's breed_id is NULL, which also fails `!== 0`). Exported as its
+ * own pure function so this parsing rule can be unit tested without a request or a database. */
+export function parseBreedIdParam(raw: string | null): number | null {
+  const n = raw ? Number(raw) : NaN;
+  return Number.isInteger(n) ? n : null;
+}
+
 /** Slice 0016 §5.1: parses `class`/`breed` off the query string, validated against the disciplines
  * actually enabled - an unrecognised class tab reads as 'all' (Part A's "a filter is not an
  * assertion" applies here too). breed is only meaningful for 'all'/'conformation' - a discipline
@@ -54,8 +64,7 @@ async function resolveShowsFilter(ctx: RequestContext): Promise<ShowsFilterParam
   const disciplines = await getEnabledDisciplines(ctx.env);
   const classType = rawClass === 'all' || rawClass === 'conformation' || disciplines.some((d) => d.code === rawClass) ? rawClass : 'all';
   const usesBreed = classType === 'all' || classType === 'conformation';
-  const rawBreed = usesBreed ? Number(params.get('breed')) : NaN;
-  const breedId = Number.isInteger(rawBreed) ? rawBreed : null;
+  const breedId = usesBreed ? parseBreedIdParam(params.get('breed')) : null;
   return { classType, breedId };
 }
 
