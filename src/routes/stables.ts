@@ -19,7 +19,8 @@ import { buildStableCookie } from '../lib/session';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { getLedgerForStable, withRunningBalance } from '../db/ledger';
 import { listUnreadEventsForAccount, listRecentEventsForStable, markAllEventsReadForAccount } from '../db/events';
-import { callBarnRoundCare, type CareService } from '../db/care';
+import { callBarnRoundCare, callBarnRoundManagement, type CareService } from '../db/care';
+import { getEnabledConditions } from '../db/health';
 import { canTakeOnCost } from '../lib/money';
 
 export async function stablesPickerRoute(ctx: RequestContext): Promise<Response> {
@@ -189,8 +190,34 @@ export async function stableCareRoute(ctx: RequestContext, stableId: number): Pr
   if (stable instanceof Response) return stable;
 
   const form = await parseForm(ctx.request);
-  const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
   const backTo = `/stables/${String(stableId)}/horses`;
+
+  // Slice 0014 §5.3: the Management round is a third button beside Farrier round/Wellness round,
+  // one click renewing every due plan the stable is entitled to know about (§2.2's "one click does
+  // the whole barn" promise, extended to Part B).
+  if (form.service === 'management') {
+    if (!canTakeOnCost(stable.balance)) {
+      return redirect(
+        `${backTo}?care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before a management round.`)}`
+      );
+    }
+    const conditions = await getEnabledConditions(ctx.env);
+    const result = await callBarnRoundManagement(ctx.env, {
+      stableId,
+      gameDay: ctx.world.game_day,
+      config: ctx.config.values,
+      balance: stable.balance,
+      conditions,
+    });
+    if (result.totalCount === 0) return redirect(`${backTo}?care_notice=${encodeURIComponent('Nothing due.')}`);
+    const notice =
+      result.serviced < result.totalCount
+        ? `Renewed ${String(result.serviced)} of ${String(result.totalCount)} management plans - not enough money for the rest.`
+        : `Renewed ${String(result.serviced)} management plan${result.serviced === 1 ? '' : 's'}.`;
+    return redirect(`${backTo}?care_notice=${encodeURIComponent(notice)}`);
+  }
+
+  const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
   if (!service) return redirect(backTo);
 
   if (!canTakeOnCost(stable.balance)) {

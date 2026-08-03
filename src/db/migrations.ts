@@ -75,6 +75,14 @@ import m0071 from '../../migrations/0071_show_entries_care_modifier.sql';
 import m0072 from '../../migrations/0072_config_care.sql';
 import m0073 from '../../migrations/0073_horses_location.sql';
 import m0074 from '../../migrations/0074_config_location.sql';
+import m0075 from '../../migrations/0075_show_entries_age_modifier.sql';
+import m0076 from '../../migrations/0076_config_age_decline.sql';
+import m0077 from '../../migrations/0077_horse_conditions_management.sql';
+import m0078 from '../../migrations/0078_conditions_management_text.sql';
+import m0079 from '../../migrations/0079_seed_condition_management_text.sql';
+import m0080 from '../../migrations/0080_config_condition_management.sql';
+import m0081 from '../../migrations/0081_quantitative_traits_robustness.sql';
+import m0082 from '../../migrations/0082_config_robustness.sql';
 
 export interface MigrationFile {
   name: string;
@@ -166,6 +174,14 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0072_config_care.sql', sql: m0072 },
   { name: '0073_horses_location.sql', sql: m0073 },
   { name: '0074_config_location.sql', sql: m0074 },
+  { name: '0075_show_entries_age_modifier.sql', sql: m0075 },
+  { name: '0076_config_age_decline.sql', sql: m0076 },
+  { name: '0077_horse_conditions_management.sql', sql: m0077 },
+  { name: '0078_conditions_management_text.sql', sql: m0078 },
+  { name: '0079_seed_condition_management_text.sql', sql: m0079 },
+  { name: '0080_config_condition_management.sql', sql: m0080 },
+  { name: '0081_quantitative_traits_robustness.sql', sql: m0081 },
+  { name: '0082_config_robustness.sql', sql: m0082 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

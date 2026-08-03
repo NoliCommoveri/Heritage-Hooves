@@ -25,8 +25,9 @@ import { getShowBarnStable } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
-import { isBarredFromShowing } from './health';
+import { isBarredFromShowing, getEnabledConditions, conditionDeltaMapForHorses } from './health';
 import { careModifierForHorse, availabilityForHorse } from './care';
+import { ageModifierForHorse } from './ageing';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
@@ -97,6 +98,10 @@ export interface ShowEntryRow {
    * judging time - never recomputed, so a result's explanation never changes afterwards even
    * though the horse's own care state keeps moving. 1.0 for every entry judged before this slice. */
   care_modifier_applied: number;
+  /** Slice 0014 §2.3/§8.3. The age modifier this entry was actually scored with, snapshotted the
+   * same way and for the same reason as care_modifier_applied - its own column, not folded into it
+   * (§2.3). 1.0 for every entry judged before this slice. */
+  age_modifier_applied: number;
 }
 
 export interface HorseShowSummaryRow {
@@ -625,6 +630,17 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     feedLevelByStableId.set(stableId, stableRow?.feed_level ?? 'standard');
   }
 
+  // Slice 0014 §5.2: one query for horse_conditions, one for horse_knowledge, for the whole class -
+  // never one pair per horse. Computed once here, read per horse in the scoring loop below.
+  const enabledConditions = await getEnabledConditions(env);
+  const conditionDeltaByHorseId = await conditionDeltaMapForHorses(
+    env,
+    Array.from(horseById.values()),
+    enabledConditions,
+    gameDay,
+    config.values.unmanaged_condition_penalty
+  );
+
   // Slice 0012 §8.2: branch once, at the top, on class_type. Everything after this block (NPC
   // top-up already happened above, placings/summaries/prizes/events below) is shared and
   // unchanged - it does not care which scorer produced the numbers.
@@ -641,6 +657,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     noise: number;
     finalScore: number;
     careModifierApplied: number;
+    ageModifierApplied: number;
     breakdown: Record<string, unknown>;
   }
 
@@ -651,21 +668,28 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
     const noise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
     const feedLevel = feedLevelByStableId.get(horse.owner_stable_id) ?? 'standard';
-    const care = careModifierForHorse(horse, feedLevel, config.values, gameDay);
+    const conditionDelta = conditionDeltaByHorseId.get(horse.id)?.delta ?? 0;
+    const care = careModifierForHorse(horse, feedLevel, config.values, gameDay, conditionDelta);
+    // Slice 0014 §4.3: a horse's age is not a barn-wide thing like feed, so no batching is needed
+    // the way feedLevelByStableId batches one lookup per stable - this is a pure function of a
+    // horse row and live config, computed once per horse exactly like care.
+    const age = ageModifierForHorse(horse.born_game_day, config.values, gameDay);
     // Snake_case to match every other breakdown key (§9.1's own convention) - read by a render
     // route, not by TypeScript. farrier_status/wellness_status let the result explanation say
     // *why* without recomputing the ramp later against a horse whose care state has since moved on
     // (§8.4: the snapshot is the whole point, not a live recomputation).
     const careBreakdown = { modifier: care.modifier, farrier_status: care.farrier.status, wellness_status: care.wellness.status };
+    const ageBreakdown = { modifier: age.modifier, phase: age.phase, age_years: age.ageYears };
 
     if (isDiscipline) {
-      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise, careModifier: care.modifier });
+      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise, careModifier: care.modifier, ageModifier: age.modifier });
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
         noise: result.noise,
         finalScore: result.finalScore,
         careModifierApplied: care.modifier,
+        ageModifierApplied: age.modifier,
         // No target column - there is no target for an ability trait, only a weight and a
         // contribution.
         breakdown: {
@@ -678,16 +702,18 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           noise: result.noise,
           final_score: result.finalScore,
           care: careBreakdown,
+          age: ageBreakdown,
         },
       });
     } else {
-      const result = scoreEntry({ expressed, ideal: ideal!, judgeWeights, falloff: cls.ideal_falloff, noise, careModifier: care.modifier });
+      const result = scoreEntry({ expressed, ideal: ideal!, judgeWeights, falloff: cls.ideal_falloff, noise, careModifier: care.modifier, ageModifier: age.modifier });
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
         noise: result.noise,
         finalScore: result.finalScore,
         careModifierApplied: care.modifier,
+        ageModifierApplied: age.modifier,
         // Snake_case to match the documented shape (migrations/0038_show_entries.sql's comment and
         // slice 0008 §5.5) - the score_breakdown blob is read by a render route, not by TypeScript,
         // so it follows this codebase's JSON-column convention rather than result.traits' own
@@ -702,6 +728,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           noise: result.noise,
           final_score: result.finalScore,
           care: careBreakdown,
+          age: ageBreakdown,
         },
       });
     }
@@ -752,8 +779,8 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
       env.DB.prepare(
         `INSERT INTO show_entries (
            id, class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot,
-           raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day, care_modifier_applied
-         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           raw_score, noise_applied, final_score, score_breakdown, placing, scored_game_day, care_modifier_applied, age_modifier_applied
+         ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         entryId,
         cls.id,
@@ -767,7 +794,8 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         JSON.stringify(s.breakdown),
         placing,
         gameDay,
-        s.careModifierApplied
+        s.careModifierApplied,
+        s.ageModifierApplied
       )
     );
   }
@@ -778,9 +806,9 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const placing = placingByHorseId.get(entry.horse_id)!;
     statements.push(
       env.DB.prepare(
-        `UPDATE show_entries SET raw_score = ?, noise_applied = ?, final_score = ?, score_breakdown = ?, placing = ?, scored_game_day = ?, care_modifier_applied = ?
+        `UPDATE show_entries SET raw_score = ?, noise_applied = ?, final_score = ?, score_breakdown = ?, placing = ?, scored_game_day = ?, care_modifier_applied = ?, age_modifier_applied = ?
          WHERE id = ? AND placing IS NULL`
-      ).bind(s.rawScore, s.noise, s.finalScore, JSON.stringify(s.breakdown), placing, gameDay, s.careModifierApplied, entry.id)
+      ).bind(s.rawScore, s.noise, s.finalScore, JSON.stringify(s.breakdown), placing, gameDay, s.careModifierApplied, s.ageModifierApplied, entry.id)
     );
   }
 

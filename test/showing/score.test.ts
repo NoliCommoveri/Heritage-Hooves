@@ -92,4 +92,17 @@ describe('scoreEntry', () => {
     expect(rawScoreOf(BIRCH, MOVEMENT)).toBeGreaterThan(rawScoreOf(ASH, MOVEMENT));
     expect(rawScoreOf(ASH, SUBSTANCE)).toBeGreaterThan(rawScoreOf(BIRCH, SUBSTANCE));
   });
+
+  // Slice 0014 §10 test 5: a caller that predates ageModifier (an omitted parameter) must keep
+  // producing exactly today's number - the same default-1.0 promise already held for careModifier.
+  it('omitting ageModifier produces the same result as passing 1.0 explicitly', () => {
+    const omitted = scoreEntry({ expressed: ASH, ideal: QH_IDEAL, judgeWeights: BALANCED, falloff: 2.0, noise: 2.0, careModifier: 0.95 });
+    const explicit = scoreEntry({ expressed: ASH, ideal: QH_IDEAL, judgeWeights: BALANCED, falloff: 2.0, noise: 2.0, careModifier: 0.95, ageModifier: 1.0 });
+    expect(omitted).toEqual(explicit);
+  });
+
+  it('ageModifier: 0.85 produces exactly rawScore * 0.85 + noise, care held at 1.0', () => {
+    const result = scoreEntry({ expressed: ASH, ideal: QH_IDEAL, judgeWeights: BALANCED, falloff: 2.0, noise: 1.5, ageModifier: 0.85 });
+    expect(result.finalScore).toBeCloseTo(result.rawScore * 0.85 + 1.5, 10);
+  });
 });

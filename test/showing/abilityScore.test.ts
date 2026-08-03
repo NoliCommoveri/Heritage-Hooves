@@ -40,13 +40,34 @@ describe('scoreAbilityEntry', () => {
     expect(result.finalScore).toBeCloseTo(result.rawScore - 4.2, 6);
   });
 
-  it('careModifier, tackModifier and trainingFactor all default to 1.0', () => {
+  it('careModifier, tackModifier, trainingFactor and ageModifier all default to 1.0', () => {
     const withDefaults = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0 });
-    const explicit = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0, careModifier: 1.0, tackModifier: 1.0, trainingFactor: 1.0 });
+    const explicit = scoreAbilityEntry({
+      expressed: EXPRESSED,
+      weights: BARRELS,
+      noise: 0,
+      careModifier: 1.0,
+      tackModifier: 1.0,
+      trainingFactor: 1.0,
+      ageModifier: 1.0,
+    });
     expect(withDefaults.finalScore).toBeCloseTo(explicit.finalScore, 6);
 
     const halved = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0, careModifier: 0.5 });
     expect(halved.finalScore).toBeCloseTo(withDefaults.finalScore * 0.5, 6);
+  });
+
+  // Slice 0014 §10 test 5: omitting ageModifier (a caller that predates this slice) must produce
+  // exactly today's number.
+  it('omitting ageModifier produces the same result as passing 1.0 explicitly', () => {
+    const omitted = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0, careModifier: 0.9 });
+    const explicit = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0, careModifier: 0.9, ageModifier: 1.0 });
+    expect(omitted).toEqual(explicit);
+  });
+
+  it('ageModifier: 0.85 produces exactly rawScore * 0.85 + noise', () => {
+    const result = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 1.2, ageModifier: 0.85 });
+    expect(result.finalScore).toBeCloseTo(result.rawScore * 0.85 + 1.2, 10);
   });
 
   it('an entry with no weight at all (Sum(weight) = 0) scores zero rather than dividing by zero', () => {

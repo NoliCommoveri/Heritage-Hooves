@@ -6,10 +6,11 @@
 import type { Env } from '../types';
 import type { Genotype } from '../engines/genetics/genotype';
 import { parseGenotype } from '../engines/genetics/genotype';
-import { conditionStatus, parseConditionTrigger, lethalTerminalGameDay, type ConditionStatusLabel } from '../engines/health/status';
+import { conditionStatus, parseConditionTrigger, lethalTerminalGameDay, ownerVisibleStatus, type ConditionStatusLabel } from '../engines/health/status';
 import type { LethalTrigger } from '../engines/founding/generate';
 import { buildConditionSignsEventStatement, buildEventStatement } from './events';
 import { breedingHealthWarnings } from '../engines/health/breedingWarning';
+import { conditionDelta, type ConditionDeltaResult, type ManageableConditionState } from '../engines/health/management';
 
 export interface ConditionRow {
   id: number;
@@ -27,6 +28,9 @@ export interface ConditionRow {
   teaching_text: string;
   event_text: string;
   sort_order: number;
+  /** Slice 0014 §5.3/§7: what a management plan actually consists of, in a sentence a child can
+   * read. Non-null only for severity_class = 'manageable' rows. */
+  management_text: string | null;
 }
 
 const CACHE_MS = 60_000;
@@ -93,6 +97,124 @@ export function visibleAffectedConditions(genotype: Genotype, conditions: Condit
     if (c.signs_visible !== 1 || c.locus_code === null) return false;
     return conditionStatus(genotype, parseConditionTrigger(c.trigger)).status === 'affected';
   });
+}
+
+// ---------------------------------------------------------------------------
+// Part B (slice 0014 §5): managing HYPP and PSSM1. Truth (horse_conditions.management_state/
+// management_until_game_day) is separate from a stable's knowledge (horse_knowledge) - the same
+// truth-vs-knowledge split every other health screen in this codebase already respects.
+// ---------------------------------------------------------------------------
+
+export interface ManageableHorseConditionRow {
+  horse_id: number;
+  condition_code: string;
+  management_until_game_day: number | null;
+}
+
+/** Slice 0014 §5.2: every manageable-condition row (severity_class = 'manageable', enabled) for the
+ * given horses in one query - the batching that keeps the judging path free of an N+1. Callers with
+ * a single horse (the care page) pass a one-element array; the query shape does not change. */
+export async function getManageableConditionsForHorses(env: Env, horseIds: number[]): Promise<ManageableHorseConditionRow[]> {
+  if (horseIds.length === 0) return [];
+  const placeholders = horseIds.map(() => '?').join(',');
+  const result = await env.DB.prepare(
+    `SELECT hc.horse_id, hc.condition_code, hc.management_until_game_day
+     FROM horse_conditions hc
+     JOIN conditions c ON c.code = hc.condition_code
+     WHERE hc.horse_id IN (${placeholders}) AND c.severity_class = 'manageable' AND c.enabled = 1`
+  )
+    .bind(...horseIds)
+    .all<ManageableHorseConditionRow>();
+  return result.results ?? [];
+}
+
+export interface KnownGenotypeRow {
+  horse_id: number;
+  subject_code: string;
+}
+
+/** Every genotype-kind knowledge row for the given horses, in one query. There is no player-driven
+ * horse transfer yet (CLAUDE.md §13), so a horse's knowledge rows are always its current owner
+ * stable's own - filtering by horse_id alone is exactly filtering by "this horse's owner", the same
+ * entitlement the knowledge boundary requires. */
+export async function getKnownGenotypeSubjectsForHorses(env: Env, horseIds: number[]): Promise<KnownGenotypeRow[]> {
+  if (horseIds.length === 0) return [];
+  const placeholders = horseIds.map(() => '?').join(',');
+  const result = await env.DB.prepare(`SELECT horse_id, subject_code FROM horse_knowledge WHERE kind = 'genotype' AND horse_id IN (${placeholders})`)
+    .bind(...horseIds)
+    .all<KnownGenotypeRow>();
+  return result.results ?? [];
+}
+
+/**
+ * §5.1's boundary, resolved with ownerVisibleStatus - never a second version of the rule. A
+ * horse_conditions row only ever exists for a genuinely affected horse (buildHorseConditionStatements'
+ * own rule), so `known` is only consulted for whether a genotype test exists; conditionStatus is
+ * still recomputed via ownerVisibleStatus so the entitlement path is identical to every other health
+ * screen, not shortcut because the outcome happens to be predictable here.
+ */
+export function manageableConditionStates(
+  genotype: Genotype,
+  horseConditionRows: ManageableHorseConditionRow[],
+  conditions: ConditionRow[],
+  knownGenotypeCodes: Set<string>
+): ManageableConditionState[] {
+  const out: ManageableConditionState[] = [];
+  for (const row of horseConditionRows) {
+    const condition = conditions.find((c) => c.code === row.condition_code);
+    if (!condition) continue;
+    const trigger = parseConditionTrigger(condition.trigger);
+    const known = knownGenotypeCodes.has(condition.code) ? { result: 'affected' as ConditionStatusLabel } : undefined;
+    const visible = ownerVisibleStatus(genotype, trigger, condition.signs_visible === 1, known);
+    out.push({
+      conditionCode: condition.code,
+      ownerEntitled: visible.status !== null,
+      managementUntilGameDay: row.management_until_game_day,
+    });
+  }
+  return out;
+}
+
+/**
+ * §5.2's whole point: one query for horse_conditions, one for horse_knowledge, for however many
+ * horses the caller names - never one pair per horse. The judging path calls this once per class
+ * with every entered horse; a single-horse page (the care page, the horse page) calls it with a
+ * one-element array, which costs nothing extra worth avoiding.
+ */
+export async function conditionDeltaMapForHorses(
+  env: Env,
+  horses: { id: number; genotype: string }[],
+  conditions: ConditionRow[],
+  gameDay: number,
+  unmanagedPenalty: number
+): Promise<Map<number, ConditionDeltaResult>> {
+  const horseIds = horses.map((h) => h.id);
+  const [conditionRows, knownRows] = await Promise.all([getManageableConditionsForHorses(env, horseIds), getKnownGenotypeSubjectsForHorses(env, horseIds)]);
+
+  const conditionRowsByHorseId = new Map<number, ManageableHorseConditionRow[]>();
+  for (const row of conditionRows) {
+    const list = conditionRowsByHorseId.get(row.horse_id) ?? [];
+    list.push(row);
+    conditionRowsByHorseId.set(row.horse_id, list);
+  }
+  const knownByHorseId = new Map<number, Set<string>>();
+  for (const row of knownRows) {
+    const set = knownByHorseId.get(row.horse_id) ?? new Set<string>();
+    set.add(row.subject_code);
+    knownByHorseId.set(row.horse_id, set);
+  }
+
+  const result = new Map<number, ConditionDeltaResult>();
+  for (const horse of horses) {
+    const rows = conditionRowsByHorseId.get(horse.id) ?? [];
+    if (rows.length === 0) {
+      result.set(horse.id, { delta: 0, unmanagedCodes: [] });
+      continue;
+    }
+    const states = manageableConditionStates(parseGenotype(horse.genotype), rows, conditions, knownByHorseId.get(horse.id) ?? new Set());
+    result.set(horse.id, conditionDelta(states, gameDay, unmanagedPenalty));
+  }
+  return result;
 }
 
 /** condition code -> known result, for the breeding preview's health line (engines/health/breedingWarning.ts)
@@ -335,15 +457,33 @@ export interface ConditionCensusRow {
   clear: number;
   carrier: number;
   affected: number;
+  /** Slice 0014 §8.6: only meaningful for severity_class = 'manageable' rows - how many of the
+   * affected count above currently have no current plan, counted from truth (management_state/
+   * management_until_game_day), not from any stable's knowledge - this is the admin, and there is
+   * exactly one of them (CLAUDE.md §12's boundary is a player-facing rule, not an admin one). */
+  unmanaged: number;
 }
 
 /** Every living horse's genotype, scanned once in JS against every enabled single-gene condition -
  * schema doc §4.1's acknowledged cost of the genotype-as-one-blob design, acceptable at the
  * population size this game runs at (CLAUDE.md's own note on that tradeoff). */
-export async function conditionCensus(env: Env): Promise<ConditionCensusRow[]> {
+export async function conditionCensus(env: Env, gameDay: number): Promise<ConditionCensusRow[]> {
   const conditions = (await getEnabledConditions(env)).filter((c) => c.locus_code !== null);
   const result = await env.DB.prepare(`SELECT genotype FROM horses WHERE status = 'alive'`).all<{ genotype: string }>();
   const rows = result.results ?? [];
+
+  const unmanagedResult = await env.DB.prepare(
+    `SELECT hc.condition_code, COUNT(*) AS n
+     FROM horse_conditions hc
+     JOIN horses h ON h.id = hc.horse_id
+     JOIN conditions c ON c.code = hc.condition_code
+     WHERE h.status = 'alive' AND c.severity_class = 'manageable'
+       AND (hc.management_until_game_day IS NULL OR hc.management_until_game_day < ?)
+     GROUP BY hc.condition_code`
+  )
+    .bind(gameDay)
+    .all<{ condition_code: string; n: number }>();
+  const unmanagedByCode = new Map((unmanagedResult.results ?? []).map((r) => [r.condition_code, r.n]));
 
   return conditions.map((condition) => {
     const trigger = parseConditionTrigger(condition.trigger);
@@ -357,6 +497,6 @@ export async function conditionCensus(env: Env): Promise<ConditionCensusRow[]> {
       else if (status === 'carrier') carrier++;
       else affected++;
     }
-    return { condition, clear, carrier, affected };
+    return { condition, clear, carrier, affected, unmanaged: unmanagedByCode.get(condition.code) ?? 0 };
   });
 }

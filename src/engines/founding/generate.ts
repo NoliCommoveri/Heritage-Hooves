@@ -5,6 +5,7 @@ import { makeRng, deriveSeed, type Rng } from '../../lib/rng';
 import { LOCI, type Locus } from '../genetics/loci';
 import { sortAllelePair, GENOTYPE_VERSION, type Genotype, type AllelePair } from '../genetics/genotype';
 import { TRAITS, LOCI_PER_TRAIT } from '../genetics/polygenic';
+import { ROBUSTNESS_TRAITS } from '../conformation/traits';
 import type { AllelePool } from './pool';
 
 const TRAIT_STRING_LENGTH = LOCI_PER_TRAIT * 2;
@@ -41,6 +42,11 @@ export interface GenerateCandidateInput {
   pool: AllelePool;
   /** The quality band's number - the chance any given polygenic allele is a '1'. Slice 0005 §4. */
   polygenicOneChance: number;
+  /** Slice 0014 §2.8: the fixed chance for ROBUSTNESS_TRAITS, regardless of quality band - so a
+   * top-band founding horse is not automatically sound as well as beautiful. Required, not optional
+   * with a default: an optional field would silently fall back to the band the day a second caller
+   * is added, which is exactly the failure this exists to prevent. */
+  robustnessOneChance: number;
   ageMinGameDays: number;
   ageMaxGameDays: number;
   /** The candidate's own rng_seed (import_candidates.rng_seed), minted by the caller. */
@@ -95,9 +101,10 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
   const polygenicRng = makeRng(deriveSeed(input.seed, 'pool_polygenic'));
   const polygenic: Record<string, string> = {};
   for (const trait of TRAITS) {
+    const chance = ROBUSTNESS_TRAITS.includes(trait) ? input.robustnessOneChance : input.polygenicOneChance;
     let bits = '';
     for (let i = 0; i < TRAIT_STRING_LENGTH; i++) {
-      bits += polygenicRng.next() < input.polygenicOneChance ? '1' : '0';
+      bits += polygenicRng.next() < chance ? '1' : '0';
     }
     polygenic[trait] = bits;
   }

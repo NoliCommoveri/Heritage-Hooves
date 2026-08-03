@@ -167,7 +167,21 @@ describe('abilityValues', () => {
 
   it('anchors at 0, so a horse at half realization expresses half its genetic value, not something pulled toward 50', () => {
     const genotype = genotypeWithPotential('agility', 14); // potential 14 -> geneticValue 70 at noise 0
-    const zeroNoise = { neck_length: 0, shoulder_angle: 0, back_length: 0, hock_set: 0, stamina: 0, jump_scope: 0, speed: 0, trainability: 0, fertility: 0, agility: 0 };
+    const zeroNoise = {
+      neck_length: 0,
+      shoulder_angle: 0,
+      back_length: 0,
+      hock_set: 0,
+      stamina: 0,
+      jump_scope: 0,
+      speed: 0,
+      trainability: 0,
+      fertility: 0,
+      agility: 0,
+      foot_robustness: 0,
+      joint_robustness: 0,
+      ligament_robustness: 0,
+    };
     const gv = geneticValue(genotype, 'agility', 0);
     expect(gv).toBe(70);
 

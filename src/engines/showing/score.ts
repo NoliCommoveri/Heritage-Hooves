@@ -65,6 +65,10 @@ export interface ScoreEntryParams {
    * slice 0006's realization() carries trainingFactor/careFactor ahead of anything setting them. */
   careModifier?: number;
   tackModifier?: number;
+  /** Slice 0014 §2.3/§4.3: a horse's age-based decline. A separate multiplier from careModifier on
+   * purpose - the care clamp would otherwise eat it (§2.3.1) - defaulting to 1.0 exactly like the
+   * other two so a caller that predates this slice keeps producing today's number. */
+  ageModifier?: number;
 }
 
 /**
@@ -76,6 +80,7 @@ export interface ScoreEntryParams {
 export function scoreEntry(params: ScoreEntryParams): ScoreResult {
   const careModifier = params.careModifier ?? 1.0;
   const tackModifier = params.tackModifier ?? 1.0;
+  const ageModifier = params.ageModifier ?? 1.0;
 
   const traits: TraitScoreBreakdown[] = [];
   let weightedSum = 0;
@@ -96,7 +101,7 @@ export function scoreEntry(params: ScoreEntryParams): ScoreResult {
   }
 
   const rawScore = weightSum > 0 ? weightedSum / weightSum : 0;
-  const finalScore = rawScore * careModifier * tackModifier + params.noise;
+  const finalScore = rawScore * careModifier * tackModifier * ageModifier + params.noise;
 
   return { traits, weightSum, rawScore, noise: params.noise, finalScore };
 }

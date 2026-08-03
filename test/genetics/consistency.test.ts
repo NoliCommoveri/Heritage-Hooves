@@ -83,9 +83,9 @@ describe('every seeded breed pool vs LOCI', () => {
 // agree with it, exactly as 0015_seed_loci.sql must agree with LOCI above. Slice 0012 appends
 // 'agility' in migration 0061 - scanning 0029 then 0061 in sequence and asserting against the
 // whole of TRAITS is what proves agility is both correct and *last* (§4.1's append-only rule).
-describe('TRAITS vs migrations/0029 + 0061 (quantitative_traits seeds)', () => {
+describe('TRAITS vs migrations/0029 + 0061 + 0081 (quantitative_traits seeds)', () => {
   it('seeds exactly the codes in TRAITS, in the same order, with matching category, direction and locus_count', () => {
-    const migrationNames = ['0029_seed_quantitative_traits.sql', '0061_quantitative_traits_agility.sql'];
+    const migrationNames = ['0029_seed_quantitative_traits.sql', '0061_quantitative_traits_agility.sql', '0081_quantitative_traits_robustness.sql'];
     const rowPattern =
       /\('([a-z_]+)',\s*'[^']*',\s*'(conformation|ability|hidden)',\s*'(bidirectional|higher_better)',\s*(?:'[^']*'|NULL),\s*(?:'[^']*'|NULL),\s*(\d+)/g;
     const seeded: { code: string; category: string; direction: string; locusCount: number }[] = [];
@@ -102,7 +102,7 @@ describe('TRAITS vs migrations/0029 + 0061 (quantitative_traits seeds)', () => {
 
     expect(seeded.length).toBe(TRAITS.length);
     expect(seeded.map((s) => s.code)).toEqual([...TRAITS]);
-    expect(seeded[seeded.length - 1].code).toBe('agility');
+    expect(seeded[seeded.length - 1].code).toBe('ligament_robustness');
     seeded.forEach((s) => {
       const code = s.code as TraitCode;
       expect(s.category, `${s.code} category`).toBe(TRAIT_CATEGORY[code]);

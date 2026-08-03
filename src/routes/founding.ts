@@ -103,7 +103,7 @@ export async function stableFoundingRoute(ctx: RequestContext, method: string, s
     if (!breeds.some((b) => b.id === breedId)) {
       return renderPage(ctx, stable, offer, { error: 'Choose a breed.' });
     }
-    await chooseBreedForOffer(ctx.env, offer.id, breedId, ctx.world.game_day);
+    await chooseBreedForOffer(ctx.env, offer.id, breedId, ctx.world.game_day, ctx.config);
     return redirect(`/stables/${String(stableId)}/founding`);
   }
 

@@ -41,7 +41,7 @@ import { generateFounderPolygenic } from '../engines/genetics/polygenic';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import { parseImageCount } from '../lib/images';
 import { getEnabledConditions, conditionCensus } from '../db/health';
-import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward } from '../db/ageing';
+import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward, ageModifierDistribution } from '../db/ageing';
 import { getCareAdminData, makeAllHorsesOverdue } from '../db/care';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
@@ -579,7 +579,7 @@ export async function adminMoneyRoute(ctx: RequestContext, method: string): Prom
 
 /** /admin/health (slice 0010 §8) - read-only, no editing form. */
 export async function adminHealthRoute(ctx: RequestContext): Promise<Response> {
-  const census = await conditionCensus(ctx.env);
+  const census = await conditionCensus(ctx.env, ctx.world.game_day);
   return htmlResponse(renderHealthAdminPage({ world: ctx.world, census }));
 }
 
@@ -602,6 +602,7 @@ export async function adminAgeingRoute(ctx: RequestContext, method: string): Pro
         livingHorses,
         recentDeaths,
         recentDeathsWindowGameDays: RECENT_DEATHS_WINDOW_GAME_DAYS,
+        ageModifierDistribution: ageModifierDistribution(livingHorses),
         error,
         notice,
       })

@@ -1,12 +1,8 @@
-// Care: the farrier and wellness timers, feed, and the ±5% show-score modifier they produce
-// together (slice 0013). The pure ramp-and-clamp math lives in src/engines/care/modifier.ts; this
-// file is the thin database layer around it - one horse's call, a barn-wide round, the tick's
-// overdue notice, and /admin/care's read-only counts.
-//
-// Part B (condition management, slice 0013 §4.5) was not built this session - conditionDelta is
-// always 0 here. See that document's §12 for the sanctioned scope cut and what a future session
-// still owes: horse_conditions.management_state and conditions.management_options, neither of
-// which exists yet (CLAUDE.md §7: a column nothing writes is a promise nobody has kept).
+// Care: the farrier and wellness timers, feed, condition management plans, and the ±5% show-score
+// modifier they all produce together (slice 0013, Part B built in slice 0014 §5). The pure
+// ramp-and-clamp math lives in src/engines/care/modifier.ts; this file is the thin database layer
+// around it - one horse's call, a barn-wide round, the tick's overdue notice, and /admin/care's
+// read-only counts.
 
 import type { Env } from '../types';
 import type { Config, ConfigValues } from '../lib/config-cache';
@@ -24,6 +20,14 @@ import {
   type CareStatus,
   type CareModifierResult,
 } from '../engines/care/modifier';
+import { parseGenotype } from '../engines/genetics/genotype';
+import {
+  getManageableConditionsForHorses,
+  getKnownGenotypeSubjectsForHorses,
+  manageableConditionStates,
+  type ConditionRow,
+  type ManageableHorseConditionRow,
+} from './health';
 
 export type CareService = 'farrier' | 'wellness';
 
@@ -67,9 +71,10 @@ function timerStateFor(service: CareService, horse: CareTimerHorse, cfg: ConfigV
 }
 
 /** The scorer's one entry point (slice 0013 §8.4): this horse's farrier and wellness timer states
- * plus its owner stable's feed delta, combined into a clamped modifier (§2.4). conditionDelta is
- * always 0 - Part B was not built this session. */
-export function careModifierForHorse(horse: CareTimerHorse, feedLevel: string, cfg: ConfigValues, gameDay: number): CareModifierResult {
+ * plus its owner stable's feed delta, combined into a clamped modifier (§2.4). conditionDelta
+ * (slice 0014 §5.2) defaults to 0 - the caller computes it (conditionDeltaMapForHorses below) and
+ * passes it in, since this function stays synchronous and must not query. */
+export function careModifierForHorse(horse: CareTimerHorse, feedLevel: string, cfg: ConfigValues, gameDay: number, conditionDelta = 0): CareModifierResult {
   const startDay = careStartGameDay(horse.born_game_day, cfg);
   const atPasture = horse.location === 'pasture';
   const feed = feedLevelDefinition(feedLevel, cfg.feed_levels);
@@ -82,7 +87,7 @@ export function careModifierForHorse(horse: CareTimerHorse, feedLevel: string, c
     // a per-stable decision about what is in the mangers), so it carries no feed delta either - it
     // comes out at exactly 1.00, every component neutral.
     feedDelta: atPasture ? 0 : feed.care_delta,
-    conditionDelta: 0,
+    conditionDelta,
     gameDay,
     modifierMin: cfg.care_modifier_min,
     modifierMax: cfg.care_modifier_max,
@@ -115,9 +120,11 @@ export interface CareCardView {
 }
 
 /** Everything the Care card and the barn list's badge/summary need for one horse, resolved once so
- * neither screen recomputes the ramp on its own. */
-export function careCardViewFor(horse: CareTimerHorse, feedLevel: string, cfg: ConfigValues, gameDay: number): CareCardView {
-  const result = careModifierForHorse(horse, feedLevel, cfg, gameDay);
+ * neither screen recomputes the ramp on its own. conditionDelta (slice 0014 §5.2) defaults to 0 for
+ * a caller that has not computed it - the barn list and horse page both do, via
+ * conditionDeltaMapForHorses. */
+export function careCardViewFor(horse: CareTimerHorse, feedLevel: string, cfg: ConfigValues, gameDay: number, conditionDelta = 0): CareCardView {
+  const result = careModifierForHorse(horse, feedLevel, cfg, gameDay, conditionDelta);
   return {
     tooYoung: result.farrier.status === 'not_yet',
     farrier: { status: result.farrier.status, daysUntilDue: result.farrier.daysUntilDue, cost: cfg.farrier_cost },
@@ -222,6 +229,145 @@ export async function callBarnRoundCare(
 }
 
 // ---------------------------------------------------------------------------
+// Condition management plans - slice 0014 §5 (Part B, specified by slice 0013 §4.5)
+// ---------------------------------------------------------------------------
+
+export interface ManagementPlanRow {
+  conditionCode: string;
+  conditionName: string;
+  managementText: string | null;
+  managementUntilGameDay: number | null;
+  current: boolean;
+  cost: number;
+}
+
+/** §5.3: one row per manageable condition the viewing stable is entitled to know about - never a
+ * row for one it isn't, which is itself part of the knowledge boundary (an entitled-to-nothing
+ * horse returns an empty list, and the section on the care page does not render at all). */
+export async function managementPlanRowsForHorse(
+  env: Env,
+  horse: { id: number; genotype: string },
+  conditions: ConditionRow[],
+  gameDay: number,
+  cfg: ConfigValues
+): Promise<ManagementPlanRow[]> {
+  const [rows, known] = await Promise.all([getManageableConditionsForHorses(env, [horse.id]), getKnownGenotypeSubjectsForHorses(env, [horse.id])]);
+  const knownCodes = new Set(known.map((k) => k.subject_code));
+  const states = manageableConditionStates(parseGenotype(horse.genotype), rows, conditions, knownCodes);
+
+  return states
+    .filter((s) => s.ownerEntitled)
+    .map((s) => {
+      const condition = conditions.find((c) => c.code === s.conditionCode);
+      return {
+        conditionCode: s.conditionCode,
+        conditionName: condition?.name ?? s.conditionCode,
+        managementText: condition?.management_text ?? null,
+        managementUntilGameDay: s.managementUntilGameDay,
+        current: s.managementUntilGameDay !== null && gameDay <= s.managementUntilGameDay,
+        cost: cfg.condition_management_cost,
+      };
+    });
+}
+
+/** One condition's plan, bought or renewed (§5.3). Money and no turn, same as callOneHorseCare -
+ * callers must check canTakeOnCost themselves first and must not spend an action. Renewal is not
+ * stacking (§5.3): this always sets management_until_game_day to gameDay + interval from today,
+ * never adds to whatever was left on an existing plan. */
+export async function callOneConditionManagement(
+  env: Env,
+  params: { horseId: number; horseName: string; ownerStableId: number; conditionCode: string; cost: number; intervalGameDays: number; gameDay: number }
+): Promise<void> {
+  const until = params.gameDay + params.intervalGameDays;
+  const description = `Management plan, ${params.horseName} (${params.conditionCode}).`;
+  await env.DB.batch([
+    env.DB
+      .prepare(`UPDATE horse_conditions SET management_state = 'managed', management_until_game_day = ? WHERE horse_id = ? AND condition_code = ?`)
+      .bind(until, params.horseId, params.conditionCode),
+    ...buildLedgerStatements(env, [
+      { stableId: params.ownerStableId, amount: -params.cost, kind: 'vet', referenceType: 'horse', referenceId: params.horseId, description, gameDay: params.gameDay },
+    ]),
+  ]);
+}
+
+export interface ManagementBarnRoundResult {
+  /** How many plans were actually renewed and charged for. */
+  serviced: number;
+  totalCount: number;
+  charged: number;
+}
+
+/** §5.3: the barn round renews every due plan the stable is entitled to know about, alongside
+ * shoes and wellness - one ledger row for the whole round, not one per plan. Guarded against a
+ * double submission the same way callBarnRoundCare is: each UPDATE only lands if the plan is still
+ * not current, so a second identical request finds nothing left to renew. */
+export async function callBarnRoundManagement(
+  env: Env,
+  params: { stableId: number; gameDay: number; config: ConfigValues; balance: number; conditions: ConditionRow[] }
+): Promise<ManagementBarnRoundResult> {
+  const horsesResult = await env.DB.prepare(`SELECT id, genotype FROM horses WHERE owner_stable_id = ? AND status = 'alive' AND location = 'barn'`)
+    .bind(params.stableId)
+    .all<{ id: number; genotype: string }>();
+  const horses = horsesResult.results ?? [];
+  if (horses.length === 0) return { serviced: 0, totalCount: 0, charged: 0 };
+
+  const horseIds = horses.map((h) => h.id);
+  const [rows, known] = await Promise.all([getManageableConditionsForHorses(env, horseIds), getKnownGenotypeSubjectsForHorses(env, horseIds)]);
+
+  const rowsByHorse = new Map<number, ManageableHorseConditionRow[]>();
+  for (const r of rows) {
+    const list = rowsByHorse.get(r.horse_id) ?? [];
+    list.push(r);
+    rowsByHorse.set(r.horse_id, list);
+  }
+  const knownByHorse = new Map<number, Set<string>>();
+  for (const k of known) {
+    const set = knownByHorse.get(k.horse_id) ?? new Set<string>();
+    set.add(k.subject_code);
+    knownByHorse.set(k.horse_id, set);
+  }
+
+  const due: { horseId: number; conditionCode: string }[] = [];
+  for (const horse of horses) {
+    const states = manageableConditionStates(parseGenotype(horse.genotype), rowsByHorse.get(horse.id) ?? [], params.conditions, knownByHorse.get(horse.id) ?? new Set());
+    for (const s of states) {
+      if (!s.ownerEntitled) continue;
+      const current = s.managementUntilGameDay !== null && params.gameDay <= s.managementUntilGameDay;
+      if (!current) due.push({ horseId: horse.id, conditionCode: s.conditionCode });
+    }
+  }
+  if (due.length === 0) return { serviced: 0, totalCount: 0, charged: 0 };
+
+  const unitCost = params.config.condition_management_cost;
+  const affordableCount = params.balance >= 0 ? Math.min(due.length, Math.floor(params.balance / unitCost)) : 0;
+  const toRenew = due.slice(0, affordableCount);
+  if (toRenew.length === 0) return { serviced: 0, totalCount: due.length, charged: 0 };
+
+  const until = params.gameDay + params.config.condition_management_interval_game_days;
+  const updateStatements = toRenew.map((d) =>
+    env.DB
+      .prepare(
+        `UPDATE horse_conditions SET management_state = 'managed', management_until_game_day = ?
+         WHERE horse_id = ? AND condition_code = ? AND (management_until_game_day IS NULL OR management_until_game_day < ?)`
+      )
+      .bind(until, d.horseId, d.conditionCode, params.gameDay)
+  );
+  const updateResults = await env.DB.batch(updateStatements);
+  const actuallyServiced = updateResults.filter((r) => (r.meta.changes ?? 0) > 0).length;
+  if (actuallyServiced === 0) return { serviced: 0, totalCount: due.length, charged: 0 };
+
+  const charged = actuallyServiced * unitCost;
+  const description = `Management round, ${String(actuallyServiced)} plan${actuallyServiced === 1 ? '' : 's'}.`;
+  await env.DB.batch(
+    buildLedgerStatements(env, [
+      { stableId: params.stableId, amount: -charged, kind: 'vet', referenceType: 'stable', referenceId: params.stableId, description, gameDay: params.gameDay },
+    ])
+  );
+
+  return { serviced: actuallyServiced, totalCount: due.length, charged };
+}
+
+// ---------------------------------------------------------------------------
 // The tick's overdue notice - slice 0013 §7.2/§2.6
 // ---------------------------------------------------------------------------
 
@@ -236,15 +382,27 @@ interface CareCandidateRow {
 
 /**
  * §2.6: NPC-owned horses are kept current by the tick, not exempted at the scorer - one UPDATE,
- * idempotent by construction (it writes the same value every tick).
+ * idempotent by construction (it writes the same value every tick). Slice 0014 §5.4 extends this to
+ * management plans: an NPC show barn horse affected by a manageable condition must have a current
+ * plan for the same reason its feet are kept shod, or the show field would silently weaken for a
+ * reason nobody can see and the scorer would need an NPC special case - which CLAUDE.md §13 forbids.
  */
-async function stampNpcHorsesCurrent(env: Env, gameDay: number): Promise<void> {
-  await env.DB.prepare(
-    `UPDATE horses SET last_farrier_game_day = ?, last_vet_game_day = ?
-     WHERE status = 'alive' AND location = 'barn' AND owner_stable_id IN (SELECT id FROM stables WHERE is_npc = 1)`
-  )
-    .bind(gameDay, gameDay)
-    .run();
+async function stampNpcHorsesCurrent(env: Env, gameDay: number, managementIntervalGameDays: number): Promise<void> {
+  await env.DB.batch([
+    env.DB
+      .prepare(
+        `UPDATE horses SET last_farrier_game_day = ?, last_vet_game_day = ?
+         WHERE status = 'alive' AND location = 'barn' AND owner_stable_id IN (SELECT id FROM stables WHERE is_npc = 1)`
+      )
+      .bind(gameDay, gameDay),
+    env.DB
+      .prepare(
+        `UPDATE horse_conditions SET management_state = 'managed', management_until_game_day = ?
+         WHERE condition_code IN (SELECT code FROM conditions WHERE severity_class = 'manageable' AND enabled = 1)
+           AND horse_id IN (SELECT id FROM horses WHERE status = 'alive' AND location = 'barn' AND owner_stable_id IN (SELECT id FROM stables WHERE is_npc = 1))`
+      )
+      .bind(gameDay + managementIntervalGameDays),
+  ]);
 }
 
 /**
@@ -306,7 +464,7 @@ async function noticeCareDueForPlayers(env: Env, gameDay: number, cfg: ConfigVal
  * still stamping the show barn current - the nag is the part most likely to need silencing, not
  * the fact that NPC horses read as normal. */
 export async function noticeCareDue(env: Env, gameDay: number, config: Config): Promise<void> {
-  await stampNpcHorsesCurrent(env, gameDay);
+  await stampNpcHorsesCurrent(env, gameDay, config.values.condition_management_interval_game_days);
   if (config.flags.care_notice_enabled === false) return;
   await noticeCareDueForPlayers(env, gameDay, config.values);
 }

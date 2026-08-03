@@ -415,6 +415,12 @@ state only, set at 80% of the interval.
 
 ### 4.5 Part B: managing a condition that can be managed
 
+**Built 3 Aug 2026, in `docs/slices/0014-before-the-children-play.md` §5, exactly as specified below**
+— with one rename: `conditions.management_options` (JSON) shipped as `conditions.management_text`
+(plain text) instead, because nothing in slice 0014 reads a structure and an unread column is a
+promise nobody keeps (`CLAUDE.md` §7). Everything else below — the −0.03 penalty, the 150/180 shape,
+the knowledge boundary, the three "does not" bullets — landed as written.
+
 Slice 0010 built four conditions and deliberately built no management: HYPP and PSSM1 are marked
 `manageable` in `conditions.severity_class`, but with nothing to do about them "manageable" has so
 far meant "diagnosed". Both are, in life, managed by **diet and exercise** — which is precisely what
@@ -447,11 +453,13 @@ Three things this deliberately does **not** do:
   it is invisible on screen the moment it is crossed by accident.
 
 Data: `horse_conditions` gains `management_state` (`unmanaged` / `managed`, the schema document's
-own value names) and `management_until_game_day`; `conditions` gains `management_options` (JSON, and
-`NULL` for anything not manageable) plus `manageable` behaviour driven off the existing
-`severity_class`. Both were named in slice 0010 §3.2 as arriving here.
+own value names) and `management_until_game_day`; `conditions` gains `management_text` (plain text,
+not the `management_options` JSON originally sketched here — see the rename note above; `NULL` for
+anything not manageable) plus `manageable` behaviour driven off the existing `severity_class`. Both
+were named in slice 0010 §3.2 as arriving here, and both did.
 
-**Part B is the half to drop if the session runs long** (§12).
+**Part B was the half sanctioned to drop if the session ran long (§12) — it did not; it landed in
+slice 0014.**
 
 ---
 

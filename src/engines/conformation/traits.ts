@@ -23,6 +23,9 @@ export const TRAIT_CATEGORY: Record<TraitCode, TraitCategory> = {
   trainability: 'ability',
   fertility: 'hidden',
   agility: 'ability',
+  foot_robustness: 'hidden',
+  joint_robustness: 'hidden',
+  ligament_robustness: 'hidden',
 };
 
 export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
@@ -36,6 +39,9 @@ export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
   trainability: 'higher_better',
   fertility: 'higher_better',
   agility: 'higher_better',
+  foot_robustness: 'higher_better',
+  joint_robustness: 'higher_better',
+  ligament_robustness: 'higher_better',
 };
 
 /** The four traits this slice ever displays (§2.1) - in TRAITS' own order. */
@@ -47,6 +53,11 @@ export const CONFORMATION_TRAITS: readonly TraitCode[] = TRAITS.filter((t) => TR
  * scoreEntry iterates CONFORMATION_TRAITS rather than Object.keys(ideal) - a result's breakdown
  * always reads in the same order regardless of how the JSON was written. */
 export const ABILITY_TRAITS: readonly TraitCode[] = TRAITS.filter((t) => TRAIT_CATEGORY[t] === 'ability');
+
+/** Slice 0014 §2.8: the traits a founding quality band must NOT weight. Drawn at a fixed
+ * robustness_one_chance instead, so a top-band founding horse is not automatically sound as well as
+ * beautiful. fertility is deliberately not in this list - it stays band-weighted. */
+export const ROBUSTNESS_TRAITS: readonly TraitCode[] = ['foot_robustness', 'joint_robustness', 'ligament_robustness'];
 
 const ANCHOR_BIDIRECTIONAL = 50;
 const ANCHOR_UNIDIRECTIONAL = 0;
