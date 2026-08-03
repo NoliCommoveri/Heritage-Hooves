@@ -40,16 +40,16 @@ What already exists and must not be re-implemented:
   slice makes to that function is **where the candidate pool comes from**: every `is_npc = 1`
   stable's stock, not one hardcoded stable. Nothing about eligibility, seeding, or the
   zero-player-entries rule changes.
-- **NPC horses already flow through every generic system with no special case.** Ageing and death
-  (`src/db/ageing.ts`), the lethal-foal check, care timers (`src/db/care.ts`'s `noticeCareDue`
-  stamps every `is_npc = 1` stable's horses current every tick, per slice 0013 §2.6), upkeep
-  (`src/db/upkeep.ts`'s `chargeUpkeep` charges every `active` stable, NPC or not), and scoring
-  (`scoreEntry` / `scoreAbilityEntry`) all already treat an NPC-owned horse exactly like a
-  player's. This slice adds **one** new generic system (breeding decisions) in the same spirit and
-  touches none of the above.
+- **NPC horses already flow through most generic systems with no special case.** Ageing and death
+  (`src/db/ageing.ts`), the lethal-foal check, and scoring (`scoreEntry` / `scoreAbilityEntry`) all
+  already treat an NPC-owned horse exactly like a player's. Care is the one place an exemption is
+  already precedented rather than avoided: `src/db/care.ts`'s `noticeCareDue` stamps every
+  `is_npc = 1` stable's barn horses current every tick (slice 0013 §2.6), because there is nobody
+  to press the farrier button. §2.5 extends that same precedent to board, for the same reason and
+  no further.
 - **Events already skip NPC stables for free.** `src/db/events.ts`'s `buildEventStatement` and its
   two sibling helpers all take a nullable `accountId` and return no statements at all when it is
-  null (line 67, 88, 108 in that file). Every event-writing call in `resolveDueCoverings` and
+  null (lines 67, 88, 108 in that file). Every event-writing call in `resolveDueCoverings` and
   `foalDuePregnancies` already passes the stable's `account_id` through, so **NPC breeding needs no
   new guard anywhere to stay silent in a player's events feed** — the guard those functions already
   have is sufficient, because it is centralised rather than repeated at each call site.
@@ -59,6 +59,10 @@ What already exists and must not be re-implemented:
   specified, not built; stud services proper are schema §8.5/overview §10f, filed under Market).
   **This slice does not add one.** An NPC stable breeds only within its own stock, same as a player
   stable. §3.3 names the consequence and defers the fix.
+- **A foal is born unnamed.** `buildFoalInsertStatements` binds `registered_name` as `NULL`, and a
+  player names their own foal afterwards through `registerHorseName`. Nothing would ever do that for
+  an NPC stable, and an unnamed horse renders as "Unnamed colt" / "Unnamed filly"
+  (`horseDisplayName`, `src/db/horses.ts:128`). §2.7 is why this slice cannot leave that alone.
 
 ---
 
@@ -73,21 +77,20 @@ Every `breeding_interval_game_days`, each NPC stable's tick stage looks at its o
 and stallions, ranks them the same way a judge would — using the exact scoring functions a show
 already uses — and books a handful of coverings among the best pairings it can find, with realistic
 imperfection: noise in its judgement, and an occasional skip in favour of a lesser pairing. The
-resulting foals are ordinary horses: pedigreed, testable, subject to the same disease loci, ageing
-and dying on the same rolled lifespan as anything else.
+resulting foals are ordinary horses: pedigreed, testable, named under their breeder's prefix,
+subject to the same disease loci, ageing and dying on the same rolled lifespan as anything else.
 
 **A quality ceiling caps what "the best pairing" can mean**, rising slowly on a schedule the admin
-can see and adjust without a deploy. An NPC stable never breeds *worse* than its honest best — it
-just stops being able to tell the difference between "very good" and "freakishly good" once a trait
-clears the ceiling, so it never systematically concentrates on the extreme tail the way an
-unconstrained optimiser would over many real-world months.
+can see and edit from the browser. An NPC stable never breeds *worse* than its honest best — it
+just stops being able to tell the difference between "good" and "freakishly good" on any one trait
+once that trait clears the ceiling, so it never systematically concentrates on the extreme tail the
+way an unconstrained optimiser would over many real-world months.
 
 A show's field is now topped up from *every* NPC stable's stock, not one. `/admin/npc` shows what
-exists: each stable's roster size, its last breeding cycle, and the ceiling curve — read-only,
-except a "found a new NPC stable" control that mints a fresh personality stable the same way
-founding stock is minted for a player, and the existing "stock" control, generalised to add an
-outcross batch to any NPC stable by hand (its only source of genetics from outside itself — see
-§3.3).
+exists: each stable's roster size, its last breeding cycle, and the ceiling schedule — read-only
+except for three controls: editing the ceiling schedule, founding a new personality stable, and
+adding an outcross batch to any NPC stable by hand (its only source of genetics from outside
+itself — see §3.3).
 
 Nothing about how a player plays changes. No new screen, no new button, no new turn cost anywhere
 in a player's own stable. This slice is entirely on the NPC side of the game.
@@ -113,7 +116,7 @@ build order exists because the tuning that only real play reveals is the binding
 
 | Stable | Personality | Scores against | What it's for |
 |---|---|---|---|
-| Fair Meadow (existing, repurposed) | Volume breeder | Quarter Horse ideal vector, but with high selection noise and no ceiling headroom used — see §2.2 | The generic show-field filler this slice must not regress |
+| Fair Meadow (existing, repurposed) | Volume breeder | Quarter Horse ideal vector, with high selection noise — see §2.3 | The generic show-field filler this slice must not regress |
 | Cedar Hollow | Conformation specialist | Quarter Horse ideal vector, low noise | Competitive show stock a player's best has to actually beat |
 | Willow Creek Barrels | Discipline barn | Barrel Racing's `ability_weights` | Performance prospects for the one discipline that exists |
 
@@ -125,6 +128,12 @@ worth selecting for** — pattern genetics a player is actively chasing, an unre
 paying a premium for, a testing economy in real use. Say so explicitly if that later session decides
 differently; this is a recommendation with reasoning, not a wall.
 
+All three breed Quarter Horses. It is the only breed with an `ideal_vector`
+(`migrations/0035_seed_qh_ideal_vector.sql`; the other seven are drafted in
+`docs/breed-ideal-vectors.md` but still `NULL` in the database), and Barrel Racing is a Quarter
+Horse discipline anyway, so Willow Creek loses nothing by it. §7.3's outcross control still takes a
+breed rather than assuming one — see the note there.
+
 ### 2.2 The selection engine reuses the judge's own scoring functions — nothing new is invented
 
 `src/engines/showing/score.ts`'s `scoreEntry` and `src/engines/showing/abilityScore.ts`'s
@@ -133,36 +142,54 @@ a horse's already-expressed trait values. An NPC stable ranking its own stock fo
 the identical question a judge asks at a show — just before the foal exists rather than after.
 
 **New engine, `src/engines/npc/selection.ts`, pure (`CLAUDE.md` §5.1), calls `scoreEntry` /
-`scoreAbilityEntry` with `noise: 0`** to get each candidate's raw, honest score against the
-personality's target (a breed's `ideal_vector` or a discipline's `ability_weights`, read live from
-`breeds`/`disciplines` by the caller and handed in — the engine itself never touches the database).
-That raw score, **after the ceiling clamp in §2.4**, is what the policy ranks candidates on.
+`scoreAbilityEntry` with `noise: 0`** against the personality's target (a breed's `ideal_vector` or
+a discipline's `ability_weights`, read live from `breeds`/`disciplines` by the caller and handed in
+— the engine itself never touches the database). §2.4's ceiling is then applied to the per-trait
+breakdown those functions return, and that clamped aggregate is what the policy ranks candidates on.
+
+**`careModifier`, `tackModifier`, `trainingFactor` and `ageModifier` all stay at their 1.0
+defaults.** These are performance modifiers, not breeding merit: a twenty-year-old mare's genetic
+contribution to a foal has not declined just because her show scores have, and a stable choosing
+which of its own mares to breed is not asking how she would place today. Leaving them at 1.0 is a
+decision, not an omission — it is the reason NPC selection can share the scorers without also
+inheriting a question they were built to answer for a different purpose.
 
 This means: no new formula for "how good is a horse", ever. If a future session retunes
-`scoreEntry`'s falloff or a breed's ideal vector, NPC selection changes with it automatically,
-because it is the same function. Two scoring paths would drift; there is only one.
+`scoreEntry`'s falloff, a judge's weights, or a breed's ideal vector, NPC selection changes with it
+automatically, because it is the same function. Two scoring paths would drift; there is only one.
 
 ### 2.3 The policy pairs top mares with top stallions, with noise and occasional retention
 
 For each NPC stable, each cycle:
 
-1. Gather eligible mares and stallions — alive, at or past `min_breeding_age_game_days`, not already
-   pregnant or booked, past `mare_recovery_game_days` since last foaling, in the current breeding
-   season, and (§2.5) affordable. These are the **same** predicates `validateBooking` in
-   `src/routes/horses.ts` applies to a player's booking — see §4.2 for exactly which functions are
-   reused rather than re-derived.
-2. Score every eligible horse against the personality's target, using §2.2's reused scorers, then
-   add a per-horse random perturbation drawn from `N(0, selection_noise_sd)` (§10d's "imperfect
-   selection... noise") — the seed derives from the stable's own row and the cycle's game day, per
-   `CLAUDE.md` §5.2.
+1. Gather eligible mares and stallions — alive, in the barn rather than at pasture, at or past
+   `min_breeding_age_game_days`, not already pregnant or booked, past `mare_recovery_game_days`
+   since last foaling, and in the current breeding season. These are the **same** predicates
+   `validateBooking` in `src/routes/horses.ts` applies to a player's booking — see §4.2 for exactly
+   which functions are reused rather than re-derived.
+2. Score every eligible horse against the personality's target, using §2.2's reused scorers and
+   §2.4's ceiling, then add a per-horse random perturbation drawn from `N(0, selection_noise_sd)`
+   (§10d's "imperfect selection... noise") — the seed derives from the stable's own row and the
+   cycle's game day, per `CLAUDE.md` §5.2.
 3. Sort each sex by perturbed score, descending. Walk down each list; **at each rank, with
    probability `retention_bias`, skip that horse for this cycle** (§10d's "sentimental retentions and
    occasional poor decisions" — a top horse the stable "keeps back" rather than uses this time).
-4. Pair the first unskipped mare with the first unskipped stallion, then the second with the second,
-   and so on, until either list runs out or `max_pairs_per_cycle` pairings have been made.
+4. Pair mares with stallions, **walking the mare list once and taking stallions round-robin**: the
+   first unskipped mare goes to the best unskipped stallion, the second mare to the second-best, and
+   when the stallion list runs out it starts again from the top. Stop at `max_pairs_per_cycle`.
 5. Skip a pairing outright if its coefficient of inbreeding exceeds `coi_warn_threshold` (the same
    number a player sees a warning at, reused rather than inventing a second threshold) — an NPC
-   stable does not need to see the warning to act on it; it just never proposes the pairing.
+   stable does not need to see the warning to act on it; it just never proposes the pairing. Move
+   down to the next stallion in the rotation and try again; if every stallion is exhausted for that
+   mare, she sits the cycle out.
+
+**Why round-robin rather than strict rank-for-rank pairing.** A mare can only carry one pregnancy,
+so she is used at most once per cycle — but a stallion covers many mares, which is both how real
+breeding works and the only way a stable with one good stallion and eight mares gets to use him.
+Strict first-with-first pairing would silently cap every stable at `min(mares, stallions)` foals per
+cycle regardless of `max_pairs_per_cycle`, and a stable that loses its second stallion to old age
+would quietly halve its output for reasons nothing on screen explains. Round-robin also spreads the
+load rather than funnelling every foal through one sire, which matters given §3.3.
 
 **`max_pairs_per_cycle` is a genuinely new parameter**, not in the schema document's sketch of
 `npc_policy`. It exists because §2.6 needs a hard bound on how fast a stable's population can grow
@@ -174,42 +201,86 @@ selection at all", §10c) and a shorter `breeding_interval_game_days` (a volume 
 often, just worse). No code branches on personality; the same function produces every stable's
 behaviour from its own row's numbers.
 
-### 2.4 The ceiling clamps expressed trait values before scoring, never the horse itself
+### 2.4 The ceiling clamps each trait's own quality, before the weighted average
 
 §10d: "make NPC improvement bounded and externally scheduled rather than emergent. Define a ceiling
 parameter that rises on a fixed schedule and cap NPC stock against it."
 
-**Decided: the ceiling clamps each expressed trait value at `ceiling` before it is handed to
-`scoreEntry` / `scoreAbilityEntry` for ranking — never the aggregate score, and never anything
-stored on the horse or shown on its page.** A horse whose true expressed hock-set is 94 and a
-ceiling of 80 reads, *to its own stable's selection policy only*, as if it were 80. Two consequences,
-both intended:
+The thing being capped has to be *quality on a trait*, and quality means different things to the two
+scorers. For a conformation trait, quality is closeness to the breed's target — the Quarter Horse
+wants a neck at 55, a shoulder at 70, a back at 35 and a hock at 50
+(`migrations/0035_seed_qh_ideal_vector.sql`), and a horse at 95 on any of them is not excellent, it
+is wrong. For an ability trait, quality is simply the expressed value: higher is better, always
+(`TRAIT_DIRECTION`, `src/engines/conformation/traits.ts`).
 
-- **The horse itself is unaffected.** Its real expressed values, its show performance if it somehow
-  ends up in a class, its genotype, its offspring's inheritance — none of it goes through the
-  ceiling. Only the breeding *decision* does.
+**Decided: the ceiling clamps each trait's own quality score before the weighted average, using the
+per-trait breakdown the scorers already return — never the aggregate, and never anything stored on
+the horse or shown on its page.**
+
+- **Conformation.** `scoreEntry` returns `traits[]` with a `traitScore` per trait
+  (`max(0, 100 - distance * falloff)`, 0–100, higher = closer to the breed's target) and the
+  `weight` it used. The policy's score for a horse is
+  `Σ(weight × min(traitScore, conformation_ceiling)) / weightSum`, taking `weightSum` from the same
+  result. With the falloff at its configured 2.0, a ceiling of 76 means every horse within twelve
+  points of target on a trait reads identically on that trait, and anything further out is still
+  ranked honestly.
+- **Ability.** `scoreAbilityEntry` returns `traits[]` with `expressed` and `weight`. The policy's
+  score is `Σ(weight × min(expressed, ability_ceiling)) / weightSum` from the same result.
+
+Both re-aggregate using the weights the scorer itself computed, so a retune of a judge's weights, a
+breed's ideal vector, a discipline's ability weights or the falloff flows straight through — §2.2's
+"one formula" rule survives intact. `weightSum` of zero (a breed with no ideal vector) scores 0, the
+same guard both scorers already have.
+
+Two consequences, both intended:
+
+- **The horse itself is unaffected.** Its real expressed values, its show performance if it ends up
+  in a class, its genotype, its offspring's inheritance — none of it goes through the ceiling. Only
+  the breeding *decision* does.
 - **The ceiling stops concentration, not excellence.** An NPC stable can still produce, by ordinary
   genetic variance, a foal better than its ceiling — it just never systematically breeds *for* that
-  tail once every trait involved has cleared the ceiling, because from the policy's point of view
-  every horse at or above it looks identical. This is the honest translation of "cap NPC stock"
-  into something that doesn't require deleting or refusing to store a horse that happens to be very
-  good, which would be a strange thing for a database of real animals to do.
+  tail once a trait has cleared the ceiling, because from the policy's point of view every horse at
+  or above it looks identical on that trait. This is the honest translation of "cap NPC stock" into
+  something that doesn't require deleting or refusing to store a horse that happens to be very good,
+  which would be a strange thing for a database of real animals to do.
 
-A single global schedule, not per-personality and not per-tier (§2.7 explains why tiers don't apply
-yet): `npc_ceiling_schedule(game_day_from, ceiling_value)`. The applicable ceiling at a given
-`game_day` is the value on the row with the largest `game_day_from <= game_day`. Read fresh every
-cycle — **never snapshotted onto `npc_policy`** (`CLAUDE.md` §5.5's live-tunable half, not the
-snapshotted half: the ceiling is supposed to move under a stable that never changes anything about
-itself).
+A single global schedule, not per-personality and not per-tier (§2.8 explains why tiers don't apply
+yet), carrying one value for each of the two quantities:
+`npc_ceiling_schedule(game_day_from, conformation_ceiling, ability_ceiling)`. Two columns rather
+than one because the two quantities sit on different scales in practice — slice 0013 §4.3 records
+conformation raw scores landing around 70–85 and ability scores around 40–70, so a single number
+would either never bind on one kind or crush the other. The applicable row at a given `game_day` is
+the one with the largest `game_day_from <= game_day`. Read fresh every cycle — **never snapshotted
+onto `npc_policy`** (`CLAUDE.md` §5.5's live-tunable half, not the snapshotted half: the ceiling is
+supposed to move under a stable that never changes anything about itself).
 
-### 2.5 An NPC stable respects the same debt rule a player does
+### 2.5 An NPC stable pays no board, and the debt rule still applies
 
-`canTakeOnCost(stable.balance)` already blocks a player from booking a covering while in debt (slice
-0009 §4.6, `validateBooking`). **The NPC breeding stage checks it too, per stable, before proposing
-any pairing that cycle.** An NPC stable whose balance has drifted negative (§12.1 explains how that
-can happen) simply stops growing until it recovers — the identical lever a player has, applied
-consistently. No special-casing "NPC stables don't really have money" — they do, it's a real column,
-and `CLAUDE.md` §13 says there is no parallel path.
+`chargeUpkeep` (`src/db/upkeep.ts`) currently charges every `active` stable, NPC or not, at
+`upkeep_per_horse_per_game_day` (2) per barn horse per game day. An NPC stable has no income except
+show prize money and no way to respond to a bill, so this is a one-way ratchet: Fair Meadow's
+balance today is deeply negative for no reason anyone chose, and a freshly founded stable stocked
+with a dozen horses would be at −24 by its very next tick.
+
+That matters because `canTakeOnCost(balance)` is `balance >= 0`, and this slice checks it (below).
+Left as is, the two new stables in §5.3 would never book a single covering in their lives.
+
+**Decided: `chargeUpkeep` skips `is_npc = 1` stables.** Upkeep exists to make a player choose
+between more horses and more money. Nobody is playing an NPC stable, so the charge models no
+decision — its only effect is to silently switch the stable off. This is the same exemption and the
+same reasoning `noticeCareDue` already applies to NPC farrier and vet timers (slice 0013 §2.6),
+which is why it belongs in the same category rather than reading as a special case invented here.
+`CLAUDE.md` §13's no-parallel-path rule is about *scoring*, and scoring is untouched.
+
+**The debt check stays anyway.** §4.2 skips a stable whose `canTakeOnCost` is false, per cycle,
+before proposing any pairing. With upkeep exempted it will effectively never fire today — but it
+costs one comparison, it keeps the rule identical to a player's, and the moment a later slice moves
+real money onto an NPC stable (stud fees, sales — §3.2) it is already correct. Removing it and
+re-adding it later is how two paths start to drift.
+
+A migration brings every existing NPC stable's balance back to 0 — as a paired `adjustment` ledger
+row plus the balance write, never a bare `UPDATE stables SET balance`, so `src/db/ledger.ts`'s
+balance-equals-sum-of-ledger invariant survives. See §5.4.
 
 ### 2.6 Population is bounded by capacity, not by a culling mechanism that does not exist yet
 
@@ -221,20 +292,45 @@ forever.
 **Decided: an NPC stable simply stops making breeding decisions for a cycle once its living headcount
 is at or above `capacity`.** No forced retirement, no culling code, no new table. This is cheap,
 correct, and entirely consistent with how `capacity` already works everywhere else in this game (a
-player who runs out of stalls stops being offered more horses, they aren't taken from them). Set each
-new stable's `capacity` with real headroom above what its `max_pairs_per_cycle` /
+player who runs out of stalls stops being offered more horses, they aren't taken from them).
+
+The check is once per cycle, up front, rather than per pairing — so a stable one under capacity can
+finish a cycle several over it, once `max_pairs_per_cycle` coverings resolve and one of them throws
+twins. That is fine and deliberate: the cap is there to stop unbounded growth, not to be exact, and
+tightening it to a per-pairing check would mean re-counting headcount between bookings for no gain.
+Set each new stable's `capacity` with real headroom above what its `max_pairs_per_cycle` /
 `breeding_interval_game_days` can plausibly reach in the time between now and whenever the operator
 next revisits it — this is a number to watch, not a number to get exactly right on the first attempt
 (§12.2).
 
-### 2.7 No tier matching yet — every NPC stable is eligible for the one show tier that exists
+### 2.7 An NPC-bred foal is named at birth, from its breeder stable's own prefix
+
+A prefix is "a stable's permanent mark, stamped onto the registered name of every horse it breeds"
+(`CLAUDE.md` §12). For a player that stamping happens when they name the foal; for an NPC stable
+nobody ever will, and within a few cycles every topped-up show field is a column of "Unnamed colt".
+A child reading their own placings against six unnamed horses is the visible failure here, and it
+arrives quietly, months after this ships.
+
+**Decided: when `foalDuePregnancies` foals a pregnancy whose owning stable is `is_npc = 1`, it
+resolves a registered name before writing the foal and binds it on the insert.** The name is the
+stable's own `prefix` plus a name part drawn from `generateFoundingName`'s existing word list
+(`src/engines/founding/names.ts`), seeded from the foal's own `foal_rng_seed` and walked forward on
+a collision exactly the way `resolveUniqueBarnName` in `src/db/npc.ts` already walks it. Only the
+`namePart` is used — `generateFoundingName`'s `originPrefix` is a *founding origin* code meaning
+"imported from", and stamping it on a horse a stable bred itself would say something false.
+
+A player's foal is untouched: still born with `registered_name = NULL`, still named by whoever owns
+it. The only change to `buildFoalInsertStatements` is one optional `registeredName` input defaulting
+to null, so every existing caller keeps producing exactly today's row.
+
+### 2.8 No tier matching yet — every NPC stable is eligible for the one show tier that exists
 
 Overview §10e and schema §9.2 both assume `local` / `regional` / `national` tiers are in active use.
 `shows.tier` exists as a column and a `CHECK` constraint, but `src/db/shows.ts`'s `createDueShows`
 only ever creates `local` shows today — regional and national are schema, not gameplay. Building
 tier-matched NPC ceilings now would be tuning a lever that does nothing yet.
 
-**Decided: `npc_ceiling_schedule` has no `tier` column, and the show-field top-up in §4.3 draws from
+**Decided: `npc_ceiling_schedule` has no `tier` column, and the show-field top-up in §7.1 draws from
 every NPC stable regardless of tier.** When a later slice actually creates regional/national shows,
 that is the point to add tiering to both tables — a column addition and a `WHERE`, not a redesign.
 This departs from schema §9.2's literal shape; noted here per `CLAUDE.md` §2, and again in §13.
@@ -261,10 +357,11 @@ Because breeding stays same-stable-only (see "what already exists," above), **ea
 breeds only with itself, forever, unless an admin manually adds outcross stock.** Left alone across
 enough real-world months, an NPC stable's own COI will climb exactly the way overview §10a warns a
 five-player pool's will — the mechanism this slice is building has the identical failure mode it
-exists partly to solve for players, just one level removed.
+exists partly to solve for players, just one level removed. §2.3's round-robin stallion rotation
+slows this down a little by not funnelling every foal through one sire; it does not fix it.
 
 **This is a real, known limitation, not an oversight.** The mitigation available today is the
-existing `stockShowBarn`-style admin control (§4.5, generalised to target any NPC stable), used
+existing `stockShowBarn`-style admin control (§7.3, generalised to target any NPC stable), used
 occasionally the same way a parent grants a founding batch — an outcross injection, by hand, on no
 particular schedule. The real fix — NPC stallions standing at stud, or NPC-to-NPC sales — is §3.2's
 job, and whoever builds it should know this slice's stables are exactly the sort of closed line that
@@ -272,11 +369,11 @@ will make that mechanism valuable the moment it exists.
 
 ### 3.4 Tiered shows, tier-matched ceilings
 
-§2.7.
+§2.8.
 
 ### 3.5 Any change to how a player enters, sees, or is scored in a show
 
-The top-up in §4.3 changes *where the candidate pool is drawn from*. It does not touch eligibility,
+The top-up in §7.1 changes *where the candidate pool is drawn from*. It does not touch eligibility,
 scoring, prizes, or the explanation page. A player who has never heard of this slice sees no
 difference except, over time, a harder field.
 
@@ -305,24 +402,26 @@ export interface SelectionTarget {
   /** breeds.ideal_vector (parsed) for a conformation personality, or disciplines.ability_weights
    * (parsed) for a discipline personality. The caller resolves which; this engine just scores. */
   kind: 'conformation' | 'ability';
-  ideal?: IdealVector;       // kind === 'conformation'
-  weights?: AbilityWeights;  // kind === 'ability'
-  falloff?: number;          // kind === 'conformation', mirrors show_ideal_falloff
-  judgeWeights?: JudgeWeights; // kind === 'conformation'; 1.0 for every trait - no judge involved
+  ideal?: IdealVector;         // kind === 'conformation'
+  weights?: AbilityWeights;    // kind === 'ability'
+  falloff?: number;            // kind === 'conformation', mirrors show_ideal_falloff
+  judgeWeights?: JudgeWeights; // kind === 'conformation'; {} - no judge involved, so every
+                               // trait takes scoreEntry's own 1.0 default
 }
 
 export interface SelectionPolicyParams {
   mares: BreedingCandidate[];
   stallions: BreedingCandidate[];
   target: SelectionTarget;
-  ceiling: number;              // §2.4's clamp, applied per trait before scoring
+  /** §2.4's clamp. Whichever of the two applies is chosen by target.kind; the caller passes the
+   * one it needs, read from the active npc_ceiling_schedule row. */
+  ceiling: number;
   selectionNoiseSd: number;
-  retentionBias: number;        // 0..1
+  retentionBias: number;       // 0..1
   maxPairs: number;
-  /** Pairs already ruled out on COI grounds - {mareId, stallionId} keyed, built by the caller from
-   * loadPedigreeContext + coefficientOfInbreeding (§2.3 step 5). The engine stays pure: it consumes
-   * a precomputed COI-over-threshold set rather than walking pedigrees itself. */
-  coiExceeded: Set<string>;     // `${mareId}:${stallionId}`
+  /** Pairs ruled out on COI grounds - `${mareId}:${stallionId}` keyed, built by the caller (§4.2
+   * step 7). The engine stays pure: it consumes a precomputed set rather than walking pedigrees. */
+  coiExceeded: Set<string>;
   seed: number;
 }
 
@@ -333,9 +432,15 @@ export interface SelectionResult {
 export function selectBreedingPairs(params: SelectionPolicyParams): SelectionResult;
 ```
 
-`selectBreedingPairs` does exactly §2.3's five steps: clamp, score (via `scoreEntry`/
-`scoreAbilityEntry` imported from the showing engines, `noise: 0`), perturb, sort, walk with
-`retentionBias`, pair, skip anything in `coiExceeded`, stop at `maxPairs`.
+`selectBreedingPairs` does exactly §2.3's five steps: score each candidate through
+`scoreEntry`/`scoreAbilityEntry` (imported from the showing engines, `noise: 0`), clamp and
+re-aggregate its per-trait breakdown per §2.4, perturb, sort, walk each list applying
+`retentionBias`, then pair mares against a round-robin rotation of stallions, skipping anything in
+`coiExceeded` and stopping at `maxPairs`.
+
+A small exported helper, `clampedScore(result, ceiling, kind)`, does §2.4's re-aggregation from a
+`ScoreResult` or `AbilityScoreResult`. It is exported so §9's test 3 can assert the clamp directly
+rather than only through a pairing outcome.
 
 ### 4.2 What the caller does, and which existing functions it reuses rather than re-derives
 
@@ -344,23 +449,29 @@ New file, `src/db/npcBreeding.ts`. Not pure — this is the database layer §4.1
 For each `npc_policy` row, in one pass:
 
 1. Skip the stable if `gameDay - last_bred_game_day < breeding_interval_game_days` (idempotency —
-   see §5.2).
+   see §6.3).
 2. Skip if `!canTakeOnCost(stable.balance)` (§2.5).
 3. Skip if `countAliveHorses(env, stableId) >= stable.capacity` (§2.6).
-4. Load the stable's horses (`listStableHorses`), filter to eligible mares/stallions using the
-   **same** predicates `validateBooking` applies — `min_breeding_age_game_days`,
-   `mare_recovery_game_days`, `isInBreedingSeason`, `availabilityForHorse`, and a check against
-   `getActivePregnancyForMare` / `getBookedCoveringForMare` for each mare. These are already
-   separate, mostly-pure functions (`src/engines/breeding/season.ts`'s `isInBreedingSeason`,
-   `src/db/care.ts`'s `availabilityForHorse`) — reused here directly, not copied. If a future
-   session changes an eligibility rule in one place, both a player's booking screen and NPC
-   breeding pick it up.
+4. Load the stable's horses (`listStableHorses`, which is already alive-only), filter to eligible
+   mares/stallions using the **same** predicates `validateBooking` applies —
+   `min_breeding_age_game_days`, `mare_recovery_game_days`, `isInBreedingSeason`,
+   `availabilityForHorse`, and a check against `getActivePregnancyForMare` /
+   `getBookedCoveringForMare` for each mare. These are already separate, mostly-pure functions
+   (`src/engines/breeding/season.ts`'s `isInBreedingSeason`, `src/db/care.ts`'s
+   `availabilityForHorse`) — reused here directly, not copied. If a future session changes an
+   eligibility rule in one place, both a player's booking screen and NPC breeding pick it up.
 5. Compute `expressed` for every eligible horse via `conformationValues` / `abilityValues`
    (`src/engines/conformation/model.ts`), matching whichever the policy's `target_kind` needs.
-6. Resolve the ceiling from `npc_ceiling_schedule` (§2.4).
-7. Build the `coiExceeded` set: for every candidate mare×stallion pair, `loadPedigreeContext` +
-   `coefficientOfInbreeding` (both already exist, from `src/db/horses.ts` /
-   `src/engines/genetics/pedigree.ts`), flag any pair over `coi_warn_threshold`.
+6. Resolve the active `npc_ceiling_schedule` row (§2.4) and take the column matching `target_kind`.
+7. Build the `coiExceeded` set. **Load the pedigree context once for the whole candidate set, then
+   compute every pair in memory.** `loadPedigreeContext` costs two queries per call, so calling it
+   per pair would be roughly `2 × mares × stallions` D1 round trips — on a 40-horse stable that is
+   several hundred queries per cycle, which is a subrequest problem long before it is a CPU one.
+   Instead: one new `loadPedigreeContextForMany(env, horseIds)` in `src/db/horses.ts`, generalising
+   `loadPedigreeContext`'s existing two-query shape (one `SELECT DISTINCT ancestor_id ... WHERE
+   descendant_id IN (...)`, then one `SELECT id, sire_id, dam_id, coi ... WHERE id IN (...)`) from
+   two horses to N. `coefficientOfInbreeding` is pure and memoised internally, so every pair after
+   that is free.
 8. Call `selectBreedingPairs`.
 9. For each returned pair, call the **existing** `bookCovering` (`src/db/coverings.ts`) — unchanged,
    no new parameter. The covering resolves on a later tick exactly like a player's, through
@@ -370,9 +481,10 @@ For each `npc_policy` row, in one pass:
     any pairs — a stable with no eligible stock this cycle still shouldn't be re-evaluated until its
     next interval.
 
-Steps 4–9 run per stable; three stables at launch (§2.1) means this whole stage touches a handful of
-rows per tick it actually fires on, nowhere near the CPU ceiling `CLAUDE.md` §3 warns about. Revisit
-if the roster grows into the dozens overview §10h anticipates at full scale.
+Steps 4–9 run per stable; three stables at launch (§2.1) means this whole stage makes a bounded
+handful of queries per tick it actually fires on, with step 7's batched load being the one place
+that would have gone quadratic. Revisit if the roster grows into the dozens overview §10h
+anticipates at full scale.
 
 ---
 
@@ -393,8 +505,8 @@ CREATE TABLE npc_policy (
   stable_id INTEGER PRIMARY KEY REFERENCES stables(id),
   personality_code TEXT NOT NULL,          -- display/reasoning label only, e.g. 'conformation_specialist'
   target_kind TEXT NOT NULL CHECK (target_kind IN ('conformation', 'ability')),
-  target_breed_id INTEGER REFERENCES breeds(id),       -- set when target_kind = 'conformation'
-  target_discipline_code TEXT REFERENCES disciplines(code), -- set when target_kind = 'ability'
+  target_breed_id INTEGER REFERENCES breeds(id),            -- set when target_kind = 'conformation'
+  target_discipline_code TEXT REFERENCES disciplines(code),  -- set when target_kind = 'ability'
   selection_noise_sd REAL NOT NULL,
   retention_bias REAL NOT NULL,
   breeding_interval_game_days INTEGER NOT NULL,
@@ -407,20 +519,25 @@ CREATE TABLE npc_policy (
 );
 ```
 
-No `quality_ceiling` column — §2.4 reads it fresh from `npc_ceiling_schedule` every cycle, never
-caches it. This is the one deliberate departure from schema §9.1's sketch; see §13.
+`disciplines.code` is already `UNIQUE` (`migrations/0062_disciplines.sql`), so the foreign key is
+valid as written. No `quality_ceiling` column — §2.4 reads it fresh from `npc_ceiling_schedule`
+every cycle, never caches it. This is the one deliberate departure from schema §9.1's sketch; see
+§13.
 
 ### 5.2 `npc_ceiling_schedule`
 
 ```sql
 -- The externally-scheduled cap overview §10d calls "the single most important thing... to keep
--- adjustable" (schema §9.2). No tier column - see slice 0015 §2.7; add one when regional/national
--- shows are real. Applicable ceiling at a given game_day = the row with the largest
--- game_day_from <= game_day.
+-- adjustable" (schema §9.2). Two ceilings, not one: a conformation trait's quality is its
+-- traitScore (closeness to the breed's target) and an ability trait's is its expressed value, and
+-- those two sit on different scales in practice - slice 0015 §2.4. No tier column - see §2.8; add
+-- one when regional/national shows are real. Applicable row at a given game_day = the one with the
+-- largest game_day_from <= game_day.
 CREATE TABLE npc_ceiling_schedule (
   id INTEGER PRIMARY KEY,
   game_day_from INTEGER NOT NULL,
-  ceiling_value REAL NOT NULL
+  conformation_ceiling REAL NOT NULL,
+  ability_ceiling REAL NOT NULL
 );
 CREATE INDEX idx_npc_ceiling_schedule_game_day_from ON npc_ceiling_schedule (game_day_from);
 ```
@@ -428,30 +545,33 @@ CREATE INDEX idx_npc_ceiling_schedule_game_day_from ON npc_ceiling_schedule (gam
 Starter rows, seeded by a follow-up migration — **illustrative, expect to retune (§12.3)**:
 
 ```sql
-INSERT INTO npc_ceiling_schedule (game_day_from, ceiling_value) VALUES
-  (0,    70),
-  (1080, 74),  -- +3 game years
-  (2160, 78),
-  (3240, 82);
+INSERT INTO npc_ceiling_schedule (game_day_from, conformation_ceiling, ability_ceiling) VALUES
+  (0,    76, 52),
+  (1080, 80, 56),  -- +3 game years
+  (2160, 84, 60),
+  (3240, 88, 64);
 ```
 
 Reasoning for the starting shape: slice 0013 §4.3 records observed conformation raw scores landing
-"around 70–85." Opening the ceiling at 70 means an NPC stable's selection can already tell apart
-ordinary variation but cannot preferentially chase the top of that band from day one — a player's
-own careful breeding should be able to beat an NPC stable early, which is the whole point (overview
-§10d). The schedule rises modestly every few game years; there is nothing principled about these
-exact numbers beyond that shape, and §12.3 says so again.
+"around 70–85" and ability scores "around 40–70", and both ceilings are on those same 0–100 scales
+(§2.4). Opening at 76 and 52 means an NPC stable's selection can already tell ordinary stock apart
+but cannot preferentially chase the top of the observed band from day one — a player's own careful
+breeding should be able to beat an NPC stable early, which is the whole point (overview §10d). The
+schedule rises modestly every few game years; there is nothing principled about these exact numbers
+beyond that shape, and §12.3 says so again. §7.3 makes them editable from the browser precisely
+because the first guess will be wrong.
 
-### 5.3 A follow-up migration: three `stables` rows and their `npc_policy` rows
+### 5.3 A follow-up migration: two `stables` rows and three `npc_policy` rows
 
 Same pattern as `migrations/0040_npc_show_barn.sql` — a `stables` row, its
 `stable_prefix_history` row, and (new) its `npc_policy` row, inserted together. Cedar Hollow and
-Willow Creek Barrels start with zero horses; an admin stocks them via §4.5's generalised control
-after this migration lands, the same way Fair Meadow was originally populated by hand.
+Willow Creek Barrels start with zero horses; an admin stocks them via §7.3's outcross control after
+this migration lands, the same way Fair Meadow was originally populated by hand. Fair Meadow gets an
+`npc_policy` row and nothing else.
 
 ```sql
 -- Cedar Hollow: conformation specialist (slice 0015 §2.1). Low noise, modest pace, targets the
--- Quarter Horse ideal vector - the only breed with one (§2.1's table).
+-- Quarter Horse ideal vector - the only breed with one (§2.1).
 INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
 VALUES (NULL, 'Cedar Hollow', 'Cedar Hollow', 0, 1, 1, 0, 40, (SELECT game_day FROM world WHERE id = 1), unixepoch(), 1);
 
@@ -468,18 +588,37 @@ VALUES (
 
 -- ...Willow Creek Barrels (target_kind = 'ability', target_discipline_code = 'barrels') and Fair
 -- Meadow's own npc_policy row (personality_code = 'volume_breeder', selection_noise_sd high,
--- breeding_interval_game_days short) follow the identical shape.
+-- breeding_interval_game_days short) follow the identical shape. Fair Meadow's row selects its
+-- existing stable by prefix rather than inserting one.
 ```
 
-### 5.4 What is *not* added, and where this departs from the schema document
+Balance starts at 0 and stays there, because §2.5 exempts NPC stables from board. Prize money is
+the only thing that ever moves it, upward.
+
+### 5.4 The upkeep exemption and the one-off balance correction
+
+Two small changes, one migration and one line of SQL in code:
+
+- `chargeUpkeep` (`src/db/upkeep.ts:31`) selects `WHERE active = 1`; it becomes
+  `WHERE active = 1 AND is_npc = 0`. Nothing else in that function changes — an NPC stable's
+  `last_upkeep_game_day` simply stops advancing, and nothing reads it for a stable that is never
+  charged.
+- A migration zeroes every existing NPC stable's balance, writing a matching `adjustment` row into
+  `ledger` in the same statement pair so `src/db/ledger.ts`'s balance-equals-sum-of-ledger invariant
+  holds. `'adjustment'` is already in `ledger.kind`'s `CHECK`
+  (`migrations/0070_ledger_add_farrier_kind.sql:12`). Describe it in plain English on the ledger row
+  — the operator will see it on `/stables/:id/money` if they ever look at an NPC stable.
+
+### 5.5 What is *not* added, and where this departs from the schema document
 
 | Schema document says | Built here | Why |
 |---|---|---|
 | `stables.npc_personality` (JSON) | Nothing — lives on `npc_policy` instead | One place for the weights, matching where the rest of a policy already lives (§9.1's own `selection_weights`) rather than splitting it across two tables |
-| `stables.npc_tier` | Nothing | §2.7 — no tier-aware gameplay exists yet |
+| `stables.npc_tier` | Nothing | §2.8 — no tier-aware gameplay exists yet |
 | `npc_policy.selection_weights` (a free JSON weights vector) | `target_kind` / `target_breed_id` / `target_discipline_code` | §2.2 — the weights already exist, on `breeds.ideal_vector` / `disciplines.ability_weights`. A second copy would drift the moment either is retuned |
 | `npc_policy.quality_ceiling` | Nothing — read live from `npc_ceiling_schedule` | §2.4/§5.1 |
-| `npc_ceiling_schedule.tier` | Nothing | §2.7 |
+| `npc_ceiling_schedule.tier` | Nothing | §2.8 |
+| `npc_ceiling_schedule` with one ceiling value | Two, `conformation_ceiling` and `ability_ceiling` | §2.4 — the two personality kinds cap different quantities on different scales |
 
 ---
 
@@ -518,11 +657,11 @@ simply finds more stables past their interval than usual and processes all of th
 the stage's logic assumes ticks arrive on a fixed cadence.
 
 **One subtlety worth stating plainly:** if a stable's `breeding_interval_game_days` is shorter than
-the gap between two ticks (a paused world resuming after a long gap, or a deliberate time jump, per
-`CLAUDE.md` §6b), the stable does **not** get to breed multiple times to "catch up" — it breeds once,
-for whatever it's eligible for on this tick, and the marker jumps straight to the current `game_day`.
-This mirrors how `chargeUpkeep` already derives its charge from `newGameDay - lastGameDay` rather
-than looping — the tick advancing further than usual is not a licence to run a stage more than once.
+the gap between two ticks (a paused world resuming after a long gap, or a deliberate time jump), the
+stable does **not** get to breed multiple times to "catch up" — it breeds once, for whatever it's
+eligible for on this tick, and the marker jumps straight to the current `game_day`. This mirrors how
+`chargeUpkeep` already derives its charge from `newGameDay - lastGameDay` rather than looping — the
+tick advancing further than usual is not a licence to run a stage more than once.
 
 ---
 
@@ -532,36 +671,74 @@ than looping — the tick advancing further than usual is not a licence to run a
 
 `src/db/shows.ts`'s `judgeOneClass` currently calls `getShowBarnStable(env)` and draws only from
 that one stable. Replace with a query over every `is_npc = 1` stable's alive horses (a new
-`listNpcStableIds` or an inline `IN (SELECT id FROM stables WHERE is_npc = 1)`), leaving everything
-else in that function — the shuffle, the eligibility check, the "never top up a class no player
-entered" rule — untouched. This is the only change this slice makes to `src/db/shows.ts`.
+`listNpcStableHorses` or an inline `IN (SELECT id FROM stables WHERE is_npc = 1)`), leaving
+everything else in that function — the shuffle, the eligibility check, the `is_npc = 1` flag on the
+resulting `show_entries` row, and the "never top up a class no player entered" rule — untouched.
+This is the only change this slice makes to `src/db/shows.ts`.
 
-### 7.2 `/admin/npc` — a new admin subpage
+### 7.2 Naming an NPC-bred foal
 
-In the pattern of `/admin/health`, `/admin/ageing`, `/admin/care`: read-only except for two controls.
+`foalDuePregnancies` (`src/db/pregnancies.ts`) already loads the owning stable before building the
+foal's statements (`getStableById`, line 142) and already passes `ownerStable.prefix` in as
+`breederPrefix`. When that stable's `is_npc` is 1, resolve a unique registered name first (§2.7) and
+pass it as the new optional `registeredName` on `FoalInsertInput`; `buildFoalInsertStatements` binds
+it instead of `NULL`. `horses.registered_name` is `UNIQUE COLLATE NOCASE`
+(`migrations/0012_horses.sql:10`), which is why the collision walk is not optional.
+
+The resolver belongs next to `resolveUniqueBarnName` in `src/db/npc.ts`, generalised to take a
+prefix rather than always producing a founding-origin name.
+
+### 7.3 `/admin/npc` — a new admin subpage
+
+In the pattern of `/admin/health`, `/admin/ageing`, `/admin/care`: read-only except for three
+controls.
 
 - **Per NPC stable:** personality, current headcount vs. capacity, last bred game day, next cycle
   due, and how many pairs its last cycle actually booked.
-- **The ceiling schedule**, rendered as a small table with the currently-active row highlighted.
+- **The ceiling schedule**, as a small table with the currently-active row highlighted.
+- **Control: edit the ceiling schedule.** Add a row, or change an existing row's two ceiling values
+  and `game_day_from`. §1 and §2.4 promise a schedule the operator can move without a deploy, and
+  the operator has no terminal and no SQL console (`CLAUDE.md` §1) — this control is the whole of
+  that promise. Follow `/admin/config`'s existing form-over-a-table shape; `CLAUDE.md` §13 is
+  explicit that a plain form is sufficient here.
 - **Control: "Found a new NPC stable."** A form over `personality_code`, `target_kind` +
   breed/discipline, and the four policy numbers — the admin equivalent of §5.3's migration, so a
   fourth or fifth stable (§2.1's deferred personalities, once warranted) doesn't need a deploy to
-  add.
+  add. It writes the `stables` row, its `stable_prefix_history` row and its `npc_policy` row in one
+  batch, and must refuse a prefix already in use — `stables.prefix` is `UNIQUE COLLATE NOCASE`, and
+  a raw constraint error is not something the operator can act on.
 - **Control: "Add an outcross batch."** The generalised form of `stockShowBarn` (§3.3) — pick an NPC
-  stable and a quality band, mint N founding-generator horses straight into it. This is the only
+  stable, a breed, and a quality band, and mint N founding-generator horses straight into it.
+  `stockShowBarn` currently hardcodes both the stable and the Quarter Horse; both become parameters.
+  The breed is a picker rather than inferred, because an `ability` policy row carries no breed to
+  infer from — default it to the policy's `target_breed_id` where there is one, and to the Quarter
+  Horse otherwise, since it is the only breed with an ideal vector today (§2.1). This is the only
   place new genetic material enters an NPC stable's closed population, and it should say so on
   screen.
 
-Add it to the admin nav in `src/render/layout.ts` alongside the others.
+Add it to the admin nav in `src/render/admin.ts` (the `{ label, href, active }` list around line 47,
+plus the button list below it) alongside the others.
 
-### 7.3 `src/db/reset.ts`
+### 7.4 `src/db/reset.ts`
 
-Confirm rather than assume (`CLAUDE.md` §7, and the same instruction slice 0013 §8.6 gives): a full
-world reset already does a blanket `DELETE FROM stables`, which cascades to `npc_policy` via its
-foreign key. Read the file, check the comment block, and add `npc_policy` / `npc_ceiling_schedule` to
-whatever explicit table list exists if reset does not already handle new tables generically. Fair
-Meadow's re-seeding after a reset is already documented there (`src/db/reset.ts:137`) — the two new
-stables need the identical treatment.
+`RESET_TABLES` is an explicit, ordered, typed list — children before parents — not a generic sweep,
+so both new tables need a deliberate decision rather than an addition by default:
+
+- **`npc_policy` goes into `WORLD_ONLY_TABLES`, before `stables`** (it has a real foreign key into
+  it, the same reason `stable_prefix_history` and `ledger` are already there). It also needs an
+  entry in `RESET_TABLE_LABELS` — that map is a `Record` over the table union and will not compile
+  without one. Plain-English label, per that map's own comment: the operator does not read table
+  names.
+- **`npc_ceiling_schedule` does not go in at all.** It is reference data seeded by a migration that
+  only ever runs once — the same category as `breeds`, `loci`, `judges`, `conditions` and
+  `disciplines`, which that file's header comment already lists as "clearing these would break the
+  game with no way back from the browser." Add it to that comment's list rather than to
+  `RESET_TABLES`.
+- **The world-reset re-seed block grows.** A full reset already re-inserts Fair Meadow and its
+  prefix row after the blanket `DELETE FROM stables` (`src/db/reset.ts:137` onward), because the
+  migration that created it will never run again. Cedar Hollow and Willow Creek Barrels need the
+  identical treatment, **and all three need their `npc_policy` rows re-inserted too** — without
+  that, every NPC stable comes back after a reset and none of them ever breeds again.
 
 ---
 
@@ -569,25 +746,30 @@ stables need the identical treatment.
 
 Every random draw in this slice goes through the shared PRNG (`CLAUDE.md` §5.2):
 
-- **Selection noise** (§2.3 step 2) derives from the NPC stable's own seed material and the current
-  `game_day` — `deriveSeed` chained the same way `resolveDueCoverings` already derives sub-seeds from
-  a covering's own `rng_seed`. Two ticks with the same stable, same stock, same `game_day` produce
-  the identical ranking.
+- **Selection noise** (§2.3 step 2) derives from the NPC stable's own id and the current `game_day` —
+  `deriveSeed` chained the same way `resolveDueCoverings` already derives sub-seeds from a covering's
+  own `rng_seed`. Two ticks with the same stable, same stock, same `game_day` produce the identical
+  ranking.
 - **Retention skips** (§2.3 step 3) derive from the same seed, a different label.
+- **An NPC foal's name** (§2.7) derives from the foal's own `foal_rng_seed`, so the same foal gets
+  the same name however many times the naming step is re-derived, and the collision walk is the
+  existing deterministic `attempt`-based one rather than a fresh draw.
 - **The actual foal** — genotype, environmental noise, twins — is rolled by the *existing*
   `resolveDueCoverings` machinery once the covering is booked, using `randomSeed()` at booking time
   exactly as a player's covering does. Nothing here duplicates or bypasses that.
 
 Nothing in this slice needs a new column to hold a seed: the stable's `id` plus the cycle's
-`game_day` is enough deterministic input for `deriveSeed`, the same way `care`'s tick stage needed no
-seed at all (slice 0013 §9) because its computation is a pure function of stored state — this one
-differs only in that it *does* draw randomness, so it needs the derivation, not a new stored seed.
+`game_day` is enough deterministic input for `deriveSeed`, and the foal already carries its own.
 
 ---
 
 ## 9. Tests
 
-`test/` — the existing pattern, no database.
+`test/`, following the existing convention: pure engines tested directly, and anything that lives in
+SQL tested as a pure model of the predicate. **There is no D1 mock in this codebase** — 
+`test/ageing/tick.test.ts` and `test/health/lethal.test.ts` both say so in their headers and both
+show the pattern: restate the tick stage's guard as a small function over a fake row, and test that.
+Do the same here rather than reaching for a database.
 
 **The engine (`src/engines/npc/selection.ts`):**
 
@@ -595,29 +777,35 @@ differs only in that it *does* draw randomness, so it needs the derivation, not 
    policy pairs strictly by rank (best mare with best stallion, and so on) — the deterministic
    baseline before noise is introduced.
 2. `retentionBias = 1.0` skips every horse; `selectBreedingPairs` returns no pairs, not an error.
-3. **The ceiling clamp changes ranking, not existence.** Two candidates with true expressed values of
-   70 and 95 against a ceiling of 70 score identically before noise is applied — assert the clamp,
-   not just the final pairing, since a future retune of `scoreEntry` could otherwise silently break
-   this without a pairing-level test noticing.
+3. **The ceiling clamps quality, not magnitude** — assert `clampedScore` directly, not just the
+   final pairing, since a future retune of `scoreEntry` could otherwise silently break this without
+   a pairing-level test noticing. Two cases, and the second is the one that matters:
+   - *Ability:* two candidates expressed at 52 and 95 against `ability_ceiling` 52 score identically.
+   - *Conformation:* against the real Quarter Horse ideal (hock target 50) and
+     `conformation_ceiling` 76, a horse at hock 50 and one at hock 62 score identically on that
+     trait, while a horse at hock 90 scores strictly worse than both. A test that only checked "two
+     high values collapse together" would pass against a clamp on the raw expressed value, which is
+     the wrong quantity — this one fails against it.
 4. A pair in `coiExceeded` is never returned, even when it would otherwise be the top-ranked pairing
-   available.
+   available; the mare falls through to the next stallion in the rotation instead of being dropped.
 5. `maxPairs = 0` returns no pairs regardless of how many eligible horses exist.
-6. Fewer mares than stallions (or vice versa): pairing stops when the shorter list is exhausted, not
-   an error.
+6. **One stallion, several mares:** the stallion is paired with more than one mare, up to `maxPairs`
+   — the round-robin property from §2.3, and the reason strict rank-for-rank pairing was rejected.
+7. No mares, or no stallions: no pairs, not an error.
 
-**The database layer (`src/db/npcBreeding.ts`), against a test D1 instance if the existing test
-harness has one, otherwise integration-style against `wrangler dev --local`:**
+**The tick stage's guards (`src/db/npcBreeding.ts`), as pure predicate models:**
 
-7. A stable at `capacity` is skipped entirely — headcount does not move even one cycle later.
-8. A stable with a negative balance is skipped, per `canTakeOnCost`.
-9. Two ticks fired at the same `game_day` (idempotency): the second produces zero new coverings,
-   because `last_bred_game_day` already matches.
-10. A stable whose interval has not yet elapsed is skipped, and its `last_bred_game_day` does not
-    move.
-11. **The events regression test named explicitly in the "what already exists" section**: an NPC
-    breeding decision that leads to a foal writes zero rows to `events` — assert this directly rather
-    than trusting the existing guard, since it is the one place a bug here would leak into a child's
-    feed.
+8. The due-this-cycle predicate: a stable whose `gameDay - last_bred_game_day` is below its interval
+   is not selected; one at or above it is; a stable with a null marker is (its first cycle).
+9. Run the same predicate twice against the same `game_day` with the marker advanced in between —
+   the second run selects nothing. This is §6.3's idempotency, tested the way
+   `test/ageing/tick.test.ts` tests `killDueOldHorses`'.
+10. The capacity guard and the `canTakeOnCost` guard each exclude a stable on their own.
+
+**One regression test worth writing even though the guard already exists:** `buildEventStatement`
+and its two siblings return `[]` for a null `accountId`, and an NPC stable's `account_id` is always
+null by the `CHECK` on `stables`. Assert it directly — it is the one place a bug here would leak
+into a child's feed, and it costs three lines.
 
 ---
 
@@ -626,23 +814,29 @@ harness has one, otherwise integration-style against `wrangler dev --local`:**
 Against `wrangler dev --local`, after applying migrations and stocking Cedar Hollow and Willow Creek
 Barrels via `/admin/npc`'s outcross control:
 
-1. `/admin/npc` shows three stables, each with a headcount, a next-cycle date, and the active ceiling
-   value from the schedule.
+1. `/admin/npc` shows three stables, each with a headcount, a next-cycle date, and the active
+   ceiling row from the schedule.
 2. Advance the tick past Cedar Hollow's `breeding_interval_game_days`. Its headcount does not change
    yet (a covering was booked, not yet resolved) but `/admin/npc` shows an updated "last bred" date.
 3. Advance ticks until the booked coverings' mares come into season and resolve. Cedar Hollow's
    headcount grows by the number of pairs its policy proposed, capped at `max_pairs_per_cycle`.
-   No event of any kind appears in any player's feed.
-4. Set Cedar Hollow's balance negative via `/admin/money`. Advance past its next interval: headcount
+   Every new foal has a registered name beginning "Cedar Hollow". No event of any kind appears in
+   any player's feed.
+4. Check `/stables/:id/money` for an NPC stable across several ticks: no board charges appear
+   (§2.5), and the balance does not drift negative.
+5. Set Cedar Hollow's balance negative via `/admin/money`. Advance past its next interval: headcount
    does not move. Restore the balance; the next interval, it does.
-5. Manually bring Cedar Hollow to `capacity` (or lower `capacity` via a direct edit for the test).
-   Advance past its interval: no new coverings are booked.
-6. `/shows` → judge a class with one player entry and check the field is topped up with horses from
-   more than one NPC stable's prefix, not only Fair Meadow's.
-7. Advance the tick past a ceiling schedule boundary (or bring one forward via a direct edit) and
-   confirm `/admin/npc` shows the new active ceiling — no deploy required.
-8. Retire or age out enough of Cedar Hollow's stock that its next cycle has fewer than two eligible
-   mares: confirm it books what it can rather than erroring.
+6. Manually bring Cedar Hollow to `capacity` (or lower `capacity` from `/admin/npc`'s founding form's
+   equivalent edit). Advance past its interval: no new coverings are booked.
+7. `/shows` → judge a class with one player entry and check the field is topped up with horses from
+   more than one NPC stable's prefix, not only Fair Meadow's, and that every topped-up horse has a
+   name rather than reading "Unnamed colt".
+8. Edit the ceiling schedule from `/admin/npc` — bring a later row's `game_day_from` back to the
+   current day — and confirm the page shows the new active row. No deploy required.
+9. Give Cedar Hollow one stallion and several eligible mares; confirm a cycle books more than one
+   covering to that same stallion (§2.3's round-robin).
+10. Retire or age out enough of Cedar Hollow's stock that its next cycle has fewer than two eligible
+    mares: confirm it books what it can rather than erroring.
 
 ---
 
@@ -650,74 +844,85 @@ Barrels via `/admin/npc`'s outcross control:
 
 Split at §6 (the tick stage).
 
-**Part A — the engine and the data.** §2.1–§2.4, §4, §5. `selectBreedingPairs` fully tested per §9's
-engine tests. The two new tables exist, seeded, with Fair Meadow's `npc_policy` row in place. Nothing
-calls the engine yet — no behaviour changes for anyone. This half is safe to leave mid-slice
-indefinitely, the same way a pure engine with no caller is safe in every other slice.
+**Part A — the engine and the data.** §2.1–§2.4, §2.8, §4, §5. `selectBreedingPairs` and
+`clampedScore` fully tested per §9's engine tests. The two new tables exist, seeded, with all three
+`npc_policy` rows in place. §5.4's upkeep exemption and balance correction land here too — they are
+independent of the tick stage and they stop the existing show barn's balance getting further from
+zero in the meantime. Nothing calls the selection engine yet — no behaviour changes for anyone
+beyond NPC stables no longer being billed. This half is safe to leave mid-slice indefinitely.
 
-**Part B — wiring it into the tick and the show top-up.** §6, §7. This is the half that changes
-observable behaviour (NPC headcounts grow; show fields draw from more than one stable) and should
-land with §9's database-layer tests and §10's manual verification, not split further.
+**Part B — wiring it into the tick, the naming, and the show top-up.** §2.5's debt check in context,
+§2.6, §2.7, §6, §7. This is the half that changes observable behaviour (NPC headcounts grow; foals
+get names; show fields draw from more than one stable) and should land with §9's predicate-model
+tests and §10's manual verification, not split further.
 
 If Part A ships without Part B, say so in the summary and leave the tick stage un-added — do not
-half-wire it (`CLAUDE.md` §0/CLAUDE.md's general instruction against half-finished implementations).
+half-wire it.
 
 ---
 
 ## 12. Balance risks to watch
 
-### 12.1 An NPC stable's balance has no income of its own
+### 12.1 An NPC stable's balance only ever goes up
 
-Show prize money already pays out generically to whichever stable's horse places (slice 0009), so an
-NPC stable that wins ribbons does earn — but a stable that rarely places (Fair Meadow's noisy, poorly
-selected stock, almost by design) may drift into debt purely from upkeep, per §2.5's rule, and simply
-stop breeding until an admin tops up its balance via `/admin/money`. That is an acceptable outcome
-for this slice — an NPC stable going quiet for a while is not a player-visible problem — but it is
-worth watching, because it means the volume-breeder personality may need periodic manual funding to
-keep doing its job of padding show fields. If that becomes a real chore, the fix is a small
-`npc_starting_balance` or a config-level "NPC upkeep is free" flag — not decided here (§14).
+With board exempted (§2.5), show prize money is the only thing that moves an NPC stable's balance,
+and it moves it upward. That is deliberate — the alternative was a stable that silently switches
+itself off — but it means the balance column stops being informative for NPC stables, and
+`/admin/money` will show three stables slowly accumulating winnings they never spend. Harmless
+today. Worth revisiting the moment §3.2's market gives an NPC stable something to buy, at which
+point "NPC stables don't pay board but do pay for horses" may need a better answer than it has here.
 
 ### 12.2 `capacity` is a guess
 
-40 for the two new stables, chosen the same way Fair Meadow's 200 was — "generous headroom... so
-retuning upward later doesn't also need a capacity bump" — but with no play data behind it yet.
+40 for the two new stables, chosen the same way Fair Meadow's 200 was — generous headroom, so
+retuning breeding upward later doesn't also need a capacity bump — but with no play data behind it.
 Watch `/admin/npc`'s headcount column after deploy; if a stable is hitting capacity and stalling out
 well before its ceiling has risen meaningfully, raise it.
 
 ### 12.3 The ceiling schedule's starting numbers are illustrative, not measured
 
 §5.2 says this once; it is worth saying twice. `docs/horse-game-overview.md` §10d: "Treat the ceiling
-and its rate of rise as parameters you expect to adjust repeatedly." The right way to find out if 70
-rising to 82 over roughly nine game years is too slow, too fast, or about right is to watch actual
-show results after this ships — not to reason further about it in the abstract now.
+and its rate of rise as parameters you expect to adjust repeatedly." The right way to find out if 76
+rising to 88 over roughly nine game years is too slow, too fast, or about right is to watch actual
+show results after this ships — not to reason further about it in the abstract now. §7.3's edit
+control exists so that adjustment costs nothing.
 
 ### 12.4 Closed-population COI, restated
 
 §3.3's risk is a balance risk too, on a longer horizon: an NPC stable's COI will climb the same way
 a closed player pool's does, just measured in real months rather than the whole game's gene pool.
-Nothing in this slice detects or reports it. `/admin/npc` could reasonably grow an average-COI column
-before this becomes a real problem — flagged here as a cheap, worthwhile follow-up, not built now.
+§2.3's COI skip stops the worst individual pairings and the round-robin rotation spreads sires, but
+neither stops the line as a whole tightening. Nothing in this slice detects or reports it.
+`/admin/npc` could reasonably grow an average-COI column before this becomes a real problem —
+flagged here as a cheap, worthwhile follow-up, not built now.
 
 ---
 
 ## 13. Documents to correct when this is built
 
 - **`CLAUDE.md` §10** — move the "NPC stables" row from "not started" to "built," with a one-line
-  summary (three personality stables, the selection engine, the ceiling schedule, the generalised
-  show top-up) in the same style every other row uses. Name this document.
+  summary (three personality stables, the selection engine, the two-column ceiling schedule, the
+  generalised show top-up, NPC foals named at birth, NPC stables exempt from board) in the same
+  style every other row uses. Name this document.
 - **`docs/horse-game-overview.md` §10** — record what landed against each lettered subsection: §10b
-  (the reused-scorer approach), §10c (three of six personalities), §10d (the per-trait clamp, not an
-  aggregate-score clamp — worth recording precisely, since it's the one place this slice most departs
-  from a literal reading), §10e (top-up generalised, tiering deferred), §10f (explicitly not built).
-- **`docs/horse-game-schema.md` §9** — record the departures in §5.4 above: `target_kind` /
+  (the reused-scorer approach), §10c (three of six personalities), §10d (the per-trait quality clamp,
+  and that a conformation trait's quality is closeness to target rather than magnitude — worth
+  recording precisely, since it is the one place this slice most departs from a literal reading),
+  §10e (top-up generalised, tiering deferred), §10f (explicitly not built), §10h (NPC stables pay no
+  board, and why).
+- **`docs/horse-game-schema.md` §9** — record the departures in §5.5 above: `target_kind` /
   `target_breed_id` / `target_discipline_code` replacing a free `selection_weights` JSON, no
-  `quality_ceiling` column, no `tier` column on the ceiling schedule. §12's build-order row is already
-  correct as written (`npc_policy`, `npc_ceiling_schedule`) and needs no change beyond marking it
-  built.
-- **`docs/build-log.md`** — a dated entry: the `src/engines/npc/` directory, the "clamp expressed
-  values before scoring, never the aggregate" pattern (reusable anywhere else a future slice wants a
-  bounded-but-not-falsified comparison), and the `last_bred_game_day` idempotency marker as one more
-  instance of the pattern `care_notice_game_day` and `last_upkeep_game_day` already established.
+  `quality_ceiling` column, no `tier` column on the ceiling schedule, and two ceiling columns rather
+  than one. §12's build-order row is already correct as written (`npc_policy`,
+  `npc_ceiling_schedule`) and needs no change beyond marking it built.
+- **`docs/build-log.md`** — a dated entry covering: the `src/engines/npc/` directory; the
+  "clamp each trait's own quality score, then aggregate with the scorer's own weights" pattern
+  (reusable anywhere else a future slice wants a bounded-but-not-falsified comparison, and worth
+  writing down because the obvious version — clamping the expressed value — is wrong for a
+  bidirectional trait); `loadPedigreeContextForMany` as the batched form of an existing two-query
+  load; the NPC exemptions now numbering two (care, board) and the rule that connects them; and
+  `last_bred_game_day` as one more instance of the idempotency-marker pattern
+  `care_notice_game_day` and `last_upkeep_game_day` already established.
 
 ---
 
@@ -729,13 +934,15 @@ Stop and ask if you hit these; don't pick one (`CLAUDE.md` §2).
   Hollow / Willow Creek Barrels are reasonable names or the operator would rather name them
   themselves (prefixes are permanent once horses are bred under them — see the prefix-uniqueness
   rule — so this is worth getting right before the first foal, not after).
-- **Whether an NPC stable going into debt and quietly stopping should be visible to the operator at
-  all**, versus something `/admin/npc` should proactively flag. §12.1 treats it as fine to discover
-  by looking; that may be wrong once it's actually happened a few times.
 - **The starting ceiling numbers (§5.2/§12.3) and the starting `capacity` (§12.2)** are defensible
   guesses, not measurements. If the operator has a strong intuition about how outclassed a player
   should feel by an NPC's best horse within the first game year, that intuition should set these
   numbers rather than this document's arithmetic.
+- **Whether NPC-bred foals should draw from the same name word list as founding stock.** §2.7 reuses
+  `generateFoundingName`'s words because they exist and they read well, but it means an NPC stable's
+  fifth generation is still drawing from the same few dozen words a founding batch does, and
+  repetition will show. A per-stable word list, or a second list for bred horses, is a small change
+  that is much easier before there are two hundred named NPC horses than after.
 - **Whether §3.3's closed-population risk is acceptable for however long it takes to build Market**,
   or whether it is bad enough to warrant pulling one piece of §3.2 forward — specifically, NPC-to-NPC
   stud access — ahead of the rest of the market. This document assumes waiting is fine because
