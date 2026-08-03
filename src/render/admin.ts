@@ -373,6 +373,13 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="market_min_value" value="${String(v.market_min_value)}">
       </label>
       <p class="muted">Every number in this block is a guess. They were chosen so an average adult horse is worth somewhere around 800-1,500 against a starting balance of 10,000, which means a child can buy two or three horses from their opening balance and it costs them something. Nobody has watched this economy run yet - expect to retune all of them. A tested-clear horse is worth more only because someone paid for the tests; an untested one is neither penalised nor rewarded, which is what keeps buying an untested horse a real gamble.</p>
+      <label>NPC listing buffer (free stalls to keep before selling surplus)
+        <input type="text" inputmode="numeric" name="npc_market_capacity_buffer" value="${String(v.npc_market_capacity_buffer)}">
+      </label>
+      <label>Max NPC listings per stable per tick
+        <input type="text" inputmode="numeric" name="npc_market_max_listings_per_tick" value="${String(v.npc_market_max_listings_per_tick)}">
+      </label>
+      <p class="muted">An NPC stable lists its own worst-scoring horses (against its own personality's target) once its free stalls drop below the buffer above - a per-personality asking-price multiplier and spread live on each stable's own policy row, edited on /admin/npc.</p>
       <label>Lethal foal death window (game days)
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>
@@ -1146,6 +1153,7 @@ export function renderNpcAdminPage(params: {
       <td>${s.lastBredGameDay === null ? raw('&mdash; (not yet)') : String(s.lastBredGameDay)}</td>
       <td>${s.nextCycleDueGameDay === null ? raw('&mdash;') : String(s.nextCycleDueGameDay)}</td>
       <td>${String(s.pairsLastCycle)}</td>
+      <td>${s.marketPriceMultiplier.toFixed(2)}x</td>
     </tr>`
   );
 
@@ -1184,8 +1192,8 @@ export function renderNpcAdminPage(params: {
       <h2>Every NPC stable</h2>
       <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after).</p>
       <table>
-        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th></tr></thead>
-        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="8" class="muted">No NPC stables yet.</td></tr>`}</tbody>
+        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th><th>Market multiplier</th></tr></thead>
+        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="9" class="muted">No NPC stables yet.</td></tr>`}</tbody>
       </table>
     </div>
     <div class="card">
@@ -1232,6 +1240,8 @@ export function renderNpcAdminPage(params: {
         <label>Breeding interval (game days) <input type="text" inputmode="numeric" name="breeding_interval_game_days" required></label>
         <label>Max pairs per cycle <input type="text" inputmode="numeric" name="max_pairs_per_cycle" required></label>
         <label>Capacity <input type="text" inputmode="numeric" name="capacity" required></label>
+        <label>Market price multiplier (1.0 = asks the plain guide value; higher asks more for its culls) <input type="text" inputmode="decimal" name="market_price_multiplier" value="1.0" required></label>
+        <label>Market price spread (0-1, +/- fraction randomised per listing) <input type="text" inputmode="decimal" name="market_price_spread" value="0.1" required></label>
         <button type="submit">Found stable</button>
       </form>
     </div>

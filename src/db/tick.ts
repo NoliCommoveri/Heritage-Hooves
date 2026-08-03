@@ -11,6 +11,7 @@ import { getConfig } from '../lib/config-cache';
 import { nowUtcSeconds } from '../lib/time';
 import { resolveDueCoverings } from './coverings';
 import { runNpcBreedingDecisions } from './npcBreeding';
+import { runNpcMarketListings } from './npcMarket';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
@@ -61,6 +62,11 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // through the route. Idempotent on npc_policy.last_bred_game_day (§6.3), the same pattern
       // stables.last_upkeep_game_day already establishes.
       await runNpcBreedingDecisions(env, newGameDay, newTickSeq, config);
+      // Slice 0017 §11 (Part B): sits beside the breeding decision above - both are an NPC stable's
+      // own tick-cycle choices about its stock. Naturally idempotent (a horse already listed cannot
+      // be listed twice, per idx_listings_one_open_per_horse), so no interval marker is needed the
+      // way runNpcBreedingDecisions needs last_bred_game_day.
+      await runNpcMarketListings(env, newGameDay, config);
       // Slice 0003 §10: physics resolves against the tick's new game_day/tick_seq before the world
       // row itself is updated below, so a failure here leaves world untouched and a retry recomputes
       // the same newGameDay/newTickSeq and finds the same (still-pending) rows to process - both
