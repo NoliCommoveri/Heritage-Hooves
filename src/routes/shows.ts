@@ -78,7 +78,14 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
   );
 
   return htmlResponse(
-    renderShowsIndexPage({ world: ctx.world, isAdmin: ctx.account!.is_admin === 1, actionsLeft: actionsLeftFor(ctx), nextShow, recentShows })
+    renderShowsIndexPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear,
+      nextShow,
+      recentShows,
+    })
   );
 }
 
@@ -135,12 +142,13 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
   if (!show) return notFound();
   const isAdmin = ctx.account!.is_admin === 1;
   const actionsLeft = actionsLeftFor(ctx);
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const breeds = await getBreeds(ctx.env);
 
   if (method === 'GET') {
     const notice = new URL(ctx.request.url).searchParams.get('entered') ? 'Entered.' : undefined;
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, show, classes: await buildClassViews(ctx, show.id, breeds), notice })
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds), notice })
     );
   }
   if (method !== 'POST') return notFound();
@@ -159,6 +167,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         show,
         classes: await buildClassViews(ctx, show.id, breeds),
         error: 'Choose one of your own horses.',
@@ -174,6 +183,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
         world: ctx.world,
         isAdmin,
         actionsLeft,
+        gameDaysPerYear,
         show,
         classes: await buildClassViews(ctx, show.id, breeds),
         error: turnsRefusalMessage(ctx),
@@ -195,7 +205,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName: breedNameFor(breeds, cls?.breed_id ?? null), minAgeYears })}`;
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, show, classes: await buildClassViews(ctx, show.id, breeds), error: message })
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds), error: message })
     );
   }
 

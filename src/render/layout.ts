@@ -1,5 +1,6 @@
 import { html, raw, SafeHtml } from '../lib/html';
 import type { WorldRow } from '../db/world';
+import { formatCalendarDate } from '../lib/calendar';
 
 /** One link in a subnav bar. `active` marks the current page for styling. */
 export interface NavLink {
@@ -27,6 +28,13 @@ export interface ShellParams {
    * spend a turn (CLAUDE.md §11's admin-mode entry: admin is a visibly separate place already).
    */
   actionsLeft: number | null;
+  /**
+   * docs/fixes/season-month-display.md: config's game_days_per_year, used to put a calendar-style
+   * label ("April, Year 2") beside the raw game day in the header. Optional so a page that hasn't
+   * been threaded with it yet (currently the horse page and every admin screen - see that doc's
+   * §2/§3) keeps showing today's plain integer, unchanged.
+   */
+  gameDaysPerYear?: number;
   body: SafeHtml;
 }
 
@@ -65,7 +73,9 @@ export function pageShell(params: ShellParams): SafeHtml {
   const headerLabel =
     section === 'admin'
       ? html`<div class="game-day">Admin panel <span class="muted">&middot; game day ${params.world.game_day}</span></div>`
-      : html`<div class="game-day">Game day <strong>${params.world.game_day}</strong>${turnsLabel}</div>`;
+      : params.gameDaysPerYear
+        ? html`<div class="game-day"><strong>${formatCalendarDate(params.world.game_day, params.gameDaysPerYear)}</strong> <span class="muted">&middot; game day ${params.world.game_day}</span>${turnsLabel}</div>`
+        : html`<div class="game-day">Game day <strong>${params.world.game_day}</strong>${turnsLabel}</div>`;
 
   return html`<!doctype html>
 <html lang="en">

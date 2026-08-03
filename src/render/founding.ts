@@ -34,6 +34,7 @@ export function renderFoundingPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   offer: ImportOfferRow | null;
   breeds?: BreedRow[];
@@ -124,6 +125,7 @@ export function renderFoundingPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(s.id, 'founding', hasFoundingOffer),
     body,
   });

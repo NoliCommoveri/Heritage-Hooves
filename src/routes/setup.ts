@@ -10,8 +10,10 @@ export async function setupRoute(ctx: RequestContext, method: string): Promise<R
   const existing = await countAccounts(ctx.env);
   if (existing > 0) return notFound();
 
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+
   if (method === 'GET') {
-    return htmlResponse(renderSetupPage({ world: ctx.world }));
+    return htmlResponse(renderSetupPage({ world: ctx.world, gameDaysPerYear }));
   }
   if (method !== 'POST') return notFound();
 
@@ -23,7 +25,7 @@ export async function setupRoute(ctx: RequestContext, method: string): Promise<R
 
   const error = validateNewAccountForm(displayName, username, password, confirmPassword, ctx.config.values.min_password_length);
   if (error) {
-    return htmlResponse(renderSetupPage({ world: ctx.world, error }));
+    return htmlResponse(renderSetupPage({ world: ctx.world, gameDaysPerYear, error }));
   }
 
   const passwordHash = await hashPassword(password);
@@ -31,7 +33,7 @@ export async function setupRoute(ctx: RequestContext, method: string): Promise<R
   try {
     accountId = await createAccount(ctx.env, { username, displayName, passwordHash, isAdmin: true, mustChangePassword: false });
   } catch {
-    return htmlResponse(renderSetupPage({ world: ctx.world, error: 'Something went wrong creating that account. Try a different username.' }));
+    return htmlResponse(renderSetupPage({ world: ctx.world, gameDaysPerYear, error: 'Something went wrong creating that account. Try a different username.' }));
   }
 
   const response = redirect('/admin');

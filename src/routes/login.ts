@@ -6,7 +6,8 @@ import { verifyPassword } from '../lib/password';
 import { buildSessionCookie, expireSessionCookie, expireStableCookie } from '../lib/session';
 
 export async function loginRoute(ctx: RequestContext, method: string): Promise<Response> {
-  if (method === 'GET') return htmlResponse(renderLoginPage({ world: ctx.world }));
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  if (method === 'GET') return htmlResponse(renderLoginPage({ world: ctx.world, gameDaysPerYear }));
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
@@ -14,7 +15,7 @@ export async function loginRoute(ctx: RequestContext, method: string): Promise<R
   const password = form.password ?? '';
 
   const account = await getAccountByUsername(ctx.env, username);
-  const badCredentials = htmlResponse(renderLoginPage({ world: ctx.world, error: 'Incorrect username or password.' }));
+  const badCredentials = htmlResponse(renderLoginPage({ world: ctx.world, gameDaysPerYear, error: 'Incorrect username or password.' }));
   if (!account || !account.active) return badCredentials;
 
   const valid = await verifyPassword(password, account.password_hash);

@@ -4,6 +4,7 @@ import type { WorldRow } from '../db/world';
 import type { StableRow } from '../db/stables';
 import type { EventRow } from '../db/events';
 import { placingText } from './shows';
+import { formatCalendarDate } from '../lib/calendar';
 
 export type StableSubnavPage = 'overview' | 'horses' | 'breed' | 'prefix' | 'founding' | 'money';
 
@@ -145,6 +146,7 @@ export function renderStablesPicker(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stables: StableRow[];
   canCreateMore: boolean;
   maxStables: number;
@@ -173,13 +175,14 @@ export function renderStablesPicker(params: {
     ${list}
     ${createLink}
   `;
-  return pageShell({ title: 'Your stables', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
+  return pageShell({ title: 'Your stables', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, gameDaysPerYear: params.gameDaysPerYear, body });
 }
 
 export function renderNewStablePage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   error?: string;
   name?: string;
   prefix?: string;
@@ -198,7 +201,7 @@ export function renderNewStablePage(params: {
       <button type="submit">Create stable</button>
     </form>
   `;
-  return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, body });
+  return pageShell({ title: 'Create a stable', world: params.world, loggedIn: true, isAdmin: params.isAdmin, actionsLeft: params.actionsLeft, gameDaysPerYear: params.gameDaysPerYear, body });
 }
 
 /** The stable home page's own feed (§6.3): read and unread together, most recent 20 - a compact
@@ -221,6 +224,7 @@ export function renderStableHomePage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   aliveHorseCount: number;
@@ -249,7 +253,7 @@ export function renderStableHomePage(params: {
       ${upkeepLine}
       <p><a href="/stables/${String(s.id)}/money">See the money history</a></p>
       <p><strong>Capacity:</strong> ${String(s.capacity)}</p>
-      <p><strong>Founded:</strong> game day ${String(s.created_game_day)}</p>
+      <p><strong>Founded:</strong> ${formatCalendarDate(s.created_game_day, params.gameDaysPerYear)} <span class="muted">(game day ${String(s.created_game_day)})</span></p>
     </div>
     <p><a class="button-link" href="/stables/${String(s.id)}/horses">Horses</a></p>
     <p><a class="button-link" href="/stables/${String(s.id)}/breed">Breed</a></p>
@@ -262,6 +266,7 @@ export function renderStableHomePage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(s.id, 'overview', params.hasFoundingOffer),
     body,
   });
@@ -271,6 +276,7 @@ export function renderPrefixPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
+  gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
   error?: string;
@@ -299,6 +305,7 @@ export function renderPrefixPage(params: {
     loggedIn: true,
     isAdmin: params.isAdmin,
     actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
     subnav: stableSubnav(s.id, 'prefix', params.hasFoundingOffer),
     body,
   });

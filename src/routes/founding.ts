@@ -52,14 +52,14 @@ async function renderPage(
 ): Promise<Response> {
   const isAdmin = ctx.account!.is_admin === 1;
   const actionsLeft = actionsLeftFor(ctx);
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
 
   if (offer && offer.status === 'pending') {
     const breeds = await getBreeds(ctx.env);
-    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, breeds, ...extra }));
+    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, offer, breeds, ...extra }));
   }
 
   if (offer && offer.status === 'open') {
-    const gameDaysPerYear = ctx.config.values.game_days_per_year;
     const [rows, traitRows] = await Promise.all([getCandidatesForOffer(ctx.env, offer.id), getConformationTraits(ctx.env)]);
     const candidates = rows.map((candidate) => {
       const genotype = parseGenotype(candidate.genotype);
@@ -74,10 +74,10 @@ async function renderPage(
       const conformation = conformationDisplayRows(conformationValues(genotype, noise, ageYears, 0, ctx.config.values), traitRows);
       return { candidate, description, gaited: phenotype.gaited, conformation };
     });
-    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, candidates, ...extra }));
+    return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, offer, candidates, ...extra }));
   }
 
-  return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, stable, offer, ...extra }));
+  return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, offer, ...extra }));
 }
 
 export async function stableFoundingRoute(ctx: RequestContext, method: string, stableId: number): Promise<Response> {
