@@ -19,6 +19,7 @@ import type { CareCardView, CareLineView, ManagementPlanRow } from '../db/care';
 import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 import { formatCalendarDate } from '../lib/calendar';
+import type { BarnBucket } from '../lib/barnFilter';
 
 export const displayNameFor = horseDisplayName;
 
@@ -275,6 +276,9 @@ function careBarnControls(params: {
   careSummary: { farrierDue: number; wellnessDue: number };
   careError?: string;
   careNotice?: string;
+  /** Slice 0016 §4.4: a hidden field on all four forms, so a care round or a feed save carries the
+   * tab you were on back onto the redirect rather than always landing on All. */
+  activeTab: string;
 }): SafeHtml {
   const parts: string[] = [];
   if (params.careSummary.farrierDue > 0) parts.push(`${String(params.careSummary.farrierDue)} due for the farrier`);
@@ -285,6 +289,8 @@ function careBarnControls(params: {
     ([key, def]) => html`<option value="${key}" ${key === params.currentFeedLevel ? raw('selected') : raw('')}>${def.name}</option>`
   )}`;
 
+  const showField = html`<input type="hidden" name="show" value="${params.activeTab}">`;
+
   return html`
     <div class="card">
       ${errorBox(params.careError)}
@@ -292,23 +298,47 @@ function careBarnControls(params: {
       ${summaryLine}
       <form method="post" action="/stables/${String(params.stableId)}/care">
         <input type="hidden" name="service" value="farrier">
+        ${showField}
         <button type="submit" class="secondary">Farrier round</button>
       </form>
       <form method="post" action="/stables/${String(params.stableId)}/care">
         <input type="hidden" name="service" value="wellness">
+        ${showField}
         <button type="submit" class="secondary">Wellness round</button>
       </form>
       <form method="post" action="/stables/${String(params.stableId)}/care">
         <input type="hidden" name="service" value="management">
+        ${showField}
         <button type="submit" class="secondary">Management round</button>
       </form>
       <form method="post" action="/stables/${String(params.stableId)}/feed">
         <label>Feed
           <select name="feed_level">${feedOptions}</select>
         </label>
+        ${showField}
         <button type="submit">Save</button>
       </form>
     </div>`;
+}
+
+/** Slice 0016 §4.1: the barn list's tabs - plain links with a query parameter, no JavaScript
+ * (§3). Counts come off the full, unfiltered horse list (§4.5). Geldings only appears when the
+ * stable actually has one (§4.1) - there is no gelding path in the game today. */
+function barnTabs(stableId: number, activeTab: BarnBucket | 'all', counts: Record<BarnBucket, number>): SafeHtml {
+  const tabs: { key: BarnBucket | 'all'; label: string; count: number | null }[] = [
+    { key: 'all', label: 'All', count: null },
+    { key: 'mares', label: 'Mares', count: counts.mares },
+    { key: 'stallions', label: 'Stallions', count: counts.stallions },
+    { key: 'foals', label: 'Foals', count: counts.foals },
+  ];
+  if (counts.geldings > 0) tabs.push({ key: 'geldings', label: 'Geldings', count: counts.geldings });
+
+  return html`
+    <nav class="subnav">
+      ${tabs.map(
+        (t) => html`<a href="/stables/${String(stableId)}/horses?show=${t.key}" class="${t.key === activeTab ? 'subnav-link is-active' : 'subnav-link'}">${t.label}${t.count !== null ? ` (${String(t.count)})` : ''}</a>`
+      )}
+    </nav>`;
 }
 
 export function renderBarnList(params: {
@@ -334,6 +364,11 @@ export function renderBarnList(params: {
   careSummary: { farrierDue: number; wellnessDue: number };
   careNotice?: string;
   careError?: string;
+  /** Slice 0016 §4.1: which tab is active - an unrecognised value has already been normalised to
+   * 'all' by the route (§4.1's "a filter is not an assertion"). */
+  activeTab: BarnBucket | 'all';
+  /** Counts from the full, unfiltered list - see barnTabs' own comment. */
+  tabCounts: Record<BarnBucket, number>;
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
@@ -347,7 +382,7 @@ export function renderBarnList(params: {
           </div>
         </div>`
       )
-    : html`<p>No horses here yet.</p>`;
+    : html`<p>No horses here${params.activeTab === 'all' ? ' yet' : ' in this tab'}.</p>`;
 
   const body = html`
     <h1>${params.stable.name}'s horses</h1>
@@ -358,7 +393,9 @@ export function renderBarnList(params: {
       careSummary: params.careSummary,
       careError: params.careError,
       careNotice: params.careNotice,
+      activeTab: params.activeTab,
     })}
+    ${barnTabs(params.stable.id, params.activeTab, params.tabCounts)}
     ${rows}
     <p><a href="/stables/${String(params.stable.id)}/breed">Breed two horses</a></p>
     <p><a href="/stables/${String(params.stable.id)}/past">Past horses</a></p>
@@ -536,15 +573,17 @@ function healthStatusBadge(row: HealthConditionDisplay): SafeHtml {
   return html`<span class="badge badge-danger">${label}${copiesNote}</span>`;
 }
 
-/** Slice 0010 §8: the Health card, below Conformation. For the owner: one row per applicable
- * enabled condition with the status they are entitled to, a Test button, and a link to the test
- * page. For anyone else viewing (today, only an admin - horsePageRoute's own owner-or-admin gate)
- * the card shows nothing but the condition names (§1 step 5) - no results, no Test button, even
- * for a condition that would otherwise be visible without a test. That is a deliberate scope limit
- * for this slice's one non-owner viewer, not a rule about what visible-without-a-test means. */
-function healthCard(params: { owner: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number; gameDaysPerYear: number }): SafeHtml {
+/** Slice 0010 §8, revised by slice 0016's follow-up: the Health card, below Conformation. For the
+ * owner: one row per applicable enabled condition with the status they've paid to learn or can see
+ * for free (§2.4's knowledge boundary). For an admin viewing someone else's horse: the same full
+ * rows, but computed directly from the genotype (`conditionStatus`, not `ownerVisibleStatus`) - the
+ * operator asked to see everything, and the truth-vs-knowledge split that protects a player from
+ * another player was never meant to apply to the one person running the game. No Test button
+ * either way for a non-owner - buying a test is a purchase on a stable's own account, not
+ * something an admin does on someone else's behalf. */
+function healthCard(params: { canSeeFullHealth: boolean; canTest: boolean; rows: HealthConditionDisplay[]; horseId: number; gameDaysPerYear: number }): SafeHtml {
   if (params.rows.length === 0) return raw('');
-  const rows = params.owner
+  const rows = params.canSeeFullHealth
     ? params.rows.map(
         (row) => html`
         <div class="health-row">
@@ -826,7 +865,7 @@ export function renderHorsePage(params: {
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
-    ${healthCard({ owner: params.owner, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
+    ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${careCard({
       care: params.care,
       feedLevelName: params.feedLevelName,

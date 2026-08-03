@@ -87,6 +87,9 @@ import m0083 from '../../migrations/0083_npc_policy.sql';
 import m0084 from '../../migrations/0084_npc_ceiling_schedule.sql';
 import m0085 from '../../migrations/0085_npc_stables_and_policies.sql';
 import m0086 from '../../migrations/0086_npc_stables_no_upkeep.sql';
+import m0087 from '../../migrations/0087_accounts_pin_hash.sql';
+import m0088 from '../../migrations/0088_pin_attempts.sql';
+import m0089 from '../../migrations/0089_config_admin_and_ui.sql';
 
 export interface MigrationFile {
   name: string;
@@ -190,6 +193,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0084_npc_ceiling_schedule.sql', sql: m0084 },
   { name: '0085_npc_stables_and_policies.sql', sql: m0085 },
   { name: '0086_npc_stables_no_upkeep.sql', sql: m0086 },
+  { name: '0087_accounts_pin_hash.sql', sql: m0087 },
+  { name: '0088_pin_attempts.sql', sql: m0088 },
+  { name: '0089_config_admin_and_ui.sql', sql: m0089 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

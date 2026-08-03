@@ -17,6 +17,9 @@ export interface AccountRow {
    * account is at full budget the moment its actions_reset_tick_seq is behind world.tick_seq. */
   actions_remaining: number;
   actions_reset_tick_seq: number;
+  /** Slice 0016 §9.2. Nullable - null means the admin PIN gate is off for this account (§9.6),
+   * never rendered anywhere but the security page and the unlock check. */
+  pin_hash: string | null;
 }
 
 export async function countAccounts(env: Env): Promise<number> {
@@ -91,6 +94,65 @@ export async function setLastActiveStable(env: Env, accountId: number, stableId:
  * charged for something that did not happen has no way to find out why or get it back, so a rare
  * free turn is the right way for this to fail, not a rare unexplained charge.
  */
+// ---------------------------------------------------------------------------
+// Slice 0016 §8: modifying and deleting accounts from /admin/accounts.
+// ---------------------------------------------------------------------------
+
+/** §8.1's "stables owned" column - every stable this account has ever had, active or not, one
+ * grouped query rather than one per account (the same discipline listStablesForWorld's join uses). */
+export async function countStablesByAccount(env: Env): Promise<Map<number, number>> {
+  const result = await env.DB.prepare('SELECT account_id, COUNT(*) AS n FROM stables WHERE account_id IS NOT NULL GROUP BY account_id').all<{
+    account_id: number;
+    n: number;
+  }>();
+  const map = new Map<number, number>();
+  for (const row of result.results ?? []) map.set(row.account_id, row.n);
+  return map;
+}
+
+/** §8.4's delete-refusal sentence names the stables by name - active or inactive, since a
+ * deactivated stable still belongs to this account. */
+export async function listStableNamesForAccount(env: Env, accountId: number): Promise<string[]> {
+  const result = await env.DB.prepare('SELECT name FROM stables WHERE account_id = ? ORDER BY created_real_ts ASC').bind(accountId).all<{ name: string }>();
+  return (result.results ?? []).map((r) => r.name);
+}
+
+/** §8.4 point 2: a granted founding batch is a real foreign key (import_offers.granted_by_account_id),
+ * so deleting the account would otherwise fail with a raw database error - checked up front instead. */
+export async function hasGrantedFoundingBatch(env: Env, accountId: number): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT 1 AS present FROM import_offers WHERE granted_by_account_id = ? LIMIT 1').bind(accountId).first<{ present: number }>();
+  return row !== null;
+}
+
+export async function countAdmins(env: Env): Promise<number> {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM accounts WHERE is_admin = 1').first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+export type UpdateAccountProfileResult = { ok: true } | { ok: false; error: 'taken' };
+
+/** §8.2: rename and change username together. Changing a username does not log anyone out - the
+ * session cookie carries the account id, not the name (src/lib/session.ts). */
+export async function updateAccountProfile(env: Env, accountId: number, displayName: string, username: string): Promise<UpdateAccountProfileResult> {
+  try {
+    await env.DB.prepare('UPDATE accounts SET display_name = ?, username = ? WHERE id = ?').bind(displayName, username, accountId).run();
+  } catch (err) {
+    if (err instanceof Error && /unique constraint failed/i.test(err.message)) return { ok: false, error: 'taken' };
+    throw err;
+  }
+  return { ok: true };
+}
+
+export async function setAdminFlag(env: Env, accountId: number, isAdmin: boolean): Promise<void> {
+  await env.DB.prepare('UPDATE accounts SET is_admin = ? WHERE id = ?').bind(isAdmin ? 1 : 0, accountId).run();
+}
+
+/** §8.4: only ever called after the route has confirmed the account owns no stable and has granted
+ * no founding batch - see routes/admin.ts's adminAccountsRoute for the guard order. */
+export async function deleteAccountRow(env: Env, accountId: number): Promise<void> {
+  await env.DB.prepare('DELETE FROM accounts WHERE id = ?').bind(accountId).run();
+}
+
 export async function spendAction(env: Env, accountId: number, tickSeq: number, actionsPerTick: number, cost: number): Promise<boolean> {
   const result = await env.DB.prepare(
     `UPDATE accounts

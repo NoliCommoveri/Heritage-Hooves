@@ -71,8 +71,12 @@ import { buildLedgerStatements } from '../db/ledger';
 import { conditionStatus, parseConditionTrigger, ownerVisibleStatus } from '../engines/health/status';
 import type { Genotype } from '../engines/genetics/genotype';
 import { careCardViewFor, callOneHorseCare, callOneConditionManagement, managementPlanRowsForHorse, type CareService } from '../db/care';
+import { bucketFor, type BarnBucket } from '../lib/barnFilter';
 
-function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
+/** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
+ * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
+ * rather than a second copy. */
+export function describeHorseRow(horse: HorseRow, gameDay: number, gameDaysPerYear: number): string {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = gameDay - horse.born_game_day;
   const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
@@ -130,11 +134,22 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   // a while after they ended, marked Died/Retired away - every other reader of a stable's horses
   // (breeding, the NPC show barn's field, the image picker) still wants listStableHorses'
   // alive-only rows, unchanged.
-  const [horses, traitRows, conditions] = await Promise.all([
+  const [allHorses, traitRows, conditions] = await Promise.all([
     listStableHorsesWithDead(ctx.env, stableId, ctx.world.game_day - cfg.barn_shows_ended_game_days),
     getConformationTraits(ctx.env),
     getEnabledConditions(ctx.env),
   ]);
+
+  // Slice 0016 §4.5: counts come off the full list, filtering happens before the per-horse
+  // Promise.all mapping below (which does a getShowSummary query per horse) - otherwise a tab
+  // filter would still pay for thirty queries to display four rows.
+  const tabCounts: Record<BarnBucket, number> = { foals: 0, mares: 0, stallions: 0, geldings: 0 };
+  for (const horse of allHorses) tabCounts[bucketFor(horse, ctx.world.game_day, cfg.foal_max_age_game_days)]++;
+
+  const rawShow = new URL(ctx.request.url).searchParams.get('show');
+  const activeTab: BarnBucket | 'all' = rawShow === 'mares' || rawShow === 'stallions' || rawShow === 'foals' || rawShow === 'geldings' ? rawShow : 'all';
+  const horses = activeTab === 'all' ? allHorses : allHorses.filter((h) => bucketFor(h, ctx.world.game_day, cfg.foal_max_age_game_days) === activeTab);
+
   const rows = await Promise.all(
     horses.map(async (horse) => ({
       horse,
@@ -193,6 +208,8 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       careSummary,
       careNotice,
       careError,
+      activeTab,
+      tabCounts,
     })
   );
 }
@@ -441,14 +458,27 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
 }
 
 /**
- * Slice 0010 §8/§2.4: the Health card's rows, resolved to what this viewer is entitled to see.
- * Non-owners (today, only an admin - horsePageRoute's own gate) get names only (§1 step 5). An
- * owner gets a paid-for result where one exists, else an observation for a signs_visible condition
- * their horse's genotype already reads as affected by (no charge, no test - §2.4), else "not
- * tested".
+ * Slice 0010 §8/§2.4, revised by slice 0016's follow-up: the Health card's rows, resolved to what
+ * this viewer is entitled to see. An owner gets a paid-for result where one exists, else an
+ * observation for a signs_visible condition their horse's genotype already reads as affected by (no
+ * charge, no test - §2.4), else "not tested". An admin viewing someone else's horse gets the truth
+ * straight from the genotype for every applicable condition, bypassing knowledge entirely - the
+ * truth-vs-knowledge split protects one player from another, not the operator from their own game.
+ * Anyone who is neither gets names only.
  */
-async function healthRowsFor(ctx: RequestContext, owner: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
+async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
   const conditions = await getEnabledConditions(ctx.env);
+
+  if (isAdmin && !owner) {
+    return conditions.map((c) => {
+      if (c.locus_code === null) {
+        return { code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false };
+      }
+      const result = conditionStatus(genotype, parseConditionTrigger(c.trigger));
+      return { code: c.code, name: c.name, teachingText: c.teaching_text, status: result.status, copies: result.copies, testedGameDay: null, observedOnly: false };
+    });
+  }
+
   if (!owner) {
     return conditions.map((c) => ({ code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false }));
   }
@@ -482,7 +512,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
 
   const isAdmin = ctx.account!.is_admin === 1;
   const owner = ownerStable.account_id === ctx.account!.id;
-  if (!owner && !isAdmin) return notFound();
+  // Slice 0016 §6.5: a non-owner (and non-admin) lands on the public page instead of a dead end -
+  // a link pasted between two children now resolves to something.
+  if (!owner && !isAdmin) return redirect(`/world/horses/${String(horseId)}`);
 
   // Slice 0011 §8.1: the one flag that hides Enter in a show, Test, Choose/Change picture and
   // Retire away for a horse that has already ended - reading content is never gated by this.
@@ -543,7 +575,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
-  const health = await healthRowsFor(ctx, owner, ownerStable.id, horse.id, genotype);
+  const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
   // modifier so the number shown here matches what a show would actually apply.
   const enabledConditions = await getEnabledConditions(ctx.env);

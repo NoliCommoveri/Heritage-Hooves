@@ -122,6 +122,12 @@ export interface ClassEntryDisplayRow {
   registered_name: string | null;
   barn_name: string | null;
   sex: 'mare' | 'stallion' | 'gelding';
+  /** Slice 0016 §7.1: the entering stable and its owner, for the placings table's Stable column. */
+  stable_id: number;
+  stable_name: string;
+  stable_is_npc: number;
+  /** Null for an NPC stable, which has no account. */
+  owner_display_name: string | null;
 }
 
 export interface HorseResultRow {
@@ -174,6 +180,69 @@ export async function listRecentJudgedShows(env: Env, limit: number): Promise<Sh
   return result.results ?? [];
 }
 
+// ---------------------------------------------------------------------------
+// Slice 0016 §5: the /shows filters (class-type tabs, breed search) and item 8 (a judged class
+// nobody entered publishes no results). One shared predicate so the SQL-driven recent-judged list
+// and the in-memory filter applied to a single show's own classes can never disagree (§5.2).
+// ---------------------------------------------------------------------------
+
+export interface ShowsFilterParams {
+  /** 'all' | 'conformation' | a discipline code. */
+  classType: string;
+  /** Ignored (by construction - §5.1) unless classType is 'all' or 'conformation', since a
+   * discipline class never carries a breed_id. */
+  breedId: number | null;
+}
+
+/** The one predicate every filtered view of a show's classes shares. */
+export function classMatchesShowsFilter(cls: Pick<ShowClassRow, 'class_type' | 'discipline_code' | 'breed_id'>, filter: ShowsFilterParams): boolean {
+  if (filter.classType === 'conformation') {
+    if (cls.class_type !== 'breed_conformation') return false;
+  } else if (filter.classType !== 'all') {
+    if (cls.discipline_code !== filter.classType) return false;
+  }
+  if ((filter.classType === 'all' || filter.classType === 'conformation') && filter.breedId !== null && cls.breed_id !== filter.breedId) {
+    return false;
+  }
+  return true;
+}
+
+/** Item 8 (§5.3): true for a scheduled class always, and for a judged class only when at least one
+ * of its entries is a player's own (not the show barn's). */
+export async function classHasPlayerEntry(env: Env, classId: number): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT 1 AS present FROM show_entries WHERE class_id = ? AND is_npc = 0 LIMIT 1').bind(classId).first<{ present: number }>();
+  return row !== null;
+}
+
+/**
+ * §5.2's SQL-driven list: judged shows having at least one class that matches the filter AND has a
+ * player entry (item 8) - a show whose classes all fail either condition is not listed at all.
+ * Built in SQL rather than loaded-then-filtered so this stays cheap as the breed/discipline count
+ * grows (§5.2's own instruction).
+ */
+export async function listRecentJudgedShowsFiltered(env: Env, limit: number, filter: ShowsFilterParams): Promise<ShowRow[]> {
+  const classTypeCond = filter.classType === 'conformation' ? 'breed_conformation' : null;
+  const disciplineCond = filter.classType !== 'all' && filter.classType !== 'conformation' ? filter.classType : null;
+  const breedCond = filter.classType === 'all' || filter.classType === 'conformation' ? filter.breedId : null;
+
+  const result = await env.DB.prepare(
+    `SELECT s.* FROM shows s
+     WHERE s.status = 'judged'
+       AND EXISTS (
+         SELECT 1 FROM show_classes sc
+         WHERE sc.show_id = s.id
+           AND (? IS NULL OR sc.class_type = ?)
+           AND (? IS NULL OR sc.discipline_code = ?)
+           AND (? IS NULL OR sc.breed_id = ?)
+           AND EXISTS (SELECT 1 FROM show_entries se WHERE se.class_id = sc.id AND se.is_npc = 0)
+       )
+     ORDER BY s.scheduled_game_day DESC LIMIT ?`
+  )
+    .bind(classTypeCond, classTypeCond, disciplineCond, disciplineCond, breedCond, breedCond, limit)
+    .all<ShowRow>();
+  return result.results ?? [];
+}
+
 /** Every class still waiting to be judged, oldest first - what the horse page's "Enter in a show"
  * button and /shows/:id's entry form both check a horse's eligibility against. */
 export async function getOpenClasses(env: Env, limit = 10): Promise<ShowClassRow[]> {
@@ -186,10 +255,16 @@ export async function getEntriesForClass(env: Env, classId: number): Promise<Sho
   return result.results ?? [];
 }
 
+/** Slice 0016 §7.1: joins the entering stable and its owning account (LEFT JOIN - an NPC stable has
+ * no account) alongside the horse, in the one query this was already making per class. */
 export async function listClassEntriesForDisplay(env: Env, classId: number): Promise<ClassEntryDisplayRow[]> {
   const result = await env.DB.prepare(
-    `SELECT se.id, se.horse_id, se.is_npc, se.placing, se.final_score, h.registered_name, h.barn_name, h.sex
-     FROM show_entries se JOIN horses h ON h.id = se.horse_id
+    `SELECT se.id, se.horse_id, se.is_npc, se.placing, se.final_score, h.registered_name, h.barn_name, h.sex,
+            st.id AS stable_id, st.name AS stable_name, st.is_npc AS stable_is_npc, a.display_name AS owner_display_name
+     FROM show_entries se
+     JOIN horses h ON h.id = se.horse_id
+     JOIN stables st ON st.id = se.entered_by_stable_id
+     LEFT JOIN accounts a ON a.id = st.account_id
      WHERE se.class_id = ?
      ORDER BY (se.placing IS NULL) ASC, se.placing ASC, se.id ASC`
   )

@@ -204,7 +204,11 @@ export async function stableCareRoute(ctx: RequestContext, stableId: number): Pr
   if (stable instanceof Response) return stable;
 
   const form = await parseForm(ctx.request);
-  const backTo = `/stables/${String(stableId)}/horses`;
+  // Slice 0016 §4.4: the hidden `show` field on the care-round forms carries the barn tab you were
+  // on back onto the redirect, so a round from a filtered tab doesn't bounce you back to All.
+  const showSuffix = form.show ? `?show=${encodeURIComponent(form.show)}` : '';
+  const backTo = `/stables/${String(stableId)}/horses${showSuffix}`;
+  const joiner = showSuffix ? '&' : '?';
 
   // Slice 0014 §5.3: the Management round is a third button beside Farrier round/Wellness round,
   // one click renewing every due plan the stable is entitled to know about (§2.2's "one click does
@@ -212,7 +216,7 @@ export async function stableCareRoute(ctx: RequestContext, stableId: number): Pr
   if (form.service === 'management') {
     if (!canTakeOnCost(stable.balance)) {
       return redirect(
-        `${backTo}?care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before a management round.`)}`
+        `${backTo}${joiner}care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before a management round.`)}`
       );
     }
     const conditions = await getEnabledConditions(ctx.env);
@@ -223,12 +227,12 @@ export async function stableCareRoute(ctx: RequestContext, stableId: number): Pr
       balance: stable.balance,
       conditions,
     });
-    if (result.totalCount === 0) return redirect(`${backTo}?care_notice=${encodeURIComponent('Nothing due.')}`);
+    if (result.totalCount === 0) return redirect(`${backTo}${joiner}care_notice=${encodeURIComponent('Nothing due.')}`);
     const notice =
       result.serviced < result.totalCount
         ? `Renewed ${String(result.serviced)} of ${String(result.totalCount)} management plans - not enough money for the rest.`
         : `Renewed ${String(result.serviced)} management plan${result.serviced === 1 ? '' : 's'}.`;
-    return redirect(`${backTo}?care_notice=${encodeURIComponent(notice)}`);
+    return redirect(`${backTo}${joiner}care_notice=${encodeURIComponent(notice)}`);
   }
 
   const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
@@ -237,20 +241,20 @@ export async function stableCareRoute(ctx: RequestContext, stableId: number): Pr
   if (!canTakeOnCost(stable.balance)) {
     const who = service === 'farrier' ? 'a farrier round' : 'a wellness round';
     return redirect(
-      `${backTo}?care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before ${who}.`)}`
+      `${backTo}${joiner}care_error=${encodeURIComponent(`${stable.name} is ${String(Math.abs(stable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before ${who}.`)}`
     );
   }
 
   const result = await callBarnRoundCare(ctx.env, { stableId, service, gameDay: ctx.world.game_day, config: ctx.config.values, balance: stable.balance });
 
-  if (result.totalCount === 0) return redirect(`${backTo}?care_notice=${encodeURIComponent('Nothing due.')}`);
+  if (result.totalCount === 0) return redirect(`${backTo}${joiner}care_notice=${encodeURIComponent('Nothing due.')}`);
 
   const verb = service === 'farrier' ? 'Shod' : 'Vet visited';
   const notice =
     result.serviced < result.totalCount
       ? `${verb} ${String(result.serviced)} of ${String(result.totalCount)} - not enough money for the rest.`
       : `${verb} ${String(result.serviced)} horse${result.serviced === 1 ? '' : 's'}.`;
-  return redirect(`${backTo}?care_notice=${encodeURIComponent(notice)}`);
+  return redirect(`${backTo}${joiner}care_notice=${encodeURIComponent(notice)}`);
 }
 
 /** /stables/:id/feed - slice 0013 §2.5/§6.1. Free, costs no turn, takes effect from the next
@@ -261,11 +265,14 @@ export async function stableFeedRoute(ctx: RequestContext, stableId: number): Pr
 
   const form = await parseForm(ctx.request);
   const feedLevel = form.feed_level ?? '';
-  const backTo = `/stables/${String(stableId)}/horses`;
+  // Slice 0016 §4.4: same hidden `show` field, same carry-through, on the feed form.
+  const showSuffix = form.show ? `?show=${encodeURIComponent(form.show)}` : '';
+  const backTo = `/stables/${String(stableId)}/horses${showSuffix}`;
+  const joiner = showSuffix ? '&' : '?';
   if (!(feedLevel in ctx.config.values.feed_levels.levels)) {
-    return redirect(`${backTo}?care_error=${encodeURIComponent('Choose a feed level.')}`);
+    return redirect(`${backTo}${joiner}care_error=${encodeURIComponent('Choose a feed level.')}`);
   }
 
   await setFeedLevel(ctx.env, stableId, feedLevel);
-  return redirect(`${backTo}?care_notice=${encodeURIComponent('Feed level saved.')}`);
+  return redirect(`${backTo}${joiner}care_notice=${encodeURIComponent('Feed level saved.')}`);
 }

@@ -2,7 +2,7 @@ import type { RequestContext } from '../lib/context';
 import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { ACTION_COSTS } from '../lib/actions';
-import { spendAction } from '../db/accounts';
+import { spendAction, getAccountById } from '../db/accounts';
 import {
   renderShowsIndexPage,
   renderShowPage,
@@ -14,7 +14,6 @@ import {
 import { displayNameFor } from '../render/horses';
 import {
   getNextShow,
-  listRecentJudgedShows,
   getShow,
   getShowClass,
   getShowClassesForShow,
@@ -22,10 +21,15 @@ import {
   getEntryFull,
   enterHorseInClass,
   checkHorseEligibilityForClass,
+  classMatchesShowsFilter,
+  classHasPlayerEntry,
+  listRecentJudgedShowsFiltered,
   type ShowClassRow,
+  type ShowsFilterParams,
 } from '../db/shows';
 import { getJudgeById } from '../db/judges';
 import { getBreeds, type BreedRow } from '../db/breeds';
+import { getEnabledDisciplines } from '../db/disciplines';
 import { getHorse, listStableHorses } from '../db/horses';
 import { getStableById, listStablesForAccount } from '../db/stables';
 import { getConformationTraits, getAbilityTraits } from '../db/quantitativeTraits';
@@ -40,42 +44,77 @@ function nameForEntry(row: { registered_name: string | null; barn_name: string |
   return row.sex === 'mare' ? 'Unnamed filly' : 'Unnamed colt';
 }
 
+/** Slice 0016 §5.1: parses `class`/`breed` off the query string, validated against the disciplines
+ * actually enabled - an unrecognised class tab reads as 'all' (Part A's "a filter is not an
+ * assertion" applies here too). breed is only meaningful for 'all'/'conformation' - a discipline
+ * class never carries a breed_id (§5.1's "mutually exclusive by construction"). */
+async function resolveShowsFilter(ctx: RequestContext): Promise<ShowsFilterParams> {
+  const params = new URL(ctx.request.url).searchParams;
+  const rawClass = params.get('class') ?? 'all';
+  const disciplines = await getEnabledDisciplines(ctx.env);
+  const classType = rawClass === 'all' || rawClass === 'conformation' || disciplines.some((d) => d.code === rawClass) ? rawClass : 'all';
+  const usesBreed = classType === 'all' || classType === 'conformation';
+  const rawBreed = usesBreed ? Number(params.get('breed')) : NaN;
+  const breedId = Number.isInteger(rawBreed) ? rawBreed : null;
+  return { classType, breedId };
+}
+
+/**
+ * Slice 0016 §5.2/§5.3: every class of one show that passes the class-type/breed filter AND (for a
+ * judged class only - item 8, §5.3) has at least one player entry. Shared by every place a show's
+ * classes are listed (the next-show card, the recent-results card, the show page itself) so the
+ * same show can never appear in one view with a different set of classes in another.
+ */
+async function loadVisibleClasses(
+  ctx: RequestContext,
+  showId: number,
+  filter: ShowsFilterParams
+): Promise<{ cls: ShowClassRow; judge: Awaited<ReturnType<typeof getJudgeById>>; entries: Awaited<ReturnType<typeof listClassEntriesForDisplay>> }[]> {
+  const allClasses = await getShowClassesForShow(ctx.env, showId);
+  const matching = allClasses.filter((c) => classMatchesShowsFilter(c, filter));
+  const out: { cls: ShowClassRow; judge: Awaited<ReturnType<typeof getJudgeById>>; entries: Awaited<ReturnType<typeof listClassEntriesForDisplay>> }[] = [];
+  for (const cls of matching) {
+    const [judge, entries] = await Promise.all([getJudgeById(ctx.env, cls.judge_id), listClassEntriesForDisplay(ctx.env, cls.id)]);
+    if (cls.status === 'judged' && !entries.some((e) => e.is_npc === 0)) continue;
+    out.push({ cls, judge, entries });
+  }
+  return out;
+}
+
 export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
   const breeds = await getBreeds(ctx.env);
+  const disciplines = await getEnabledDisciplines(ctx.env);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const filter = await resolveShowsFilter(ctx);
 
   const nextShowRow = await getNextShow(ctx.env);
-  const nextShow = nextShowRow
-    ? {
-        show: nextShowRow,
-        classes: await Promise.all(
-          (await getShowClassesForShow(ctx.env, nextShowRow.id)).map(async (cls) => {
-            const [judge, entries] = await Promise.all([getJudgeById(ctx.env, cls.judge_id), listClassEntriesForDisplay(ctx.env, cls.id)]);
-            return {
-              cls,
-              judge,
-              breedName: breedNameFor(breeds, cls.breed_id),
-              entryCount: entries.length,
-              minAgeYears: Math.round(cls.min_age_game_days / gameDaysPerYear),
-            };
-          })
-        ),
-      }
-    : null;
+  const nextShowVisibleClasses = nextShowRow ? await loadVisibleClasses(ctx, nextShowRow.id, filter) : [];
+  const nextShow =
+    nextShowRow && nextShowVisibleClasses.length > 0
+      ? {
+          show: nextShowRow,
+          classes: nextShowVisibleClasses.map(({ cls, judge, entries }) => ({
+            cls,
+            judge,
+            breedName: breedNameFor(breeds, cls.breed_id),
+            entryCount: entries.length,
+            minAgeYears: Math.round(cls.min_age_game_days / gameDaysPerYear),
+          })),
+        }
+      : null;
 
-  const recentShowRows = await listRecentJudgedShows(ctx.env, 6);
+  const recentShowRows = await listRecentJudgedShowsFiltered(ctx.env, ctx.config.values.shows_recent_count, filter);
   const recentShows = await Promise.all(
     recentShowRows.map(async (show) => ({
       show,
-      classes: await Promise.all(
-        (await getShowClassesForShow(ctx.env, show.id)).map(async (cls) => {
-          const [judge, entries] = await Promise.all([getJudgeById(ctx.env, cls.judge_id), listClassEntriesForDisplay(ctx.env, cls.id)]);
-          const winner = entries.find((e) => e.placing === 1);
-          return { cls, judge, breedName: breedNameFor(breeds, cls.breed_id), winnerName: winner ? nameForEntry(winner) : null };
-        })
-      ),
+      classes: (await loadVisibleClasses(ctx, show.id, filter)).map(({ cls, judge, entries }) => {
+        const winner = entries.find((e) => e.placing === 1);
+        return { cls, judge, breedName: breedNameFor(breeds, cls.breed_id), winnerName: winner ? nameForEntry(winner) : null };
+      }),
     }))
   );
+
+  const eligibleBreeds = breeds.filter((b) => b.ideal_vector !== null);
 
   return htmlResponse(
     renderShowsIndexPage({
@@ -85,6 +124,10 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
       gameDaysPerYear,
       nextShow,
       recentShows,
+      classType: filter.classType,
+      breedId: filter.breedId,
+      disciplines: disciplines.map((d) => ({ code: d.code, name: d.name })),
+      eligibleBreeds,
     })
   );
 }
@@ -112,13 +155,12 @@ async function loadAccountEligibility(
   return { eligible, ineligibleCount };
 }
 
-async function buildClassViews(ctx: RequestContext, showId: number, breeds: BreedRow[]): Promise<ShowPageClassView[]> {
+async function buildClassViews(ctx: RequestContext, showId: number, breeds: BreedRow[], filter: ShowsFilterParams): Promise<ShowPageClassView[]> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
-  const classes = await getShowClassesForShow(ctx.env, showId);
+  const visible = await loadVisibleClasses(ctx, showId, filter);
 
   return Promise.all(
-    classes.map(async (cls) => {
-      const [judge, entryRows] = await Promise.all([getJudgeById(ctx.env, cls.judge_id), listClassEntriesForDisplay(ctx.env, cls.id)]);
+    visible.map(async ({ cls, judge, entries: entryRows }) => {
       const entries = entryRows.map((e) => ({ ...e, name: nameForEntry(e) }));
       const view: ShowPageClassView = {
         cls,
@@ -144,11 +186,14 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
   const actionsLeft = actionsLeftFor(ctx);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const breeds = await getBreeds(ctx.env);
+  // §5.2: the same filter helper the /shows list uses - a show opened from a filtered link (or a
+  // bare /shows/:id, which defaults to 'all') never disagrees with what the list just showed.
+  const filter = await resolveShowsFilter(ctx);
 
   if (method === 'GET') {
     const notice = new URL(ctx.request.url).searchParams.get('entered') ? 'Entered.' : undefined;
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds), notice })
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds, filter), notice })
     );
   }
   if (method !== 'POST') return notFound();
@@ -169,7 +214,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
         actionsLeft,
         gameDaysPerYear,
         show,
-        classes: await buildClassViews(ctx, show.id, breeds),
+        classes: await buildClassViews(ctx, show.id, breeds, filter),
         error: 'Choose one of your own horses.',
       })
     );
@@ -185,7 +230,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
         actionsLeft,
         gameDaysPerYear,
         show,
-        classes: await buildClassViews(ctx, show.id, breeds),
+        classes: await buildClassViews(ctx, show.id, breeds, filter),
         error: turnsRefusalMessage(ctx),
       })
     );
@@ -205,7 +250,7 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName: breedNameFor(breeds, cls?.breed_id ?? null), minAgeYears })}`;
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds), error: message })
+      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds, filter), error: message })
     );
   }
 
@@ -222,15 +267,26 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
   const horse = await getHorse(ctx.env, entry.horse_id);
   if (!horse) return notFound();
 
+  // Slice 0016 §7.1: the entering stable is entry.entered_by_stable_id, not horse.owner_stable_id -
+  // they agree today (there is no transfer path yet) but this is the field that actually means
+  // "who entered this".
+  const enteringStable = await getStableById(ctx.env, entry.entered_by_stable_id);
+  if (!enteringStable) return notFound();
+
   const isAdmin = ctx.account!.is_admin === 1;
   // A player-owned horse's result is visible to its owner (or an admin) only - the same ownership
   // discipline every other horse-scoped page uses. The show barn's own results are visible to
   // anyone, since an NPC horse has no owning account to protect (§8.1's "no genotype it wouldn't
   // show a player" rule is about hidden traits, not about who can see a public placing).
   if (entry.is_npc === 0) {
-    const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
-    if (!ownerStable || (ownerStable.account_id !== ctx.account!.id && !isAdmin)) return notFound();
+    if (enteringStable.account_id !== ctx.account!.id && !isAdmin) return notFound();
+  } else if (!(await classHasPlayerEntry(ctx.env, cls.id))) {
+    // Item 8 (§5.3): a judged class nobody's own horse entered publishes no results at all -
+    // including an NPC entry's own "Why?" breakdown.
+    return notFound();
   }
+
+  const ownerAccount = enteringStable.account_id !== null ? await getAccountById(ctx.env, enteringStable.account_id) : null;
 
   const judge = await getJudgeById(ctx.env, cls.judge_id);
   // Slice 0012 §9.1: an old row with no "kind" key reads as conformation (there is no such row
@@ -316,7 +372,12 @@ export async function showEntryResultRoute(ctx: RequestContext, showId: number, 
       gameDaysPerYear: ctx.config.values.game_days_per_year,
       show,
       cls,
+      horseId: horse.id,
       horseName: displayNameFor(horse),
+      stableId: enteringStable.id,
+      stableName: enteringStable.name,
+      stableIsNpc: enteringStable.is_npc === 1,
+      ownerDisplayName: ownerAccount?.display_name ?? null,
       judge,
       placing: entry.placing,
       prizePaid: entry.prize_paid,

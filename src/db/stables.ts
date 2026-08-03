@@ -47,6 +47,23 @@ export async function listAllStables(env: Env): Promise<StableRow[]> {
   return result.results ?? [];
 }
 
+export interface WorldStableRow extends StableRow {
+  /** Null for an NPC stable (no account_id) or if the owning account was ever deleted. */
+  owner_display_name: string | null;
+}
+
+/** /world (slice 0016 §6.2): every active stable, player and NPC, with the owning account's
+ * display name resolved in the same query - one join, not a lookup per row (§6.2's own requirement). */
+export async function listStablesForWorld(env: Env): Promise<WorldStableRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT s.*, a.display_name AS owner_display_name
+     FROM stables s LEFT JOIN accounts a ON a.id = s.account_id
+     WHERE s.active = 1
+     ORDER BY s.is_npc ASC, s.name ASC`
+  ).all<WorldStableRow>();
+  return result.results ?? [];
+}
+
 export async function getStableById(env: Env, id: number): Promise<StableRow | null> {
   return env.DB.prepare('SELECT * FROM stables WHERE id = ?').bind(id).first<StableRow>();
 }

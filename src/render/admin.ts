@@ -13,12 +13,16 @@ import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import type { ConditionCensusRow } from '../db/health';
 import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
 import type { CareAdminData } from '../db/care';
+import type { PinAttemptDisplayRow } from '../db/pin';
+import type { HorseSearchRow } from '../db/horses';
+import { horseDisplayName } from '../db/horses';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
 type AdminSubnavPage =
   | 'home'
   | 'accounts'
+  | 'horses'
   | 'config'
   | 'world'
   | 'breeding'
@@ -29,6 +33,7 @@ type AdminSubnavPage =
   | 'health'
   | 'ageing'
   | 'care'
+  | 'security'
   | 'migrations'
   | 'reset';
 
@@ -36,6 +41,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
   return [
     { label: 'Admin home', href: '/admin', active: active === 'home' },
     { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
+    { label: 'Search horses', href: '/admin/horses', active: active === 'horses' },
     { label: 'Config', href: '/admin/config', active: active === 'config' },
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
     { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
@@ -46,6 +52,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Health', href: '/admin/health', active: active === 'health' },
     { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
     { label: 'Care', href: '/admin/care', active: active === 'care' },
+    { label: 'Security', href: '/admin/security', active: active === 'security' },
     { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
     { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
   ];
@@ -76,6 +83,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
       <p><strong>Paused:</strong> ${w.paused ? 'yes' : 'no'}</p>
     </div>
     <p><a class="button-link" href="/admin/accounts">Accounts</a></p>
+    <p><a class="button-link" href="/admin/horses">Search horses</a></p>
     <p><a class="button-link" href="/admin/config">Config</a></p>
     <p><a class="button-link" href="/admin/world">World clock</a></p>
     <p><a class="button-link" href="/admin/horses/new">Create a founding horse</a></p>
@@ -87,6 +95,7 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
     <p><a class="button-link" href="/admin/health">Health (horses)</a></p>
     <p><a class="button-link" href="/admin/ageing">Ageing</a></p>
     <p><a class="button-link" href="/admin/care">Care</a></p>
+    <p><a class="button-link" href="/admin/security">Security</a></p>
     <p><a class="button-link" href="/admin/migrations">Migrations</a></p>
     <p><a class="button-link" href="/admin/reset">Start over</a></p>
     <p><a class="button-link" href="/health">Health page</a></p>
@@ -94,23 +103,81 @@ export function renderAdminHomePage(params: { world: WorldRow }): SafeHtml {
   return shell(w, body, 'Admin', 'home');
 }
 
+/**
+ * Slice 0016 §8: modify and delete. Stable count and last login are shown so the operator can tell
+ * an account with real history from a mistyped one worth deleting. Rename/username-change,
+ * admin-flag toggle, and delete each get their own row-level form, all inside the same "Manage"
+ * details the deactivate/reset-password forms already used - CLAUDE.md §13's "no polished admin
+ * UI", one form per action.
+ */
 export function renderAccountsPage(params: {
   world: WorldRow;
   accounts: AccountRow[];
+  stableCounts: Map<number, number>;
+  currentAccountId: number;
+  adminCount: number;
   error?: string;
   notice?: string;
 }): SafeHtml {
-  const rows = params.accounts.map(
-    (a) => html`
+  const rows = params.accounts.map((a) => {
+    const stableCount = params.stableCounts.get(a.id) ?? 0;
+    const isSelf = a.id === params.currentAccountId;
+    const isLastAdmin = a.is_admin === 1 && params.adminCount <= 1;
+
+    const adminToggle =
+      isSelf || isLastAdmin
+        ? html`<p class="muted">${isSelf ? "Can't remove your own admin flag." : 'The last admin - promote someone else first.'}</p>`
+        : html`
+          <form method="post" action="/admin/accounts">
+            <input type="hidden" name="action" value="set_admin">
+            <input type="hidden" name="account_id" value="${String(a.id)}">
+            <input type="hidden" name="is_admin" value="${a.is_admin ? '0' : '1'}">
+            <button type="submit" class="secondary">${a.is_admin ? 'Remove admin' : 'Make admin'}</button>
+          </form>`;
+
+    const deleteOrExplain =
+      stableCount > 0
+        ? html`<p class="muted">Owns ${String(stableCount)} stable${stableCount === 1 ? '' : 's'} - deactivate instead, or move the stables first.</p>`
+        : isSelf
+          ? html`<p class="muted">Can't delete your own account.</p>`
+          : html`
+            <form method="post" action="/admin/accounts">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="account_id" value="${String(a.id)}">
+              <label>Type <code>${a.username}</code> to confirm
+                <input type="text" name="confirm_word" required autocapitalize="off" autocomplete="off">
+              </label>
+              <label class="confirm-checkbox">
+                <input type="checkbox" name="confirm" value="yes" required>
+                Yes, delete this account. This cannot be undone.
+              </label>
+              <button type="submit" class="secondary">Delete account</button>
+            </form>`;
+
+    return html`
     <tr>
       <td>${a.username}</td>
       <td>${a.display_name}</td>
       <td>${a.is_admin ? 'admin' : 'player'}</td>
       <td>${a.active ? 'active' : 'deactivated'}</td>
+      <td>${String(stableCount)}</td>
+      <td>${a.last_login_real_ts !== null ? formatLocal(a.last_login_real_ts, params.world.tick_timezone) : raw('&mdash;')}</td>
       <td>${a.must_change_password ? html`<span class="badge badge-warning">must change password</span>` : ''}</td>
       <td>
         <details class="row-actions">
           <summary>Manage</summary>
+          <form method="post" action="/admin/accounts">
+            <input type="hidden" name="action" value="edit">
+            <input type="hidden" name="account_id" value="${String(a.id)}">
+            <label>Name
+              <input type="text" name="display_name" value="${a.display_name}" required>
+            </label>
+            <label>Username
+              <input type="text" name="username" value="${a.username}" required autocapitalize="off">
+            </label>
+            <button type="submit" class="secondary">Save name/username</button>
+          </form>
+          ${adminToggle}
           <form method="post" action="/admin/accounts">
             <input type="hidden" name="action" value="${a.active ? 'deactivate' : 'reactivate'}">
             <input type="hidden" name="account_id" value="${String(a.id)}">
@@ -124,17 +191,19 @@ export function renderAccountsPage(params: {
             </label>
             <button type="submit" class="secondary">Reset password</button>
           </form>
+          ${deleteOrExplain}
         </details>
       </td>
-    </tr>`
-  );
+    </tr>`;
+  });
 
   const body = html`
     <h1>Accounts</h1>
     ${errorBox(params.error)}
     ${noticeBox(params.notice)}
+    <p class="muted">Deactivate is the normal answer for an account nobody uses anymore. Delete only works for an account that owns nothing - in practice, one created with a typo and never used.</p>
     <table>
-      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th><th></th></tr></thead>
+      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Stables</th><th>Last login</th><th></th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <details class="section-collapse" ${params.error ? raw('open') : raw('')}>
@@ -990,4 +1059,138 @@ export function renderCareAdminPage(params: { world: WorldRow; data: CareAdminDa
     </div>
   `;
   return shell(params.world, body, 'Care', 'care');
+}
+
+/**
+ * /admin/security (slice 0016 §9.2): set or change the admin PIN for the logged-in admin's own
+ * account - never another admin's - and see recent attempts against the door (§9.3). Changing the
+ * PIN requires typing the account's own login password, re-checked server-side.
+ */
+export function renderAdminSecurityPage(params: {
+  world: WorldRow;
+  hasPinSet: boolean;
+  attempts: PinAttemptDisplayRow[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const attemptRows = params.attempts.map(
+    (a) => html`
+    <tr>
+      <td>${formatLocal(a.real_ts, params.world.tick_timezone)}</td>
+      <td>${a.attempted_by_username ?? raw('&mdash;')}</td>
+      <td>${a.success ? 'correct' : 'wrong'}</td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Security</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <h2>Admin door PIN</h2>
+      <p class="muted">A lock on the admin pages for a child holding an unlocked phone that is already logged in as a grown-up. It is not protection against somebody who knows the account password - the "forgotten PIN" link on the unlock page hands admin back to anyone who does, by design.</p>
+      <p><strong>Currently:</strong> ${params.hasPinSet ? 'a PIN is set' : 'no PIN is set - anyone holding this phone can reach these pages'}</p>
+      <form method="post" action="/admin/security">
+        <label>New 4-digit PIN
+          <input type="text" inputmode="numeric" name="pin" maxlength="4" required autocomplete="off">
+        </label>
+        <label>Your account password, to confirm
+          <input type="password" name="password" required>
+        </label>
+        <button type="submit">${params.hasPinSet ? 'Change PIN' : 'Set PIN'}</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Recent attempts</h2>
+      <table>
+        <thead><tr><th>When</th><th>Who</th><th>Result</th></tr></thead>
+        <tbody>${attemptRows.length ? attemptRows : html`<tr><td colspan="3" class="muted">None yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+  return shell(params.world, body, 'Security', 'security');
+}
+
+/**
+ * /admin/unlock (slice 0016 §9.5/§9.7): the gate itself. Deliberately not wrapped in shell() - an
+ * unlocked admin has not proven they belong on an admin page yet, so this page carries no subnav
+ * and no link back into the admin area except by unlocking. `forgot` switches to the password-based
+ * reset form (§9.7); both forms carry the same hidden redirect target.
+ */
+export function renderAdminUnlockPage(params: { world: WorldRow; redirectTo: string; forgot: boolean; error?: string }): SafeHtml {
+  const body = params.forgot
+    ? html`
+      <h1>Forgotten PIN</h1>
+      ${errorBox(params.error)}
+      <p>Typing your account password clears the PIN, so you can set a new one from Security. This grants nothing new - knowing the password already means being this admin.</p>
+      <form method="post" action="/admin/unlock">
+        <input type="hidden" name="action" value="forgot">
+        <input type="hidden" name="redirect" value="${params.redirectTo}">
+        <label>Account password
+          <input type="password" name="password" required>
+        </label>
+        <button type="submit">Clear the PIN</button>
+      </form>
+      <p><a href="/admin/unlock?redirect=${encodeURIComponent(params.redirectTo)}">Back to the PIN</a></p>`
+    : html`
+      <h1>Admin PIN</h1>
+      ${errorBox(params.error)}
+      <p>Enter the admin PIN to continue.</p>
+      <form method="post" action="/admin/unlock">
+        <input type="hidden" name="redirect" value="${params.redirectTo}">
+        <label>4-digit PIN
+          <input type="text" inputmode="numeric" name="pin" maxlength="4" required autocomplete="off" autofocus>
+        </label>
+        <button type="submit">Unlock</button>
+      </form>
+      <p><a href="/admin/unlock?redirect=${encodeURIComponent(params.redirectTo)}&forgot=1">I've forgotten the PIN</a></p>`;
+
+  return pageShell({ title: 'Admin PIN', world: params.world, loggedIn: true, isAdmin: true, section: 'admin', actionsLeft: null, body });
+}
+
+/**
+ * /admin/horses: find any horse by name and jump to its full page. `/horses/:id` already shows an
+ * admin everything an owner sees, plus true health status computed straight from the genotype -
+ * this is just the way in, since going stable by stable to find one horse isn't practical once a
+ * family has more than a handful.
+ */
+export function renderAdminHorseSearchPage(params: { world: WorldRow; query: string; results: HorseSearchRow[] }): SafeHtml {
+  const rows = params.results.map(
+    (h) => html`
+    <tr>
+      <td><a href="/horses/${String(h.id)}">${horseDisplayName(h)}</a></td>
+      <td>${h.stable_name}</td>
+      <td>${h.breed_name ?? raw('&mdash;')}</td>
+      <td>${h.sex}</td>
+      <td>${h.status}</td>
+      <td>${String(h.born_game_day)}</td>
+    </tr>`
+  );
+
+  const noResults =
+    params.query.length === 0
+      ? raw('')
+      : params.results.length === 0
+        ? html`<p class="muted">No horse's registered or barn name matches "${params.query}".</p>`
+        : raw('');
+
+  const body = html`
+    <h1>Search horses</h1>
+    <p class="muted">Finds a horse by registered or barn name, from any stable - the horse's own page shows everything an owner sees, and (as an admin) the true health result straight from its genotype.</p>
+    <form method="get" action="/admin/horses">
+      <label>Name
+        <input type="text" name="q" value="${params.query}" autocomplete="off" autofocus>
+      </label>
+      <button type="submit">Search</button>
+    </form>
+    ${noResults}
+    ${rows.length
+      ? html`
+        <table>
+          <thead><tr><th>Name</th><th>Stable</th><th>Breed</th><th>Sex</th><th>Status</th><th>Born (game day)</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+      : raw('')}
+  `;
+  return shell(params.world, body, 'Search horses', 'horses');
 }

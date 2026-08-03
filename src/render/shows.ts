@@ -106,6 +106,54 @@ export interface ShowsIndexRecentClass {
   winnerName: string | null;
 }
 
+/** Slice 0016 §5.1: the class-type tabs (All, Conformation, one per enabled discipline) plus, when
+ * two or more breeds have classes, a breed picker - both plain links/a plain GET form, no
+ * JavaScript (§3). The breed picker is only rendered on a non-discipline tab, since a discipline
+ * class never carries a breed_id (mutually exclusive by construction). */
+function showsFilterControls(params: {
+  classType: string;
+  breedId: number | null;
+  disciplines: { code: string; name: string }[];
+  eligibleBreeds: { id: number; name: string }[];
+}): SafeHtml {
+  const usesBreed = params.classType === 'all' || params.classType === 'conformation';
+  const tabHref = (classType: string): string => {
+    const qs = new URLSearchParams({ class: classType });
+    if ((classType === 'all' || classType === 'conformation') && params.breedId !== null) qs.set('breed', String(params.breedId));
+    return `/shows?${qs.toString()}`;
+  };
+
+  const tabs = [
+    { key: 'all', label: 'All' },
+    { key: 'conformation', label: 'Conformation' },
+    ...params.disciplines.map((d) => ({ key: d.code, label: d.name })),
+  ];
+
+  const tabNav = html`
+    <nav class="subnav">
+      ${tabs.map((t) => html`<a href="${tabHref(t.key)}" class="${t.key === params.classType ? 'subnav-link is-active' : 'subnav-link'}">${t.label}</a>`)}
+    </nav>`;
+
+  const breedPicker =
+    usesBreed && params.eligibleBreeds.length >= 2
+      ? html`
+        <form method="get" action="/shows">
+          <input type="hidden" name="class" value="${params.classType}">
+          <label>Breed
+            <select name="breed">
+              <option value="" ${params.breedId === null ? raw('selected') : raw('')}>All breeds</option>
+              ${params.eligibleBreeds.map(
+                (b) => html`<option value="${String(b.id)}" ${b.id === params.breedId ? raw('selected') : raw('')}>${b.name}</option>`
+              )}
+            </select>
+          </label>
+          <button type="submit">Show</button>
+        </form>`
+      : raw('');
+
+  return html`${tabNav}${breedPicker}`;
+}
+
 export function renderShowsIndexPage(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -113,6 +161,10 @@ export function renderShowsIndexPage(params: {
   gameDaysPerYear: number;
   nextShow: { show: ShowRow; classes: ShowsIndexNextClass[] } | null;
   recentShows: { show: ShowRow; classes: ShowsIndexRecentClass[] }[];
+  classType: string;
+  breedId: number | null;
+  disciplines: { code: string; name: string }[];
+  eligibleBreeds: { id: number; name: string }[];
 }): SafeHtml {
   const nextBlock = params.nextShow
     ? html`
@@ -131,7 +183,7 @@ export function renderShowsIndexPage(params: {
         )}
         <p><a class="button-link" href="/shows/${String(params.nextShow.show.id)}">View and enter</a></p>
       </div>`
-    : html`<p>No show is currently open for entries.</p>`;
+    : html`<p>No open classes match this filter right now.</p>`;
 
   const recentBlock = params.recentShows.length
     ? params.recentShows.map(
@@ -148,6 +200,7 @@ export function renderShowsIndexPage(params: {
 
   const body = html`
     <h1>Shows</h1>
+    ${showsFilterControls({ classType: params.classType, breedId: params.breedId, disciplines: params.disciplines, eligibleBreeds: params.eligibleBreeds })}
     <h2>Next up</h2>
     ${nextBlock}
     <h2>Recent results</h2>
@@ -199,7 +252,8 @@ export function renderShowPage(params: {
       (e) => html`
       <tr>
         <td>${open ? '-' : placingText(e.placing)}</td>
-        <td>${e.name}${e.is_npc ? html` <span class="muted">(show barn)</span>` : raw('')}</td>
+        <td><a href="/world/horses/${String(e.horse_id)}">${e.name}</a></td>
+        <td>${e.stable_is_npc ? html`${e.stable_name} <span class="muted">(the game's own barn)</span>` : html`${e.stable_name}${e.owner_display_name ? html` <span class="muted">(${e.owner_display_name})</span>` : raw('')}`}</td>
         <td>${e.final_score !== null ? e.final_score.toFixed(1) : raw('&mdash;')}</td>
         <td>${e.placing !== null ? html`<a href="/shows/${String(s.id)}/entries/${String(e.id)}">Why?</a>` : raw('')}</td>
       </tr>`
@@ -230,8 +284,8 @@ export function renderShowPage(params: {
         <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
         ${thinFieldNote(c.cls, c.entries.length)}
         <table>
-          <thead><tr><th>Place</th><th>Horse</th><th>Score</th><th></th></tr></thead>
-          <tbody>${entryRows.length ? entryRows : html`<tr><td colspan="4" class="muted">No entries yet.</td></tr>`}</tbody>
+          <thead><tr><th>Place</th><th>Horse</th><th>Stable</th><th>Score</th><th></th></tr></thead>
+          <tbody>${entryRows.length ? entryRows : html`<tr><td colspan="5" class="muted">No entries yet.</td></tr>`}</tbody>
         </table>
         ${entryForm}
       </div>`;
@@ -273,7 +327,14 @@ export function renderEntryResultPage(params: {
   gameDaysPerYear: number;
   show: ShowRow;
   cls: ShowClassRow;
+  horseId: number;
   horseName: string;
+  /** Slice 0016 §7.2: the entering stable and its owner, same shape as the placings table's own
+   * Stable column - shown as a line under the placing. */
+  stableId: number;
+  stableName: string;
+  stableIsNpc: boolean;
+  ownerDisplayName: string | null;
   judge: JudgeRow | undefined;
   placing: number;
   prizePaid: number;
@@ -336,9 +397,14 @@ export function renderEntryResultPage(params: {
       ? html`<p>${params.ageModifierApplied === 1 ? 'Age: in its prime.' : html`Age applied: <strong>${params.ageModifierApplied.toFixed(2)}</strong>${params.ageNote ? html` (${params.ageNote})` : raw('')}`}</p>`
       : raw('');
 
+  const stableLine = params.stableIsNpc
+    ? html`${params.stableName} <span class="muted">(the game's own barn)</span>`
+    : html`${params.stableName}${params.ownerDisplayName ? html` <span class="muted">(${params.ownerDisplayName})</span>` : raw('')}`;
+
   const body = html`
-    <h1>${params.horseName} at ${params.show.name}</h1>
+    <h1><a href="/world/horses/${String(params.horseId)}">${params.horseName}</a> at ${params.show.name}</h1>
     <p><strong>${placingText(params.placing)}</strong>${prizeSentence}, judged by ${params.judge?.name ?? 'an unnamed judge'}.</p>
+    <p>Entered by <a href="/world/stables/${String(params.stableId)}">${stableLine}</a></p>
     <div class="card">
       <h2>How the score was reached</h2>
       <table>
