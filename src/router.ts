@@ -31,6 +31,7 @@ import {
   horseRetireRoute,
   horsePetHomeRoute,
   horseCareRoute,
+  horseTreatRoute,
   horseLocationRoute,
   horseListRoute,
   horseStudRoute,
@@ -67,6 +68,7 @@ import {
   adminHealthRoute,
   adminAgeingRoute,
   adminCareRoute,
+  adminIncidentsRoute,
   adminNpcRoute,
   adminConsignmentRoute,
   adminSecurityRoute,
@@ -172,6 +174,7 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
     if (sub === '/pet-home') return withReissuedCookie(ctx, await horsePetHomeRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
+    if (sub === '/treat' && method === 'POST') return withReissuedCookie(ctx, await horseTreatRoute(ctx, horseId));
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
     if (sub === '/list' && method === 'POST') return withReissuedCookie(ctx, await horseListRoute(ctx, horseId));
     if (sub === '/stud' && method === 'POST') return withReissuedCookie(ctx, await horseStudRoute(ctx, horseId));
@@ -288,6 +291,7 @@ async function dispatchAdminRoute(ctx: RequestContext, path: string, method: str
   if (path === '/admin/health' && method === 'GET') return adminHealthRoute(ctx);
   if (path === '/admin/ageing') return adminAgeingRoute(ctx, method);
   if (path === '/admin/care') return adminCareRoute(ctx, method);
+  if (path === '/admin/incidents') return adminIncidentsRoute(ctx, method);
   if (path === '/admin/npc') return adminNpcRoute(ctx, method);
   if (path === '/admin/consignment') return adminConsignmentRoute(ctx, method);
   return null;

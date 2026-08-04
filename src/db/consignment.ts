@@ -204,7 +204,7 @@ async function mintConsignmentCandidate(
   env: Env,
   batchSeed: number,
   index: number,
-  eligibleBreeds: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null }[],
+  breed: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null },
   workingInjections: ConsignmentInjectionRow[],
   appliedThisBatch: Map<number, number>,
   lethalTriggers: LethalTrigger[],
@@ -212,7 +212,6 @@ async function mintConsignmentCandidate(
   cfg: Config['values']
 ): Promise<MintedCandidate> {
   const candidateSeed = deriveSeed(batchSeed, `candidate_${String(index)}`);
-  const breed = eligibleBreeds[makeRng(deriveSeed(candidateSeed, 'breed_pick')).int(eligibleBreeds.length)];
   const pool = parseAllelePool(breed.founding_allele_pool);
   const sex: 'mare' | 'stallion' = makeRng(deriveSeed(candidateSeed, 'sex')).next() < 0.5 ? 'mare' : 'stallion';
 
@@ -292,96 +291,98 @@ async function mintConsignmentBatch(
   const eligibleAbilityTraits = await getSpecializableAbilityTraits(env);
 
   const batchSeed = randomSeed();
-  const min = cfg.consignment_batch_min;
-  const max = cfg.consignment_batch_max;
-  const batchSize = Math.max(1, min + (max > min ? makeRng(deriveSeed(batchSeed, 'batch_size')).int(max - min + 1) : 0));
+  const horsesPerBreed = cfg.consignment_horses_per_breed;
+  const batchSize = eligibleBreeds.length * horsesPerBreed;
 
-  for (let i = 0; i < batchSize; i++) {
-    const candidate = await mintConsignmentCandidate(
-      env,
-      batchSeed,
-      i,
-      eligibleBreeds,
-      workingInjections,
-      appliedThisBatch,
-      lethalTriggers,
-      eligibleAbilityTraits,
-      cfg
-    );
+  let index = 0;
+  for (const breed of eligibleBreeds) {
+    for (let n = 0; n < horsesPerBreed; n++, index++) {
+      const candidate = await mintConsignmentCandidate(
+        env,
+        batchSeed,
+        index,
+        breed,
+        workingInjections,
+        appliedThisBatch,
+        lethalTriggers,
+        eligibleAbilityTraits,
+        cfg
+      );
 
-    const insertResult = await env.DB.batch(
-      buildFoundingHorseInsertStatements(env, {
-        stableId: dealerId,
-        sex: candidate.sex,
-        breedId: candidate.breedId,
-        breedCode: candidate.breedCode,
-        registeredName: candidate.registeredName,
-        breederPrefix: candidate.originPrefix,
-        bornGameDay: gameDay - candidate.ageGameDays,
-        genotype: candidate.genotype,
-        rngSeed: candidate.candidateSeed,
-        worldTickSeq: tickSeq,
-        estrousCycleTicks: cfg.estrous_cycle_ticks,
-        conformationNoiseSd: cfg.conformation_noise_sd,
-        conditions,
-        lethalFoalDeathGameDays: cfg.lethal_foal_death_game_days,
-        accountId: null,
-        lifespanConfig: cfg,
-        careStartAgeGameDays: cfg.care_start_age_game_days,
-        currentGameDay: gameDay,
-      })
-    );
-    const horseId = insertResult[0].meta.last_row_id;
-    if (candidate.appliedInjectionId !== null) appliedThisBatch.set(candidate.appliedInjectionId, horseId);
-
-    // §5.6: the dealer performs tests and writes real horse_knowledge rows, at cost_paid reflecting
-    // the going price, but pays for NONE of it - no ledger row, no balance movement, because the
-    // dealer's balance is a documented fiction (migrations/0097). This differs from Part B's own
-    // NPC-listing tests on purpose (that stable's balance is real) - see that migration's comment.
-    const knowledgeStatements = [];
-    if (candidate.appliedInjectionLocus !== null) {
-      // §5.4, non-negotiable: an injected locus is always pre-tested, or the injection is invisible
-      // and nobody ever pays for the allele it introduced.
-      knowledgeStatements.push(
-        ...buildLocusKnowledgePurchaseStatements(env, {
+      const insertResult = await env.DB.batch(
+        buildFoundingHorseInsertStatements(env, {
           stableId: dealerId,
-          horseId,
-          gameDay,
+          sex: candidate.sex,
+          breedId: candidate.breedId,
+          breedCode: candidate.breedCode,
+          registeredName: candidate.registeredName,
+          breederPrefix: candidate.originPrefix,
+          bornGameDay: gameDay - candidate.ageGameDays,
           genotype: candidate.genotype,
-          locusCodes: [candidate.appliedInjectionLocus],
-          costByCode: { [candidate.appliedInjectionLocus]: cfg.genotype_test_cost },
+          rngSeed: candidate.candidateSeed,
+          worldTickSeq: tickSeq,
+          estrousCycleTicks: cfg.estrous_cycle_ticks,
+          conformationNoiseSd: cfg.conformation_noise_sd,
+          conditions,
+          lethalFoalDeathGameDays: cfg.lethal_foal_death_game_days,
+          accountId: null,
+          lifespanConfig: cfg,
+          careStartAgeGameDays: cfg.care_start_age_game_days,
+          currentGameDay: gameDay,
         })
       );
-    }
-    const testCount = drawWeighted(makeRng(deriveSeed(candidate.candidateSeed, 'test_count')), cfg.consignment_test_count_weights);
-    if (testCount > 0 && conditions.length > 0) {
-      const chosen = makeRng(deriveSeed(candidate.candidateSeed, 'test_pick')).shuffle(conditions).slice(0, Math.min(testCount, conditions.length));
-      const costByCode: Record<string, number> = {};
-      chosen.forEach((c) => {
-        costByCode[c.code] = cfg.genotype_test_cost;
+      const horseId = insertResult[0].meta.last_row_id;
+      if (candidate.appliedInjectionId !== null) appliedThisBatch.set(candidate.appliedInjectionId, horseId);
+
+      // §5.6: the dealer performs tests and writes real horse_knowledge rows, at cost_paid reflecting
+      // the going price, but pays for NONE of it - no ledger row, no balance movement, because the
+      // dealer's balance is a documented fiction (migrations/0097). This differs from Part B's own
+      // NPC-listing tests on purpose (that stable's balance is real) - see that migration's comment.
+      const knowledgeStatements = [];
+      if (candidate.appliedInjectionLocus !== null) {
+        // §5.4, non-negotiable: an injected locus is always pre-tested, or the injection is invisible
+        // and nobody ever pays for the allele it introduced.
+        knowledgeStatements.push(
+          ...buildLocusKnowledgePurchaseStatements(env, {
+            stableId: dealerId,
+            horseId,
+            gameDay,
+            genotype: candidate.genotype,
+            locusCodes: [candidate.appliedInjectionLocus],
+            costByCode: { [candidate.appliedInjectionLocus]: cfg.genotype_test_cost },
+          })
+        );
+      }
+      const testCount = drawWeighted(makeRng(deriveSeed(candidate.candidateSeed, 'test_count')), cfg.consignment_test_count_weights);
+      if (testCount > 0 && conditions.length > 0) {
+        const chosen = makeRng(deriveSeed(candidate.candidateSeed, 'test_pick')).shuffle(conditions).slice(0, Math.min(testCount, conditions.length));
+        const costByCode: Record<string, number> = {};
+        chosen.forEach((c) => {
+          costByCode[c.code] = cfg.genotype_test_cost;
+        });
+        knowledgeStatements.push(
+          ...buildKnowledgePurchaseStatements(env, { stableId: dealerId, horseId, gameDay, genotype: candidate.genotype, conditions: chosen, costByCode })
+        );
+      }
+      if (knowledgeStatements.length > 0) await env.DB.batch(knowledgeStatements);
+
+      const horseRow = await getHorse(env, horseId);
+      if (!horseRow) throw new Error('mintConsignmentBatch: horse vanished immediately after insert');
+      const appraisal = await appraiseHorseForStable(env, horseRow, dealerId, gameDay, cfg);
+      // §5.6: appraise() × consignment_price_multiplier only - no dealer-only carrier premium, since
+      // §4.7 already makes colour a term inside appraise() itself, correctly, for every seller.
+      const rawPrice = appraisal.value * cfg.consignment_price_multiplier;
+      const price = Math.min(cfg.market_max_price, Math.max(10, Math.round(rawPrice / 10) * 10));
+
+      await createListing(env, {
+        horseId,
+        sellerStableId: dealerId,
+        price,
+        guideValue: appraisal.value,
+        gameDay,
+        listingGameDays: cfg.consignment_listing_game_days,
       });
-      knowledgeStatements.push(
-        ...buildKnowledgePurchaseStatements(env, { stableId: dealerId, horseId, gameDay, genotype: candidate.genotype, conditions: chosen, costByCode })
-      );
     }
-    if (knowledgeStatements.length > 0) await env.DB.batch(knowledgeStatements);
-
-    const horseRow = await getHorse(env, horseId);
-    if (!horseRow) throw new Error('mintConsignmentBatch: horse vanished immediately after insert');
-    const appraisal = await appraiseHorseForStable(env, horseRow, dealerId, gameDay, cfg);
-    // §5.6: appraise() × consignment_price_multiplier only - no dealer-only carrier premium, since
-    // §4.7 already makes colour a term inside appraise() itself, correctly, for every seller.
-    const rawPrice = appraisal.value * cfg.consignment_price_multiplier;
-    const price = Math.min(cfg.market_max_price, Math.max(10, Math.round(rawPrice / 10) * 10));
-
-    await createListing(env, {
-      horseId,
-      sellerStableId: dealerId,
-      price,
-      guideValue: appraisal.value,
-      gameDay,
-      listingGameDays: cfg.consignment_listing_game_days,
-    });
   }
 
   const injectionUpdateStatements = [...appliedThisBatch.entries()].map(([injectionId, horseId]) =>
@@ -467,7 +468,10 @@ export async function runConsignments(env: Env, gameDay: number, tickSeq: number
   if (gameDay < dueDay) return;
 
   await sweepExpiredConsignmentListings(env, dealerId, gameDay);
-  const conditions = await getEnabledConditions(env);
+  // Slice 0020: only genotype-testable (locus-based) conditions belong in the dealer's disease
+  // panel - the twelve acquired conditions have no allele to test, and getEnabledConditions now
+  // returns those too.
+  const conditions = (await getEnabledConditions(env)).filter((c) => c.locus_code !== null);
   await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions, true);
 }
 
@@ -491,7 +495,7 @@ export async function forceConsignmentBatchNow(env: Env, gameDay: number, tickSe
 
   const dealerId = dealer.id;
   await sweepExpiredConsignmentListings(env, dealerId, gameDay);
-  const conditions = await getEnabledConditions(env);
+  const conditions = (await getEnabledConditions(env)).filter((c) => c.locus_code !== null);
   await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions, false);
   return { ok: true };
 }

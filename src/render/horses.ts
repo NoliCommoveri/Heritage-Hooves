@@ -20,6 +20,7 @@ import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
+import type { OpenIncidentView, IncidentHistoryView } from '../db/acquiredConditions';
 
 export const displayNameFor = horseDisplayName;
 
@@ -42,6 +43,13 @@ function healthBarnBadge(horse: HorseRow, visibleConditions: ConditionRow[]): Sa
   if (horse.status === 'removed') return html`<span class="badge">Retired away</span>`;
   if (visibleConditions.length === 0) return raw('');
   return html`<span class="badge badge-warning">${visibleConditions.map((c) => c.name).join(', ')}</span>`;
+}
+
+/** Slice 0020 §8.3: the loudest badge in the barn list on purpose (§1 step 5) - "look at this now"
+ * rather than "worth a look eventually", so it is placed first, ahead of even the health badge. */
+function incidentBarnBadge(hasOpenIncident: boolean): SafeHtml {
+  if (!hasOpenIncident) return raw('');
+  return html`<span class="badge badge-danger">Needs the vet</span>`;
 }
 
 /** Slice 0011 §4.3/§8.1: the barn list's one-word Veteran/Failing marker - only ever shown for a
@@ -485,6 +493,8 @@ export function renderBarnList(params: {
     availability: WorkAvailability | null;
     /** Slice 0017 §6.5: the asking price when this horse has an open listing, else null. */
     listingPrice: number | null;
+    /** Slice 0020 §8.3: true when this horse has a currently open acute incident. */
+    hasOpenIncident: boolean;
   }[];
   feedLevels: Record<string, FeedLevelDefinition>;
   careSummary: { farrierDue: number; wellnessDue: number };
@@ -498,11 +508,11 @@ export function renderBarnList(params: {
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability, listingPrice }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability, listingPrice, hasOpenIncident }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)} ${listingBarnBadge(listingPrice)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${incidentBarnBadge(hasOpenIncident)} ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)} ${listingBarnBadge(listingPrice)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -732,6 +742,62 @@ function healthCard(params: { canSeeFullHealth: boolean; canTest: boolean; rows:
     </div>`;
 }
 
+const OUTCOME_LABEL: Record<IncidentHistoryView['outcome'], string> = {
+  resolved: 'Recovered',
+  manageable: 'Settled into ongoing management',
+  degenerative: 'Left a lasting problem - cannot be shown',
+  death: 'Did not survive',
+};
+
+/**
+ * Slice 0020 §8.2: the Incidents card, between Health and Care - the same discipline §2.3
+ * establishes elsewhere applies here too, this card never touches the Health card's own rows.
+ * Nothing about an acquired condition is hidden (§2.7), so this renders for owner and admin alike,
+ * omitting itself entirely for anyone else and when there is nothing to show at all.
+ */
+function incidentsCard(params: {
+  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[] };
+  horseId: number;
+  canManage: boolean;
+  incidentError?: string;
+  incidentNotice?: string;
+}): SafeHtml {
+  const { open, history } = params.incidents;
+  if (open.length === 0 && history.length === 0) return raw('');
+
+  const openRows = open.map(
+    (o) => html`
+    <div class="health-row">
+      <p><strong>${o.conditionName}.</strong> ${o.treated ? html`<span class="badge badge-success">Treated</span>` : html`<span class="badge badge-danger">${String(o.daysRemaining)} day${o.daysRemaining === 1 ? '' : 's'} left to call the vet</span>`}</p>
+      <p class="muted">${o.teachingText}</p>
+      ${!o.treated && params.canManage
+        ? html`
+          <form method="post" action="/horses/${String(params.horseId)}/treat">
+            <input type="hidden" name="condition_code" value="${o.conditionCode}">
+            <button type="submit">Call the vet — ${String(o.cost)}</button>
+          </form>`
+        : o.treated
+          ? html`<p class="muted">Treated - being watched.</p>`
+          : raw('')}
+    </div>`
+  );
+
+  const historyRows = history.length
+    ? html`
+      <h3>Past incidents</h3>
+      <ul>${history.map((h) => html`<li>${h.conditionName} (game day ${String(h.onsetGameDay)}) - ${OUTCOME_LABEL[h.outcome]}</li>`)}</ul>`
+    : raw('');
+
+  return html`
+    <div class="card">
+      <h2>Incidents</h2>
+      ${errorBox(params.incidentError)}
+      ${noticeBox(params.incidentNotice)}
+      ${openRows}
+      ${historyRows}
+    </div>`;
+}
+
 /** Amendment 0017a §4.5 point 2: what this horse can pass on, per colour/gait locus - "untested"
  * shown as loudly as a result, the same rule slice 0017 §2.3 applies to health knowledge. */
 export interface ColourInferenceRow {
@@ -931,6 +997,11 @@ export function renderHorsePage(params: {
   defaultStudSeasonCap: number;
   studError?: string;
   studNotice?: string;
+  /** Slice 0020 §8.2: open acute incidents and past outcomes - empty for a non-owner, non-admin
+   * viewer, the same way health's does. */
+  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[] };
+  incidentError?: string;
+  incidentNotice?: string;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -1079,6 +1150,9 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
+    ${params.owner || params.isAdmin
+      ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })
+      : raw('')}
     ${colourCard({ rows: params.colour, visibleColour: params.visibleColour, patternWords: params.patternWords, canTest: params.canManage, horseId: h.id })}
     ${careCard({
       care: params.care,

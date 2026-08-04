@@ -39,6 +39,12 @@ export function eligibilityMessage(reason: EligibilityReason | 'class_closed' | 
       return "is out at pasture. Bring it into the barn first - it'll need a little while to settle in before it can be shown.";
     case 'settling_in':
       return 'came in from pasture recently and is still settling back into work.';
+    // Slice 0020 §5.4. Two reasons, two futures - an open incident clears on its own; a
+    // degenerative outcome does not.
+    case 'acute_incident':
+      return "can't be shown right now - it's in the middle of a health incident.";
+    case 'degenerative_incident':
+      return "can't be shown - a past health incident left a lasting problem.";
     case 'class_closed':
       return "can't enter - this class isn't open for entries anymore.";
     case 'not_found':

@@ -20,6 +20,7 @@ import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { noticeCareDue } from './care';
+import { rollAcuteIncidents, resolveAcuteIncidents } from './acquiredConditions';
 import { deleteOldEvents } from './events';
 import { expireListings } from './listings';
 import { closeDeadStudListings } from './stud';
@@ -131,6 +132,14 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // deleteOldEvents (an event written this tick is subject to the same retention pass as any
       // other, the same reasoning every other event-writing stage above already follows).
       await noticeCareDue(env, newGameDay, config);
+      // Slice 0020 §7.3: after noticeCareDue - care state should be settled for the game day before
+      // it is read as an onset-risk input, the same reasoning noticeCareDue's own placement after
+      // chargeUpkeep already follows. Onset before resolution within the same tick: an incident
+      // cannot both start and finish in the same invocation, so it gets at least one full tick as
+      // 'acute' before its window can even begin closing (the same "the child finds it alive first"
+      // concern slice 0010 §2.2 raised about GBED, applying identically here).
+      await rollAcuteIncidents(env, newGameDay, newTickSeq, config);
+      await resolveAcuteIncidents(env, newGameDay, config);
       // Slice 0017 §8: after noticeCareDue and before deleteOldEvents, inside this same paused === 0
       // branch. Both reasons matter - a paused world must not expire listings (a family on holiday
       // should not come back to an empty market), and an event written by this stage is subject to
