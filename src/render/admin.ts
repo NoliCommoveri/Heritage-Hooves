@@ -1431,6 +1431,9 @@ function injectionStatusLabel(row: ConsignmentInjectionRow): string {
 export function renderConsignmentAdminPage(params: {
   world: WorldRow;
   nextCycleGameDay: number;
+  cadenceGameDays: number;
+  horsesPerBreed: number;
+  breedsInPlayCount: number;
   standingListings: { horseName: string; price: number; expiresGameDay: number }[];
   queued: ConsignmentInjectionRow[];
   history: ConsignmentInjectionRow[];
@@ -1485,12 +1488,12 @@ export function renderConsignmentAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <p><strong>Next batch due:</strong> game day ${String(params.nextCycleGameDay)}.</p>
-      <p class="muted">Every ${'90'} game days the dealer offers one or two outside horses, generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation.</p>
+      <p class="muted">Every ${String(params.cadenceGameDays)} game days the dealer offers ${String(params.horsesPerBreed)} horse${params.horsesPerBreed === 1 ? '' : 's'} of each breed currently in play (${String(params.breedsInPlayCount)} breed${params.breedsInPlayCount === 1 ? '' : 's'} right now, ${String(params.horsesPerBreed * params.breedsInPlayCount)} horses total), generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation. Both the cadence and the count per breed are config-driven (<code>consignment_cadence_game_days</code>, <code>consignment_horses_per_breed</code>) - change them from <a href="/admin/config">Config</a>, not here.</p>
       <form method="post" action="/admin/consignment">
         <input type="hidden" name="action" value="mint_now">
         <button type="submit">Mint a batch now</button>
       </form>
-      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${'90'} game days after whichever batch is now most recent.</p>
+      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${String(params.cadenceGameDays)} game days after whichever batch is now most recent.</p>
     </div>
     <div class="card">
       <h2>Currently standing</h2>
