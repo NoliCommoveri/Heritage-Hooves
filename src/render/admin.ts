@@ -837,6 +837,15 @@ export function renderResetPage(params: {
  * one form per action, both behind the `required`-checkbox confirm pattern the world-clock page
  * established.
  */
+/** The barn's stock, one row per breed in play with an ideal vector - a single blended count
+ * against one target stopped meaning anything once the barn started stocking every breed
+ * (docs/breed-ideal-vectors.md §6.2), not Quarter Horses alone. */
+export interface AdminBarnBreedCount {
+  breedName: string;
+  enabled: boolean;
+  count: number;
+}
+
 export interface AdminConformationCriteria {
   breedName: string;
   enabled: boolean;
@@ -851,7 +860,7 @@ export interface AdminDisciplineCriteria {
 
 export function renderShowsAdminPage(params: {
   world: WorldRow;
-  barnCount: number;
+  barnByBreed: AdminBarnBreedCount[];
   barnTarget: number;
   /** Slice 0011 §2.3/§8.2: the barn's five oldest living horses, oldest first, with their own
    * age state - the show barn ages and dies on the same code path as everyone else's horses. */
@@ -885,11 +894,22 @@ export function renderShowsAdminPage(params: {
   );
 
   // Slice 0011 §2.3: what must not happen is show fields quietly shrinking for a reason nobody can
-  // see - so a below-target barn gets a visible warning, not just a smaller number.
-  const belowTargetWarning =
-    params.barnCount < params.barnTarget
-      ? html`<p class="notice">Below target by ${String(params.barnTarget - params.barnCount)} - horses in this barn age and die like any other, and nothing restocks it automatically. Use the button below.</p>`
-      : raw('');
+  // see - so a below-target barn gets a visible warning, not just a smaller number. Per breed now,
+  // since one breed thinning out no longer shows up in a single blended total.
+  const belowTargetBreeds = params.barnByBreed.filter((b) => b.enabled && b.count < params.barnTarget);
+  const belowTargetWarning = belowTargetBreeds.length
+    ? html`<p class="notice">Below target: ${belowTargetBreeds.map((b) => `${b.breedName} (${String(b.count)}/${String(params.barnTarget)})`).join(', ')} - horses in this barn age and die like any other, and nothing restocks it automatically. Use the button below.</p>`
+    : raw('');
+
+  const totalBarnCount = params.barnByBreed.reduce((sum, b) => sum + b.count, 0);
+  const barnBreedRows = params.barnByBreed.map(
+    (b) => html`
+    <tr>
+      <td>${b.breedName}${b.enabled ? raw('') : html` <span class="muted">(not in play)</span>`}</td>
+      <td>${String(b.count)}</td>
+      <td>${String(params.barnTarget)}</td>
+    </tr>`
+  );
 
   const oldestBarnRows = params.oldestBarnHorses.map((h) => html`<tr><td>${h.name}</td><td>${h.ageState}</td></tr>`);
 
@@ -928,7 +948,14 @@ export function renderShowsAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>The NPC show barn</h2>
-      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(params.barnCount)} of a target ${String(params.barnTarget)} Quarter Horses. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops it up to the target, never past it.</p>
+      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(totalBarnCount)} horses across ${String(params.barnByBreed.length)} breeds, a target of ${String(params.barnTarget)} each. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops each breed up to its own target, never past it.</p>
+      ${params.barnByBreed.length
+        ? html`
+          <table>
+            <thead><tr><th>Breed</th><th>Has</th><th>Target</th></tr></thead>
+            <tbody>${barnBreedRows}</tbody>
+          </table>`
+        : raw('')}
       ${belowTargetWarning}
       ${params.oldestBarnHorses.length
         ? html`

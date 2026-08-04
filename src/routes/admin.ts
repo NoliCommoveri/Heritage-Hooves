@@ -52,7 +52,14 @@ import {
   cancelInjection,
   forceConsignmentBatchNow,
 } from '../db/consignment';
-import { createFoundingHorse, countAliveHorses, countAliveHorsesByBreed, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
+import {
+  createFoundingHorse,
+  countAliveHorsesByBreed,
+  countAliveHorsesByBreedForStable,
+  listStableHorses,
+  horseDisplayName,
+  searchHorses,
+} from '../db/horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
@@ -655,7 +662,7 @@ export async function adminResetRoute(ctx: RequestContext, method: string): Prom
 export async function adminShowsRoute(ctx: RequestContext, method: string): Promise<Response> {
   async function page(error?: string, notice?: string): Promise<Response> {
     const barn = await getShowBarnStable(ctx.env);
-    const barnCount = barn ? await countAliveHorses(ctx.env, barn.id) : 0;
+    const barnCountsByBreed = barn ? await countAliveHorsesByBreedForStable(ctx.env, barn.id) : new Map<number, number>();
     const recentShows = await listShowsForAdmin(ctx.env, 20);
     // Slice 0011 §2.3/§8.2: the show barn ages and dies on the same code path as everyone else's
     // horses (CLAUDE.md §13), so it will thin out on its own over months of play - this has to be
@@ -677,6 +684,17 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
       getConformationTraits(ctx.env),
       getAbilityTraits(ctx.env),
     ]);
+
+    // Slice-0012-era single blended count against one target stopped meaning anything once the barn
+    // started stocking every breed in play (docs/breed-ideal-vectors.md §6.2) rather than Quarter
+    // Horses alone - this is the same "in play" breeds the barn actually mints, one row per breed.
+    const barnByBreed = breeds
+      .filter((b): b is BreedRow & { ideal_vector: string } => b.ideal_vector !== null)
+      .map((b) => ({
+        breedName: b.name,
+        enabled: b.enabled === 1,
+        count: barnCountsByBreed.get(b.id) ?? 0,
+      }));
 
     const conformationCriteria = breeds
       .filter((b): b is BreedRow & { ideal_vector: string } => b.ideal_vector !== null)
@@ -708,7 +726,7 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
     return htmlResponse(
       renderShowsAdminPage({
         world: ctx.world,
-        barnCount,
+        barnByBreed,
         barnTarget: ctx.config.values.npc_show_barn_size,
         oldestBarnHorses,
         qualityBands: ctx.config.values.quality_bands,

@@ -1,11 +1,16 @@
 # Breed conformation ideals — all eight breeds
 
-*Written 2026-08-02. This is a **data record**, not a built feature.*
+*Written 2026-08-02. **Update 2026-08-04: all eight vectors are now live** — see the note below.*
 
-The Quarter Horse's ideal vector is live in the database (`migrations/0035_seed_qh_ideal_vector.sql`).
-The other seven breeds' vectors are written down here and **nowhere else** — `breeds.ideal_vector` is
-still `NULL` for all seven. §6 explains why they are not seeded yet and exactly what seeding them
-would take.
+**All eight breeds' ideal vectors are live in the database.** The Quarter Horse's is
+`migrations/0035_seed_qh_ideal_vector.sql`; the other seven were seeded verbatim from §3 below by
+`migrations/0107_seed_breed_ideal_vectors.sql` on 2026-08-04, alongside making the NPC show barn
+breed-aware (`stockShowBarn`, `src/db/npc.ts`) rather than Quarter-Horse-only — the blocker §6
+describes below. See that date's build-log entry for what was built and what is still open.
+
+§6 is left in place as-written, unedited, because it explains *why* this took until 2026-08-04
+rather than landing with the rest of the breed identity work, and that reasoning is still correct
+history — just no longer a live blocker.
 
 Overview §4a says *"building an ideal vector for a breed before there is a scorer to read it is
 guessing."* The scorer now exists and has been tuned against one breed for a full slice, so the
@@ -295,7 +300,11 @@ unambiguous. Keeping targets off centre only reduces the exposure.
 
 ---
 
-## 6. Why these are not seeded yet, and what seeding them takes
+## 6. Why these were not seeded at first, and what seeding them took
+
+**Historical as of 2026-08-04 — all three steps in §6.2 are done.** Left as-written below because
+the reasoning for *why* a data-only migration waited on a code change is worth keeping, not because
+anything here is still open.
 
 ### 6.1 The blocker is show fields, not the vectors
 
@@ -315,28 +324,31 @@ migration.
 
 Roughly in dependency order:
 
-1. **A breed-aware NPC show barn.** `stockShowBarn` stops hardcoding `QH` and stocks per breed —
-   either every enabled breed, or the breeds players actually own. The founding allele pools this
-   reads already exist for all eight (`migrations/0024`), so this is a loop, not a new system.
-2. **A decision about empty classes.** A show with eight classes where the family owns four breeds
-   will have four dead classes every month unless class creation is conditioned on something — owned
-   horses, entries, or a per-breed enable flag. Worth deciding rather than inheriting.
-3. **The migration itself.** One file seeding all seven, registered in `src/db/migrations.ts` per
-   `CLAUDE.md` §8. The JSON blobs in §3 are ready to paste.
-
-Steps 1 and 2 are the work. Step 3 is fifteen minutes.
+1. **A breed-aware NPC show barn.** ~~`stockShowBarn` stops hardcoding `QH` and stocks per breed —
+   either every enabled breed, or the breeds players actually own.~~ **Done 2026-08-04**: it now
+   loops every breed `getBreedsInPlay` returns with a non-null `ideal_vector` and tops each one up
+   to its own target independently.
+2. **A decision about empty classes.** ~~A show with eight classes where the family owns four breeds
+   will have four dead classes every month unless class creation is conditioned on something.~~
+   **Decided 2026-08-04: not gated.** Followed the precedent slice 0012 §5.5 already set for Gaited
+   Pleasure — a class nobody entered is never topped up and simply judges zero entries; a thin class
+   is strictly better than no class, and gating creation on ownership was more machinery than the
+   problem needed.
+3. **The migration itself.** **Done 2026-08-04**: `migrations/0107_seed_breed_ideal_vectors.sql`,
+   the §3 JSON blobs pasted verbatim.
 
 ### 6.3 The rest of the breeds stage
 
-Ideal vectors are one of five things overview §4a lists as breed identity. Recording these does not
+Ideal vectors are one of five things overview §4a lists as breed identity. Seeding these did not
 close the stage — still unwritten anywhere, for all eight breeds:
 
-- `eligible_class_types` and `discipline_aptitudes` — the `disciplines` table now exists (slice
-  0012, one row seeded so far: Barrel Racing), so this is no longer blocked on schema. Slice 0012
-  §2.1 deliberately shipped with no breed gating at all (every discipline is `crosses_eligible = 1`
-  and open to every breed) rather than pre-empting this - `discipline_aptitudes` is the modifier
-  that would make breed matter *beyond* the allele pools it already lives in, and building it before
-  the aptitudes are decided would double-count
+- `eligible_class_types` and `discipline_aptitudes` — the `disciplines` table now holds all six
+  disciplines slice 0012 §5.1 named (migrations `0063` + `0108`, 2026-08-04), so this is no longer
+  blocked on schema or on a thin discipline set either. Slice 0012 §2.1 deliberately shipped with no
+  breed gating at all (every discipline is `crosses_eligible = 1` and open to every breed) rather
+  than pre-empting this - `discipline_aptitudes` is the modifier that would make breed matter
+  *beyond* the allele pools it already lives in, and building it before the aptitudes are decided
+  would double-count
 - `height_range` and `weight_range`
 - disease panels for the seven non-Quarter-Horse breeds — the `conditions` table holds the Quarter
   Horse's four (`migrations/0053`), and overview §4a names the others' signature conditions but
