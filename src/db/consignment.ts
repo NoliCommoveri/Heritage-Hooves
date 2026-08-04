@@ -412,3 +412,25 @@ export async function runConsignments(env: Env, gameDay: number, tickSeq: number
   const conditions = await getEnabledConditions(env);
   await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions);
 }
+
+export type ForceConsignmentResult = { ok: true } | { ok: false; error: 'no_dealer' };
+
+/**
+ * /admin/consignment's "mint a batch now" button. Bypasses the cadence/dueDay check runConsignments
+ * makes (§5.7) so a queued injection lands the same game day it's queued, rather than waiting up to
+ * consignment_cadence_game_days for the next scheduled batch - an out-of-tick admin action, the same
+ * shape adminHorsesRoute's founding-horse creation already uses (worldTickSeq passed straight from
+ * ctx.world.tick_seq rather than a real tick run). Does NOT reset the cadence clock: it reads the
+ * dealer's last listing day exactly like runConsignments does, so if this lands before the regular
+ * due day, the next regular batch is still cadence days after whichever listing is now most recent.
+ */
+export async function forceConsignmentBatchNow(env: Env, gameDay: number, tickSeq: number, config: Config): Promise<ForceConsignmentResult> {
+  const dealer = await getConsignmentDealerStable(env);
+  if (!dealer) return { ok: false, error: 'no_dealer' };
+
+  const dealerId = dealer.id;
+  await sweepExpiredConsignmentListings(env, dealerId, gameDay);
+  const conditions = await getEnabledConditions(env);
+  await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions);
+  return { ok: true };
+}

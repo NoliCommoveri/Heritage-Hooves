@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { splitSqlStatements } from '../../src/lib/sql';
-import { runConsignments, queueInjection, listInjectionHistory, getConsignmentDealerStable } from '../../src/db/consignment';
+import { runConsignments, queueInjection, listInjectionHistory, getConsignmentDealerStable, forceConsignmentBatchNow } from '../../src/db/consignment';
 import { expireListings } from '../../src/db/listings';
 import type { Env } from '../../src/types';
 import type { Config } from '../../src/lib/config-cache';
@@ -202,5 +202,50 @@ describeWithSqlite('runConsignments (amendment 0017a §5.9)', () => {
     const horse = db.prepare('SELECT status, owner_stable_id FROM horses WHERE id = ?').get(listing.horse_id) as { status: string; owner_stable_id: number };
     expect(horse.status).toBe('alive');
     expect(horse.owner_stable_id).toBe(buyerStableId);
+  });
+});
+
+describeWithSqlite('forceConsignmentBatchNow (admin "mint a batch now" button)', () => {
+  it('mints immediately even when nowhere near the regular cadence, unlike runConsignments', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+
+    await runConsignments(env, 1000, 100, config);
+    const dealer = await getConsignmentDealerStable(env);
+    const afterFirst = (db.prepare('SELECT COUNT(*) AS n FROM listings WHERE seller_stable_id = ?').get(dealer!.id) as { n: number }).n;
+
+    // One game day later - runConsignments would decline, cadence not elapsed.
+    await runConsignments(env, 1001, 101, config);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM listings WHERE seller_stable_id = ?').get(dealer!.id) as { n: number }).n).toBe(afterFirst);
+
+    const result = await forceConsignmentBatchNow(env, 1001, 101, config);
+    expect(result.ok).toBe(true);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM listings WHERE seller_stable_id = ?').get(dealer!.id) as { n: number }).n).toBeGreaterThan(afterFirst);
+  });
+
+  it('applies a queued injection the same game day it was queued, without waiting for the next scheduled batch', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+
+    const queued = await queueInjection(env, {
+      locusCode: 'CR',
+      allele: 'Cr',
+      zygosity: 'het',
+      appliesTo: 'one',
+      sexPreference: 'any',
+      note: 'test',
+      gameDay: 1000,
+    });
+    expect(queued.ok).toBe(true);
+
+    const result = await forceConsignmentBatchNow(env, 1000, 100, config);
+    expect(result.ok).toBe(true);
+
+    const history = await listInjectionHistory(env);
+    const applied = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
+    expect(applied?.status).toBe('applied');
+    expect(applied?.applied_game_day).toBe(1000);
   });
 });

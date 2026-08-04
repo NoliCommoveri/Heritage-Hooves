@@ -50,6 +50,7 @@ import {
   listInjectionHistory,
   queueInjection,
   cancelInjection,
+  forceConsignmentBatchNow,
 } from '../db/consignment';
 import { createFoundingHorse, countAliveHorses, countAliveHorsesByBreed, listStableHorses, horseDisplayName, searchHorses } from '../db/horses';
 import { parseAllelePool } from '../engines/founding/pool';
@@ -1031,7 +1032,11 @@ export async function adminConsignmentRoute(ctx: RequestContext, method: string)
     );
   }
 
-  if (method === 'GET') return page();
+  if (method === 'GET') {
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('minted') ? 'Batch minted.' : params.get('saved') ? 'Saved.' : undefined;
+    return page(undefined, notice);
+  }
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
@@ -1040,6 +1045,12 @@ export async function adminConsignmentRoute(ctx: RequestContext, method: string)
     const id = Number(form.id);
     if (Number.isFinite(id)) await cancelInjection(ctx.env, id);
     return redirect('/admin/consignment?saved=1');
+  }
+
+  if (form.action === 'mint_now') {
+    const result = await forceConsignmentBatchNow(ctx.env, ctx.world.game_day, ctx.world.tick_seq, ctx.config);
+    if (!result.ok) return page("No consignment dealer stable exists yet - the migration that creates it hasn't been applied.");
+    return redirect('/admin/consignment?minted=1');
   }
 
   if (form.action === 'queue') {

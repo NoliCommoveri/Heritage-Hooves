@@ -1446,6 +1446,11 @@ export function renderConsignmentAdminPage(params: {
     <div class="card">
       <p><strong>Next batch due:</strong> game day ${String(params.nextCycleGameDay)}.</p>
       <p class="muted">Every ${'90'} game days the dealer offers one or two outside horses, generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation.</p>
+      <form method="post" action="/admin/consignment">
+        <input type="hidden" name="action" value="mint_now">
+        <button type="submit">Mint a batch now</button>
+      </form>
+      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${'90'} game days after whichever batch is now most recent.</p>
     </div>
     <div class="card">
       <h2>Currently standing</h2>
