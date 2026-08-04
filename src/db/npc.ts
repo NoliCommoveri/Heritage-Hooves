@@ -17,17 +17,30 @@ import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
 import { getEnabledConditions, getLethalTriggers } from './health';
 
-/** One documented magic string, matching migrations/0040_npc_show_barn.sql. Fair Meadow is now
- * one of three personality stables (slice 0015 §2.1) rather than the game's only NPC stable, but
- * keeps this name - nothing about its prefix, its history row, or its existing horses changes. */
-export const SHOW_BARN_PREFIX = 'Fair Meadow';
+/** One documented magic string, originally seeded as 'Fair Meadow' by migrations/0040_npc_show_barn.sql,
+ * renamed to 'Apples and Oats Ranch' by migration 0136 (slice 0023, an operator naming decision).
+ * It is one of three Quarter Horse personality stables (slice 0015 §2.1) rather than the game's only
+ * NPC stable, but keeps its role as the one stable stockShowBarn (below) mints breed-aware show-field
+ * padding into. */
+export const SHOW_BARN_PREFIX = 'Apples and Oats Ranch';
 
-/** Slice 0015 §2.1/§5.3: the conformation specialist and the discipline barn, seeded by
- * migrations/0085_npc_stables_and_policies.sql. Named here, not just in that migration, because a
- * full world reset (src/db/reset.ts) has to recreate both stables, and that migration never runs
- * again. */
-export const CEDAR_HOLLOW_PREFIX = 'Cedar Hollow';
-export const WILLOW_CREEK_BARRELS_PREFIX = 'Willow Creek Barrels';
+/** Slice 0015 §2.1/§5.3: the Quarter Horse conformation specialist and discipline barn, originally
+ * seeded as 'Cedar Hollow'/'Willow Creek Barrels' by migrations/0085_npc_stables_and_policies.sql,
+ * renamed to 'Bronco Valley'/'Horseshoe Bay' by migration 0136 (slice 0023, an operator naming
+ * decision). Named here, not just in the migration, because a full world reset (src/db/reset.ts) has
+ * to recreate both stables, and that migration never runs again. */
+export const QH_CONFORMATION_SPECIALIST_PREFIX = 'Bronco Valley';
+export const QH_DISCIPLINE_BARN_PREFIX = 'Horseshoe Bay';
+
+/** Slice 0023: the six new Paso Fino and German Warmblood personality stables, seeded by
+ * migrations/0130_npc_stables_paso_fino_and_german_warmblood.sql. Named here for the same reason as
+ * the Quarter Horse trio above - a full world reset has to recreate all nine. */
+export const PF_CONFORMATION_SPECIALIST_PREFIX = 'Carrot Cove';
+export const PF_DISCIPLINE_BARN_PREFIX = 'Honeycomb Hills';
+export const PF_VOLUME_BREEDER_PREFIX = 'Reese Puff Horses';
+export const GW_CONFORMATION_SPECIALIST_PREFIX = 'Queens Palace';
+export const GW_DISCIPLINE_BARN_PREFIX = 'Springen Stables';
+export const GW_VOLUME_BREEDER_PREFIX = 'Suchon Acres';
 
 export async function getShowBarnStable(env: Env): Promise<StableRow | null> {
   return env.DB.prepare('SELECT * FROM stables WHERE prefix = ? AND is_npc = 1').bind(SHOW_BARN_PREFIX).first<StableRow>();

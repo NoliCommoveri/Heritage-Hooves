@@ -126,6 +126,8 @@ import m0125 from '../../migrations/0125_seed_acquired_conditions.sql';
 import m0126 from '../../migrations/0126_npc_policy_balance_floor.sql';
 import m0127 from '../../migrations/0127_config_npc_finance.sql';
 import m0128 from '../../migrations/0128_ledger_add_pet_home_kind.sql';
+import m0136 from '../../migrations/0136_rename_qh_npc_stables.sql';
+import m0137 from '../../migrations/0137_npc_stables_paso_fino_and_german_warmblood.sql';
 
 export interface MigrationFile {
   name: string;
@@ -268,6 +270,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0126_npc_policy_balance_floor.sql', sql: m0126 },
   { name: '0127_config_npc_finance.sql', sql: m0127 },
   { name: '0128_ledger_add_pet_home_kind.sql', sql: m0128 },
+  { name: '0136_rename_qh_npc_stables.sql', sql: m0136 },
+  { name: '0137_npc_stables_paso_fino_and_german_warmblood.sql', sql: m0137 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

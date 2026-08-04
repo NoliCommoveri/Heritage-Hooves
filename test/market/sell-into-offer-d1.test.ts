@@ -80,8 +80,8 @@ async function readConfig(env: Env): Promise<Config> {
 }
 
 // See test/npc/buying-d1.test.ts's own comment for this numbering.
-const CEDAR_HOLLOW = 2; // conformation_specialist, targets QH (breed id 1)
-const PLAYER = 5;
+const CEDAR_HOLLOW = 2; // conformation_specialist (now "Bronco Valley"), targets QH (breed id 1)
+const PLAYER = 11;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
 const GAME_DAY = 5000; // well past min_breeding_age_game_days (1080, migrations/0016)
 

@@ -416,8 +416,9 @@ describeWithSqlite('petHomePayout', () => {
 });
 
 describeWithSqlite('sellHorseToPetHome (the player entry point)', () => {
-  // A player stable, seeded the same way test/npc/buying-d1.test.ts does.
-  const PLAYER = 5;
+  // A player stable, seeded the same way test/npc/buying-d1.test.ts does (see its comment for the
+  // stable-id numbering, updated by slice 0023's migrations 0136/0137).
+  const PLAYER = 11;
   function seedPlayerStable(db: DatabaseSync): void {
     db.exec(`INSERT INTO accounts (username, display_name, password_hash, is_admin, active, must_change_password, created_real_ts) VALUES ('p','P','x',0,1,0,0)`);
     db.exec(

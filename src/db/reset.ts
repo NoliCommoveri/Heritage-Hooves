@@ -15,7 +15,17 @@
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
-import { SHOW_BARN_PREFIX, CEDAR_HOLLOW_PREFIX, WILLOW_CREEK_BARRELS_PREFIX } from './npc';
+import {
+  SHOW_BARN_PREFIX,
+  QH_CONFORMATION_SPECIALIST_PREFIX,
+  QH_DISCIPLINE_BARN_PREFIX,
+  PF_CONFORMATION_SPECIALIST_PREFIX,
+  PF_DISCIPLINE_BARN_PREFIX,
+  PF_VOLUME_BREEDER_PREFIX,
+  GW_CONFORMATION_SPECIALIST_PREFIX,
+  GW_DISCIPLINE_BARN_PREFIX,
+  GW_VOLUME_BREEDER_PREFIX,
+} from './npc';
 import { CONSIGNMENT_DEALER_PREFIX } from './consignment';
 
 export type ResetScope = 'horses' | 'world';
@@ -166,98 +176,177 @@ export interface ResetResult {
  * now gone.
  *
  * A full world reset's blanket `DELETE FROM stables` also removes every NPC stable - each is a
- * stable like any other, and the migrations that created them (0040, 0085, 0097) only ever run
- * once, so nothing would recreate them afterwards. All four (Fair Meadow, Cedar Hollow, Willow
- * Creek Barrels, and the Consignment Yard) are re-inserted here, empty, in exactly the shape those
- * migrations leave them in, along with the three real `npc_policy` rows - without the policy rows,
- * every NPC stable comes back after a reset and none of them ever breeds again once a later session
- * wires the tick stage in (slice 0015 §7.4). Fair Meadow is re-stocked from /admin/shows exactly as
- * before; Cedar Hollow and Willow Creek Barrels have no stocking control yet at all (that is slice
- * 0015 §7.3's outcross control, not built by this session - see CLAUDE.md §10's NPC stables row) -
- * a reset before that lands simply leaves them real, empty, unstocked stables, same as right after
- * this migration. The Consignment Yard gets no `npc_policy` row, deliberately matching migration
+ * stable like any other, and the migrations that created them (0040, 0085, 0097, 0136, 0137) only
+ * ever run once, so nothing would recreate them afterwards. All ten (the three renamed Quarter
+ * Horse personalities - Apples and Oats Ranch, Bronco Valley, Horseshoe Bay - the six Paso Fino and
+ * German Warmblood personalities slice 0023 added, and the Consignment Yard) are re-inserted here,
+ * empty, in exactly the shape those migrations leave them in, along with all eight real
+ * `npc_policy` rows - without the policy rows, every NPC stable comes back after a reset and none
+ * of them ever breeds again. Apples and Oats Ranch is re-stocked from /admin/shows exactly as
+ * before (via `stockShowBarn`); every other personality stable is real, empty, and stocked by hand
+ * from `/admin/npc`'s outcross control (slice 0015 §7.3) - a reset simply leaves them in that same
+ * unstocked state. The Consignment Yard gets no `npc_policy` row, deliberately matching migration
  * 0097 - it never breeds, shows or buys, and `runConsignments` mints its next batch on the tick
  * immediately following the reset (`nextConsignmentDueGameDay` treats "no listing yet" as due now).
  */
+/**
+ * One personality stable's three statements (stable, prefix history, policy) - slice 0023 grew the
+ * roster from three stables to nine, at which point nine copies of the same three-statement shape
+ * stopped being the boring option and started being the error-prone one. `capacity` is 200 for a
+ * volume breeder (matching Apples and Oats Ranch's original show-field-filler role) and 40 for
+ * everything else (slice 0015 §12.2's "generous headroom, no play data yet" reasoning, unchanged).
+ */
+function personalityStableStatements(
+  env: Env,
+  params: {
+    prefix: string;
+    capacity: number;
+    personalityCode: string;
+    target: { kind: 'conformation'; breedCode: string } | { kind: 'ability'; disciplineCode: string };
+    noiseSd: number;
+    retentionBias: number;
+    intervalDays: number;
+    maxPairs: number;
+    priceMultiplier: number;
+    priceSpread: number;
+    balanceFloor: number;
+  }
+) {
+  const ts = nowUtcSeconds();
+  const stableStmt = env.DB
+    .prepare(
+      `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+       VALUES (NULL, ?, ?, 0, 1, 1, 0, ?, 0, ?, 1)`
+    )
+    .bind(params.prefix, params.prefix, params.capacity, ts);
+  const historyStmt = env.DB
+    .prepare(
+      `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+       VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
+    )
+    .bind(params.prefix, params.prefix, ts);
+  // balance_floor mirrors migrations/0126 - a reset that recreated these stables without it would
+  // leave every one of them with the floor switched off (the column defaults to 0), and nobody
+  // would notice until the market quietly stopped moving.
+  const policyStmt =
+    params.target.kind === 'conformation'
+      ? env.DB
+          .prepare(
+            `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+             VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 'conformation', (SELECT id FROM breeds WHERE code = ?), ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            params.prefix,
+            params.personalityCode,
+            params.target.breedCode,
+            params.noiseSd,
+            params.retentionBias,
+            params.intervalDays,
+            params.maxPairs,
+            params.priceMultiplier,
+            params.priceSpread,
+            params.balanceFloor
+          )
+      : env.DB
+          .prepare(
+            `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+             VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 'ability', ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .bind(
+            params.prefix,
+            params.personalityCode,
+            params.target.disciplineCode,
+            params.noiseSd,
+            params.retentionBias,
+            params.intervalDays,
+            params.maxPairs,
+            params.priceMultiplier,
+            params.priceSpread,
+            params.balanceFloor
+          );
+  return [stableStmt, historyStmt, policyStmt];
+}
+
+const CONFORMATION_SPECIALIST_NUMBERS = { noiseSd: 3.0, retentionBias: 0.1, intervalDays: 180, maxPairs: 2, priceMultiplier: 1.25, priceSpread: 0.08, balanceFloor: 5000, capacity: 40 };
+const DISCIPLINE_BARN_NUMBERS = { noiseSd: 4.0, retentionBias: 0.1, intervalDays: 150, maxPairs: 2, priceMultiplier: 1.1, priceSpread: 0.1, balanceFloor: 5000, capacity: 40 };
+const VOLUME_BREEDER_NUMBERS = { noiseSd: 12.0, retentionBias: 0.05, intervalDays: 60, maxPairs: 4, priceMultiplier: 0.85, priceSpread: 0.15, balanceFloor: 3000, capacity: 200 };
+
 export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResult> {
   const statements = tablesForScope(scope).map((table) => env.DB.prepare(`DELETE FROM ${table}`));
 
   if (scope === 'world') {
     statements.push(env.DB.prepare('UPDATE accounts SET last_active_stable_id = NULL'));
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
-           VALUES (NULL, 'Fair Meadow Show Barn', ?, 0, 1, 1, 0, 200, 0, ?, 1)`
-        )
-        .bind(SHOW_BARN_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: SHOW_BARN_PREFIX,
+        personalityCode: 'volume_breeder',
+        target: { kind: 'conformation', breedCode: 'QH' },
+        ...VOLUME_BREEDER_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
-           VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, 0, NULL, NULL, ?)`
-        )
-        .bind(SHOW_BARN_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: QH_CONFORMATION_SPECIALIST_PREFIX,
+        personalityCode: 'conformation_specialist',
+        target: { kind: 'conformation', breedCode: 'QH' },
+        ...CONFORMATION_SPECIALIST_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          // balance_floor mirrors migrations/0126 - a reset that recreated these stables without it
-          // would leave every one of them with the floor switched off (the column defaults to 0),
-          // and nobody would notice until the market quietly stopped moving.
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'volume_breeder', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 12.0, 0.05, 60, 4, 0.85, 0.15, 3000)`
-        )
-        .bind(SHOW_BARN_PREFIX)
+      ...personalityStableStatements(env, {
+        prefix: QH_DISCIPLINE_BARN_PREFIX,
+        personalityCode: 'discipline_barn',
+        target: { kind: 'ability', disciplineCode: 'barrels' },
+        ...DISCIPLINE_BARN_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
-           VALUES (NULL, ?, ?, 0, 1, 1, 0, 40, 0, ?, 1)`
-        )
-        .bind(CEDAR_HOLLOW_PREFIX, CEDAR_HOLLOW_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: PF_CONFORMATION_SPECIALIST_PREFIX,
+        personalityCode: 'conformation_specialist',
+        target: { kind: 'conformation', breedCode: 'PF' },
+        ...CONFORMATION_SPECIALIST_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
-        )
-        .bind(CEDAR_HOLLOW_PREFIX, CEDAR_HOLLOW_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: PF_DISCIPLINE_BARN_PREFIX,
+        personalityCode: 'discipline_barn',
+        target: { kind: 'ability', disciplineCode: 'gaited' },
+        ...DISCIPLINE_BARN_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'conformation_specialist', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 3.0, 0.10, 180, 2, 1.25, 0.08, 5000)`
-        )
-        .bind(CEDAR_HOLLOW_PREFIX)
+      ...personalityStableStatements(env, {
+        prefix: PF_VOLUME_BREEDER_PREFIX,
+        personalityCode: 'volume_breeder',
+        target: { kind: 'conformation', breedCode: 'PF' },
+        ...VOLUME_BREEDER_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
-           VALUES (NULL, ?, ?, 0, 1, 1, 0, 40, 0, ?, 1)`
-        )
-        .bind(WILLOW_CREEK_BARRELS_PREFIX, WILLOW_CREEK_BARRELS_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: GW_CONFORMATION_SPECIALIST_PREFIX,
+        personalityCode: 'conformation_specialist',
+        target: { kind: 'conformation', breedCode: 'GW' },
+        ...CONFORMATION_SPECIALIST_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
-        )
-        .bind(WILLOW_CREEK_BARRELS_PREFIX, WILLOW_CREEK_BARRELS_PREFIX, nowUtcSeconds())
+      ...personalityStableStatements(env, {
+        prefix: GW_DISCIPLINE_BARN_PREFIX,
+        personalityCode: 'discipline_barn',
+        target: { kind: 'ability', disciplineCode: 'jumping' },
+        ...DISCIPLINE_BARN_NUMBERS,
+      })
     );
     statements.push(
-      env.DB
-        .prepare(
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'discipline_barn', 'ability', 'barrels', 4.0, 0.10, 150, 2, 1.10, 0.10, 5000)`
-        )
-        .bind(WILLOW_CREEK_BARRELS_PREFIX)
+      ...personalityStableStatements(env, {
+        prefix: GW_VOLUME_BREEDER_PREFIX,
+        personalityCode: 'volume_breeder',
+        target: { kind: 'conformation', breedCode: 'GW' },
+        ...VOLUME_BREEDER_NUMBERS,
+      })
     );
     statements.push(
       env.DB

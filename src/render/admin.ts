@@ -1020,7 +1020,7 @@ export function renderShowsAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>The NPC show barn</h2>
-      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(totalBarnCount)} horses across ${String(params.barnByBreed.length)} breeds, a target of ${String(params.barnTarget)} each. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops each breed up to its own target, never past it.</p>
+      <p><strong>Apples and Oats Ranch</strong> currently holds ${String(totalBarnCount)} horses across ${String(params.barnByBreed.length)} breeds, a target of ${String(params.barnTarget)} each. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops each breed up to its own target, never past it.</p>
       ${params.barnByBreed.length
         ? html`
           <table>
@@ -1513,7 +1513,7 @@ export function renderNpcAdminPage(params: {
     </div>
     <div class="card">
       <h2>Found a new NPC stable</h2>
-      <p class="muted">The admin equivalent of the migration that seeded Cedar Hollow and Willow Creek Barrels - a fourth or fifth personality doesn't need a deploy. A prefix is permanent once horses are bred under it, and cannot be changed later.</p>
+      <p class="muted">The admin equivalent of the migrations that seeded Bronco Valley, Horseshoe Bay, and the six Paso Fino/German Warmblood personalities - a new personality doesn't need a deploy. A prefix is permanent once horses are bred under it, and cannot be changed later.</p>
       <form method="post" action="/admin/npc">
         <input type="hidden" name="action" value="found_stable">
         <label>Stable name <input type="text" name="name" required></label>
