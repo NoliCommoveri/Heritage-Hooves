@@ -85,7 +85,7 @@ function freshDb(): DatabaseSync {
   return db;
 }
 
-const STABLE = 5; // migrations seed NPC stables 1-4 (incl. the consignment dealer), so a player stable is 5.
+const STABLE = 11; // migrations seed NPC stables 1-10 (slice 0023 grew the roster from 4 to 10), so a player stable is 11.
 const HORSE = 1;
 const GAME_DAY = 2000;
 

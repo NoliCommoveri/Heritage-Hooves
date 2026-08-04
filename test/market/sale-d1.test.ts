@@ -86,10 +86,10 @@ function freshDb(): DatabaseSync {
   return db;
 }
 
-// The migrations seed four NPC stables (ids 1-3, plus the amendment 0017a consignment dealer at 4),
-// so the two player stables below are 5 and 6.
-const SELLER = 5;
-const BUYER = 6;
+// The migrations seed ten NPC stables (ids 1-9 across three breeds' personalities, slice 0023, plus
+// the amendment 0017a consignment dealer at 10), so the two player stables below are 11 and 12.
+const SELLER = 11;
+const BUYER = 12;
 
 function seed(db: DatabaseSync, opts: { sameAccount?: boolean } = {}) {
   db.exec(`INSERT INTO accounts (username, display_name, password_hash, is_admin, active, must_change_password, created_real_ts) VALUES ('a','A','x',0,1,0,0), ('b','B','x',0,1,0,0)`);

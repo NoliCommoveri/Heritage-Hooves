@@ -76,11 +76,13 @@ async function readConfig(env: Env): Promise<Config> {
   return { version: row.version, values: JSON.parse(row.values), flags: JSON.parse(row.flags) };
 }
 
-// migrations/0085 seeds three NPC stables (Fair Meadow 1, Cedar Hollow 2, Willow Creek Barrels 3);
-// amendment 0017a's consignment dealer is 4, with no npc_policy row (never touched by this file).
-// Player stables start at 5, same numbering test/market/sale-d1.test.ts already established.
-const CEDAR_HOLLOW = 2; // conformation_specialist, targets QH, capacity 40
-const PLAYER = 5;
+// migrations/0085 seeds three NPC stables (renamed by slice 0023's migration 0136, but the ids are
+// unchanged: Apples and Oats Ranch 1, Bronco Valley 2, Horseshoe Bay 3); amendment 0017a's
+// consignment dealer is 4, with no npc_policy row (never touched by this file); migration 0137
+// (slice 0023) adds six more Paso Fino/German Warmblood personality stables, ids 5-10. Player
+// stables start at 11, same numbering test/market/sale-d1.test.ts already established.
+const CEDAR_HOLLOW = 2; // conformation_specialist (now "Bronco Valley"), targets QH, capacity 40
+const PLAYER = 11;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
 const GAME_DAY = 5000; // well past min_breeding_age_game_days (1080, migrations/0016)
 

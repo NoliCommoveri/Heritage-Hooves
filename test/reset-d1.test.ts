@@ -105,7 +105,7 @@ describeWithSqlite('resetWorld (full world scope) recreates the NPC stables', ()
     expect(listedCount).toBeGreaterThan(0);
   });
 
-  it('recreates the other three NPC stables alongside it', async () => {
+  it('recreates the other nine NPC stables alongside it', async () => {
     const db = freshDb();
     const env = makeEnv(db);
 
@@ -113,6 +113,8 @@ describeWithSqlite('resetWorld (full world scope) recreates the NPC stables', ()
 
     expect(await getShowBarnStable(env)).not.toBeNull();
     const npcStableCount = (db.prepare('SELECT COUNT(*) AS n FROM stables WHERE is_npc = 1').get() as { n: number }).n;
-    expect(npcStableCount).toBe(4); // Fair Meadow, Cedar Hollow, Willow Creek Barrels, Consignment Yard
+    // Slice 0023: three Quarter Horse personalities (Apples and Oats Ranch, Bronco Valley,
+    // Horseshoe Bay) plus three each for Paso Fino and German Warmblood, plus the Consignment Yard.
+    expect(npcStableCount).toBe(10);
   });
 });
