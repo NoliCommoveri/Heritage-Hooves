@@ -3,6 +3,9 @@
 // approximately never through this app.
 
 import type { Env } from '../types';
+import { ABILITY_TRAITS } from '../engines/conformation/traits';
+import { parseAbilityWeights } from '../engines/showing/abilityScore';
+import type { TraitCode } from '../engines/genetics/polygenic';
 
 export interface DisciplineRow {
   id: number;
@@ -38,4 +41,18 @@ export async function getEnabledDisciplines(env: Env): Promise<DisciplineRow[]> 
 
 export async function getDisciplineByCode(env: Env, code: string): Promise<DisciplineRow | undefined> {
   return (await getDisciplines(env)).find((d) => d.code === code);
+}
+
+/**
+ * Slice 0019 §4.2: ABILITY_TRAITS filtered down to the ones with a nonzero weight in at least one
+ * *enabled* discipline - specialising a founding horse in a trait no running discipline scores
+ * (jump_scope, today, weight 0.0 in the only enabled discipline, Barrel Racing) would be a dead
+ * gift. Follows getBreedsInPlay's own shape (src/db/breeds.ts): one helper, every founding-specialist
+ * call site reads it, and the pool widens by itself the day a second discipline is seeded - no code
+ * change there or here.
+ */
+export async function getSpecializableAbilityTraits(env: Env): Promise<TraitCode[]> {
+  const enabled = await getEnabledDisciplines(env);
+  const weightsByDiscipline = enabled.map((d) => parseAbilityWeights(d.ability_weights));
+  return ABILITY_TRAITS.filter((trait) => weightsByDiscipline.some((weights) => (weights[trait] ?? 0) > 0));
 }

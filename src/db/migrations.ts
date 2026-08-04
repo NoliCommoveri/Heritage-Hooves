@@ -101,6 +101,7 @@ import m0097 from '../../migrations/0097_consignment_dealer_stable.sql';
 import m0098 from '../../migrations/0098_config_consignment.sql';
 import m0099 from '../../migrations/0099_buy_offers.sql';
 import m0100 from '../../migrations/0100_config_npc_buying.sql';
+import m0101 from '../../migrations/0101_config_founding_specialists.sql';
 
 export interface MigrationFile {
   name: string;
@@ -218,6 +219,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0098_config_consignment.sql', sql: m0098 },
   { name: '0099_buy_offers.sql', sql: m0099 },
   { name: '0100_config_npc_buying.sql', sql: m0100 },
+  { name: '0101_config_founding_specialists.sql', sql: m0101 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
