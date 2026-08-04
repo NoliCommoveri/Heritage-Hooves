@@ -15,13 +15,12 @@ import {
   displayNameFor,
   type BreedPreview,
   type EnterShowInfo,
-  type ShowResultGroup,
   type HealthConditionDisplay,
   type TestConditionOption,
   type ColourLocusOption,
   type ColourInferenceRow,
 } from '../render/horses';
-import { eligibilityMessage, placingText } from '../render/shows';
+import { eligibilityMessage, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT } from '../render/shows';
 import {
   listStableHorses,
   listStableHorsesWithDead,
@@ -777,26 +776,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // that showed in its life keeps its labels (the show record outlives the horse on purpose).
   const conformationLabels = conformationLabelsForHorse(conformation, breed, (showSummary?.starts ?? 0) >= 1, ctx.config.values);
   // Grouped by class type (Conformation vs. each discipline) rather than a single flat list: a
-  // made-up show name tells a player nothing, but which kind of class a result came from does. A
-  // group's own position (most recent activity first) and each group's own items (most recent
-  // first) fall out of one pass, since listRecentResultsForHorse already returns rows newest-first -
-  // the first row seen for a not-yet-seen label is by definition that group's most recent result.
-  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 200);
-  const resultGroupsByLabel = new Map<string, ShowResultGroup>();
-  const recentShowResultGroups: ShowResultGroup[] = [];
-  const SHOW_RESULT_GROUP_CAP = 5;
-  for (const r of recentResultsRaw) {
-    const label = r.class_type === 'breed_conformation' ? 'Conformation' : (r.discipline_name ?? 'Discipline');
-    let group = resultGroupsByLabel.get(label);
-    if (!group) {
-      group = { label, items: [] };
-      resultGroupsByLabel.set(label, group);
-      recentShowResultGroups.push(group);
-    }
-    if (group.items.length < SHOW_RESULT_GROUP_CAP) {
-      group.items.push(`${placingText(r.placing)} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
-    }
-  }
+  // made-up show name tells a player nothing, but which kind of class a result came from does.
+  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT);
+  const recentShowResultGroups = buildShowResultGroups(recentResultsRaw, gameDaysPerYear);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own

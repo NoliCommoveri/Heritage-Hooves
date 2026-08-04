@@ -10,7 +10,7 @@ import { LOCI } from '../engines/genetics/loci';
 import { NO_PICTURE_VALUE, type ImageOption } from '../lib/images';
 import type { ConformationDisplayRow } from '../engines/conformation/model';
 import type { HorseShowSummaryRow } from '../db/shows';
-import { placingText } from './shows';
+import { placingText, showResultGroupsHtml, type ShowResultGroup } from './shows';
 import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
 import type { AgeModifierResult } from '../engines/ageing/performance';
@@ -947,19 +947,9 @@ function enterShowBlock(horseId: number, infos: EnterShowInfo[]): SafeHtml {
   )}`;
 }
 
-/** A Show record card group: one class type (Conformation, or a discipline's own name) the horse
- * has actually placed in, with its own most-recent-first placings. Groups themselves are ordered
- * most-recent-first too - both fall out of the order recentShowResultGroups is built in
- * (routes/horses.ts), not sorted again here. */
-export interface ShowResultGroup {
-  label: string;
-  items: string[];
-}
-
 /** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings grouped by
- * class type. The made-up show name isn't shown - what a player wants to know is what kind of
- * class a result came from (Conformation, Dressage, ...), not which of several near-identical
- * fictional show names it happened at. */
+ * class type. The groups themselves are built and templated by render/shows.ts, which is what lets
+ * a sale listing, a stud listing and /world show the identical card. */
 function showRecordCard(params: {
   summary: HorseShowSummaryRow | null;
   resultGroups: ShowResultGroup[];
@@ -977,9 +967,7 @@ function showRecordCard(params: {
       ${s
         ? html`<p><strong>Starts:</strong> ${String(s.starts)} &middot; <strong>Wins:</strong> ${String(s.wins)} &middot; <strong>Best:</strong> ${s.best_placing !== null ? placingText(s.best_placing) : 'none yet'}</p>`
         : html`<p class="muted">No shows entered yet.</p>`}
-      ${params.resultGroups.map(
-        (g) => html`<h3>${g.label}</h3><ul>${g.items.map((r) => html`<li>${r}</li>`)}</ul>`
-      )}
+      ${showResultGroupsHtml(params.resultGroups)}
       ${enterShowBlock(params.horseId, params.enterShow)}
     </div>`;
 }

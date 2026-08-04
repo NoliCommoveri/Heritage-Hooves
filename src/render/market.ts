@@ -11,6 +11,7 @@
 
 import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell, errorBox, noticeBox } from './layout';
+import { showResultGroupsHtml, type ShowResultGroup } from './shows';
 import type { WorldRow } from '../db/world';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
@@ -254,7 +255,8 @@ export interface ListingDetailView {
   starts: number;
   wins: number;
   bestPlacingText: string;
-  recentResults: string[];
+  /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
+  recentResultGroups: ShowResultGroup[];
   price: number;
   expiresGameDay: number;
   conditions: DisclosedCondition[];
@@ -362,7 +364,7 @@ export function renderListingPage(params: {
     <div class="card">
       <h2>Show record</h2>
       <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText}</p>
-      ${l.recentResults.length ? html`<ul>${l.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+      ${showResultGroupsHtml(l.recentResultGroups)}
       <p class="muted">A show record is the honest measure of a horse you do not own. An untested, unshown youngster is genuinely a gamble - that is what makes showing your own stock worth doing.</p>
     </div>
     <div class="card">
@@ -646,7 +648,8 @@ export interface StudListingDetailView {
   starts: number;
   wins: number;
   bestPlacingText: string;
-  recentResults: string[];
+  /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
+  recentResultGroups: ShowResultGroup[];
   fee: number;
   seasonCap: number;
   bookedThisSeason: number;
@@ -729,7 +732,7 @@ export function renderStudDetailPage(params: {
     <div class="card">
       <h2>Show record</h2>
       <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText}</p>
-      ${l.recentResults.length ? html`<ul>${l.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+      ${showResultGroupsHtml(l.recentResultGroups)}
     </div>
     <div class="card">
       <h2>Pedigree</h2>
