@@ -93,12 +93,23 @@ interface World {
   npcStallionId: number;
 }
 
-function insertHorse(db: DatabaseSync, sex: string, name: string, stableId: number, seed: number): number {
+function breedIdFor(db: DatabaseSync, code: string): number {
+  return Number((db.prepare('SELECT id FROM breeds WHERE code = ?').get(code) as { id: number }).id);
+}
+
+function insertHorse(db: DatabaseSync, sex: string, name: string, stableId: number, seed: number, breedId?: number): number {
   db.prepare(
     `INSERT INTO horses (sex, registered_name, breeder_prefix, breed_id, is_cross, composition, generation, coi, owner_stable_id, born_game_day, status, created_real_ts, genotype, rng_seed, last_incident_check_game_day)
-     VALUES (?, ?, 'CH', 1, 0, '{"QH":1}', 0, 0, ?, 0, 'alive', 0, ?, ?, 0)`
-  ).run(sex, name, stableId, GENOTYPE, seed);
+     VALUES (?, ?, 'CH', ?, 0, '{"QH":1}', 0, 0, ?, 0, 'alive', 0, ?, ?, 0)`
+  ).run(sex, name, breedId ?? breedIdFor(db, 'QH'), stableId, GENOTYPE, seed);
   return Number(db.prepare('SELECT last_insert_rowid() AS id').get().id);
+}
+
+/** The labels of the third picker's own <select>, in the order the page put them in. */
+function outsideStudOptionLabels(html: string): string[] {
+  const select = html.match(/<select name="stud_listing_id">([\s\S]*?)<\/select>/);
+  if (!select) return [];
+  return [...select[1].matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]).filter((label) => !label.startsWith('&mdash;') && !label.startsWith('—'));
 }
 
 async function buildWorld(): Promise<World> {
@@ -197,7 +208,7 @@ describeWithSqlite('the Breed page can pair a mare with a stallion standing at a
     expect(page.status).toBe(200);
     expect(pageHtml).toContain('name="stud_listing_id"');
     expect(pageHtml).toContain('NPC Big Stallion');
-    expect(pageHtml).toContain('fee 900');
+    expect(pageHtml).toContain('Quarter Horse - NPC Big Stallion at Apples and Oats Ranch. Fee 900.');
 
     // A workable pairing: the free mare, the outside stallion. The book button posts to the
     // market's own stud route, not to a second breeding path grown on this page.
@@ -237,6 +248,44 @@ describeWithSqlite('the Breed page can pair a mare with a stallion standing at a
     const refusedHtml = await refused.text();
     expect(refusedHtml).toContain('is already in foal');
     expect(refusedHtml).not.toContain('Book for 900');
+  });
+
+  it('sorts the picker by breed, with the mare\'s own breed first', async () => {
+    const world = await buildWorld();
+    const { stableBreedRoute } = await import('../../src/routes/horses');
+    const { createStudListing } = await import('../../src/db/stud');
+
+    // Three more stallions at the same NPC ranch, deliberately listed newest-first-by-id in an
+    // order that is neither alphabetical nor breed-grouped, so the page has something to sort.
+    const thoroughbred = insertHorse(world.db, 'stallion', 'NPC Thoroughbred', world.npcStableId, 31, breedIdFor(world.db, 'TB'));
+    const arabian = insertHorse(world.db, 'stallion', 'NPC Arabian', world.npcStableId, 32, breedIdFor(world.db, 'AR'));
+    const secondQuarterHorse = insertHorse(world.db, 'stallion', 'NPC Another Quarter Horse', world.npcStableId, 33);
+    for (const id of [thoroughbred, arabian, secondQuarterHorse]) {
+      await createStudListing(world.env, { stallionId: id, stableId: world.npcStableId, fee: 500, seasonCap: 10, gameDay: GAME_DAY - 40 });
+    }
+
+    // Both mares are Quarter Horses, so both Quarter Horse stallions come first (by name), then
+    // Arabian, then Thoroughbred.
+    const page = await stableBreedRoute(await contextFor(world, `/stables/${world.playerStableId}/breed`, 'GET'), 'GET', world.playerStableId);
+    const labels = outsideStudOptionLabels(await page.text());
+    expect(labels).toEqual([
+      'Quarter Horse - NPC Another Quarter Horse at Apples and Oats Ranch. Fee 500.',
+      'Quarter Horse - NPC Big Stallion at Apples and Oats Ranch. Fee 900.',
+      'Arabian - NPC Arabian at Apples and Oats Ranch. Fee 500.',
+      'Thoroughbred - NPC Thoroughbred at Apples and Oats Ranch. Fee 500.',
+    ]);
+
+    // A mare of another breed re-sorts the same list around her own breed instead - nothing is
+    // hidden, a cross-breed pairing is still legal, it is only the order that changes.
+    world.db.prepare('UPDATE horses SET breed_id = ? WHERE id = ?').run(breedIdFor(world.db, 'AR'), world.freeMareId);
+    const forArabianMare = await stableBreedRoute(
+      await contextFor(world, `/stables/${world.playerStableId}/breed`, 'POST', `action=check&mare_id=${world.freeMareId}&stallion_id=&stud_listing_id=`),
+      'POST',
+      world.playerStableId
+    );
+    const arabianFirst = outsideStudOptionLabels(await forArabianMare.text());
+    expect(arabianFirst[0]).toBe('Arabian - NPC Arabian at Apples and Oats Ranch. Fee 500.');
+    expect(arabianFirst).toHaveLength(4);
   });
 
   it('still books an ordinary covering when the outside picker is left alone', async () => {

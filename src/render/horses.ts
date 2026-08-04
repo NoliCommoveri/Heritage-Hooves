@@ -607,13 +607,21 @@ export interface BreedPreview {
   };
 }
 
-/** One stallion standing at a ranch that is not this account's - what the third picker offers. */
+/**
+ * One stallion standing at a ranch that is not this account's - what the third picker offers.
+ *
+ * Breed first, and no colour blurb: this is a dropdown a child scrolls on a phone looking for a
+ * stallion of the right breed, not a shop window. The colour description that used to be here made
+ * every option three lines long on a narrow screen and pushed the fee off the end.
+ */
 export interface OutsideStudOption {
   studListingId: number;
+  /** Null for a cross - `breedName` then reads "Cross", which still sorts sensibly. */
+  breedId: number | null;
+  breedName: string;
   stallionName: string;
   stableName: string;
   fee: number;
-  description: string;
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -712,17 +720,20 @@ export function renderBreedPage(params: {
   // stallion, and leaving this one alone is how a player says "my own stallion above, thanks".
   // Choosing somebody here overrides the stallion picker, which the label says out loud rather
   // than leaving a child to find out by pressing the button.
+  //
+  // The list arrives already ordered by the route: the mare's own breed first, then the rest by
+  // breed name. Breed leads each line for the same reason - it is the one thing being scanned for.
   const outsideStudPicker = params.outsideStuds.length
     ? html`
       <label>...or a stallion standing at another ranch
         <select name="stud_listing_id">
           <option value="">— none, use my own stallion above —</option>
           ${params.outsideStuds.map(
-            (s) => html`<option value="${String(s.studListingId)}" ${s.studListingId === params.selectedStudListingId ? raw('selected') : raw('')}>${s.stallionName} at ${s.stableName} - ${s.description}, fee ${String(s.fee)}</option>`
+            (s) => html`<option value="${String(s.studListingId)}" ${s.studListingId === params.selectedStudListingId ? raw('selected') : raw('')}>${s.breedName} - ${s.stallionName} at ${s.stableName}. Fee ${String(s.fee)}.</option>`
           )}
         </select>
       </label>
-      <p class="muted">Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
+      <p class="muted">Stallions of the mare's own breed come first, then the other breeds in alphabetical order. Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
     : html`<p class="muted">Nobody else is standing a stallion at stud just now. When somebody does, they'll show up here.</p>`;
 
   const body = html`
