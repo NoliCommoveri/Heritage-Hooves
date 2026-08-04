@@ -129,12 +129,11 @@ body {
 
 .subnav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0.4rem 1rem;
   background: var(--color-surface-alt);
   border-bottom: 1px solid var(--color-border);
-  overflow-x: auto;
-  white-space: nowrap;
 }
 
 .subnav-link {
@@ -158,6 +157,52 @@ body {
 
 .site-header--admin + .subnav .subnav-link.is-active {
   background: var(--color-admin);
+}
+
+/* ---------- Subnav hubs: a <details> dropdown grouping several links, no JavaScript ---------- */
+
+.subnav-hub {
+  position: relative;
+}
+
+.subnav-hub > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.subnav-hub > summary::-webkit-details-marker {
+  display: none;
+}
+
+.subnav-hub > summary::after {
+  content: ' \25BE';
+}
+
+.subnav-hub[open] > summary::after {
+  content: ' \25B4';
+}
+
+.subnav-hub-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+  padding: 0.3rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+}
+
+.subnav-hub-menu .subnav-link {
+  color: var(--color-text);
+}
+
+.subnav-hub-menu .subnav-link.is-active {
+  color: #fff;
 }
 
 /* ---------- Banners ---------- */

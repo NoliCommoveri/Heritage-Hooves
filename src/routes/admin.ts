@@ -353,12 +353,14 @@ const DECIMAL_CONFIG_KEYS = [
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
   if (method === 'GET') {
-    const notice = new URL(ctx.request.url).searchParams.get('saved') ? 'Changes saved.' : undefined;
-    return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, notice }));
+    const params = new URL(ctx.request.url).searchParams;
+    const notice = params.get('saved') ? 'Changes saved.' : undefined;
+    return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, notice, section: params.get('section') ?? undefined }));
   }
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
+  const section = form.section;
   const values: Partial<ConfigValues> = {};
 
   const displayTimezone = (form.display_timezone ?? '').trim();
@@ -369,7 +371,7 @@ export async function adminConfigRoute(ctx: RequestContext, method: string): Pro
     if (rawValue === undefined) continue;
     const n = Number(rawValue);
     if (!Number.isFinite(n) || !Number.isInteger(n)) {
-      return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a whole number.` }));
+      return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a whole number.`, section }));
     }
     values[key] = n;
   }
@@ -379,13 +381,13 @@ export async function adminConfigRoute(ctx: RequestContext, method: string): Pro
     if (rawValue === undefined) continue;
     const n = Number(rawValue);
     if (!Number.isFinite(n)) {
-      return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a number.` }));
+      return htmlResponse(renderConfigPage({ world: ctx.world, config: ctx.config, error: `${key.replace(/_/g, ' ')} must be a number.`, section }));
     }
     values[key] = n;
   }
 
   await writeConfig(ctx.env, ctx.account!.id, { values });
-  return redirect('/admin/config?saved=1');
+  return redirect(`/admin/config?saved=1${section ? `&section=${encodeURIComponent(section)}` : ''}`);
 }
 
 export async function adminConfigHistoryRoute(ctx: RequestContext): Promise<Response> {

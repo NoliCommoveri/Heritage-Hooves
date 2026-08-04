@@ -9,6 +9,21 @@ export interface NavLink {
   active?: boolean;
 }
 
+/**
+ * A group of links rendered as a `<details>` dropdown in the subnav bar - a hub, e.g. admin's
+ * "Game horses" grouping several admin subpages under one clickable label. No JavaScript: the
+ * disclosure is native HTML, the same pattern already used for `section-collapse` elsewhere.
+ * `active` marks the hub itself (one of its children is the current page) for styling, separate
+ * from each child's own `active`.
+ */
+export interface NavHub {
+  label: string;
+  children: NavLink[];
+  active?: boolean;
+}
+
+export type SubnavItem = NavLink | NavHub;
+
 export interface ShellParams {
   title: string;
   world: WorldRow;
@@ -20,8 +35,8 @@ export interface ShellParams {
    * page - see CLAUDE.md §11, "admin mode is a visibly different place, not an extra nav link".
    */
   section?: 'player' | 'admin';
-  /** A row of section-local links rendered as a menu bar under the header, e.g. the admin subpages. */
-  subnav?: NavLink[];
+  /** A row of section-local links (and, optionally, link hubs) rendered as a menu bar under the header. */
+  subnav?: SubnavItem[];
   /**
    * Slice 0009 Part B §5.4: how many turns the logged-in account has left, shown next to the game
    * day on every player page. Null when logged out. Not shown on admin pages - admin actions never
@@ -38,12 +53,21 @@ export interface ShellParams {
   body: SafeHtml;
 }
 
-function subnavBar(links: NavLink[] | undefined): SafeHtml {
-  if (!links || links.length === 0) return raw('');
-  const items = links.map(
-    (l) => html`<a href="${l.href}" class="${l.active ? 'subnav-link is-active' : 'subnav-link'}">${l.label}</a>`
+function navLinkHtml(l: NavLink): SafeHtml {
+  return html`<a href="${l.href}" class="${l.active ? 'subnav-link is-active' : 'subnav-link'}">${l.label}</a>`;
+}
+
+function subnavBar(items: SubnavItem[] | undefined): SafeHtml {
+  if (!items || items.length === 0) return raw('');
+  const rendered = items.map((item) =>
+    'href' in item
+      ? navLinkHtml(item)
+      : html`<details class="subnav-hub">
+          <summary class="${item.active ? 'subnav-link is-active' : 'subnav-link'}">${item.label}</summary>
+          <div class="subnav-hub-menu">${item.children.map(navLinkHtml)}</div>
+        </details>`
   );
-  return html`<nav class="subnav">${items}</nav>`;
+  return html`<nav class="subnav">${rendered}</nav>`;
 }
 
 export function pageShell(params: ShellParams): SafeHtml {
