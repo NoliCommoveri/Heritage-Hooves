@@ -30,6 +30,6 @@
     "test/market/stud-d1.test.ts",
     "test/npc/stud-d1.test.ts",
     "test/npc/show-barn-d1.test.ts",
-    "test/npc/finance-d1.test.ts"
+    "test/npc/pet-home-d1.test.ts"
   ]
 }

@@ -13,7 +13,8 @@ import { resolveDueCoverings } from './coverings';
 import { runNpcBreedingDecisions } from './npcBreeding';
 import { runNpcMarketListings } from './npcMarket';
 import { refreshNpcBuyOffers, runNpcMarketPurchases } from './npcBuying';
-import { runNpcBalanceFloor, runNpcListingClearance } from './npcFinance';
+import { runNpcBalanceFloor } from './npcFinance';
+import { runNpcPetHomeSales } from './petHome';
 import { runNpcStudListings } from './npcStud';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
@@ -139,12 +140,13 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // comment - a paused world must not mint consignments either (this whole branch only runs
       // when paused === 0), and any event this stage writes is subject to the same retention pass.
       await runConsignments(env, newGameDay, newTickSeq, config);
-      // NPC solvency (src/db/npcFinance.ts), immediately before expireListings and never after it:
-      // this stage claims the NPC listings that timed out with a live horse - selling each to an
-      // off-screen buyer and removing the horse - and expireListings closes everything it leaves
-      // behind, exactly as it always has. Run in the other order, expireListings would close those
-      // listings first and this stage would find nothing.
-      await runNpcListingClearance(env, newGameDay, config);
+      // The pet home (src/db/petHome.ts), immediately before expireListings and never after it:
+      // this stage claims the NPC listings that timed out with a live horse - sending each to a pet
+      // home and paying its stable - and expireListings closes everything it leaves behind, exactly
+      // as it always has. Run in the other order, expireListings would close those listings first
+      // and this stage would find nothing. It only ever touches an is_npc stable's listings; a
+      // player's expiring listing returns the horse to the barn as it always has.
+      await runNpcPetHomeSales(env, newGameDay, config);
       await expireListings(env, newGameDay);
       // Slice 0017 §13 (Part D): the same lazy dead-horse sweep expireListings runs above, for a
       // stallion who died or was retired away while standing at stud.

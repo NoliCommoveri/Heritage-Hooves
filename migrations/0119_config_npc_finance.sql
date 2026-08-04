@@ -7,10 +7,11 @@
 -- against a stable going silent, not an operating budget, and clearance sales are what an NPC
 -- actually lives on. Shortening this raises the ceiling on how much money the floor can create.
 --
--- npc_listing_clearance_fraction: what an NPC stable is paid for a horse that ran its full listing
--- window unsold and cleared to a buyer outside the game, as a fraction of the horse's own guide
--- value. Below 1.0 on purpose - a private sale after nobody local wanted the horse must be worse
--- than a sale to a player, or an NPC would rather wait the window out than be bought from.
+-- pet_home_payout_fraction: what a horse fetches from a pet home, as a fraction of its appraised
+-- value. One number for both sides of the same mechanic - a player choosing to send a horse to a
+-- pet home, and an NPC stable's listing that ran its full window unsold going the same way. Well
+-- below 1.0 on purpose: a pet home is the outlet you take when nobody in the game wants the horse,
+-- and it has to be a worse deal than selling to a player or nobody would ever use the market.
 --
 -- npc_buy_offer_min_balance: below this, an NPC takes its standing buy offer down and stops shopping
 -- open listings. Without it a broke stable still advertised an offer at the market_min_value floor
@@ -20,7 +21,7 @@ SET version = version + 1,
     "values" = json_set(
       "values",
       '$.npc_balance_floor_interval_game_days', 360,
-      '$.npc_listing_clearance_fraction', 0.6,
+      '$.pet_home_payout_fraction', 0.4,
       '$.npc_buy_offer_min_balance', 500
     )
 WHERE id = 1;

@@ -22,7 +22,24 @@ import { nowUtcSeconds } from '../lib/time';
 // 'stud_fee_received' (the stallion owner's receipt), widened in 0105_ledger_add_stud_kinds.sql. A
 // stud booking's commission reuses the existing 'commission' kind rather than a third new one - the
 // operator decided a stud fee carries the same commission a sale does.
-export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier' | 'sale' | 'purchase' | 'commission' | 'stud_fee_paid' | 'stud_fee_received';
+// The pet home (src/db/petHome.ts) adds one more - 'pet_home_payout', a horse leaving the game to a
+// pet home rather than to a buyer inside it, widened in 0120_ledger_add_pet_home_kind.sql. One kind
+// covers both ways in (a player choosing it, an NPC's listing timing out) because it is one
+// mechanic at one price. Its own kind rather than 'sale' so the ledger distinguishes a child buying
+// a horse from the world beyond the five of them taking one.
+export type LedgerKind =
+  | 'opening'
+  | 'upkeep'
+  | 'prize'
+  | 'adjustment'
+  | 'vet'
+  | 'farrier'
+  | 'sale'
+  | 'purchase'
+  | 'commission'
+  | 'stud_fee_paid'
+  | 'stud_fee_received'
+  | 'pet_home_payout';
 
 export interface LedgerEntry {
   stableId: number;
@@ -161,7 +178,7 @@ export async function getSeasonTradeSummary(env: Env, stableId: number, seasonSt
   const row = await env.DB.prepare(
     `SELECT
        COALESCE(SUM(CASE WHEN kind = 'purchase' THEN -amount ELSE 0 END), 0) AS spent_buying,
-       COALESCE(SUM(CASE WHEN kind = 'sale' THEN amount ELSE 0 END), 0) AS earned_selling
+       COALESCE(SUM(CASE WHEN kind IN ('sale', 'pet_home_payout') THEN amount ELSE 0 END), 0) AS earned_selling
      FROM ledger WHERE stable_id = ? AND game_day >= ?`
   )
     .bind(stableId, seasonStartGameDay)

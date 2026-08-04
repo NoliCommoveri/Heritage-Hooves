@@ -311,7 +311,7 @@ const DECIMAL_CONFIG_KEYS = [
   'npc_buy_offer_min_quality',
   'npc_buying_budget_fraction',
   'npc_stud_fee_fraction',
-  'npc_listing_clearance_fraction',
+  'pet_home_payout_fraction',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {

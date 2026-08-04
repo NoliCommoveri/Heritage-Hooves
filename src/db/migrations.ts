@@ -120,6 +120,7 @@ import m0116 from '../../migrations/0116_config_colour_patterns_market.sql';
 import m0117 from '../../migrations/0117_condition_lethal_white.sql';
 import m0118 from '../../migrations/0118_npc_policy_balance_floor.sql';
 import m0119 from '../../migrations/0119_config_npc_finance.sql';
+import m0120 from '../../migrations/0120_ledger_add_pet_home_kind.sql';
 
 export interface MigrationFile {
   name: string;
@@ -256,6 +257,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0117_condition_lethal_white.sql', sql: m0117 },
   { name: '0118_npc_policy_balance_floor.sql', sql: m0118 },
   { name: '0119_config_npc_finance.sql', sql: m0119 },
+  { name: '0120_ledger_add_pet_home_kind.sql', sql: m0120 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

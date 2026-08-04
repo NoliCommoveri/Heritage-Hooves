@@ -260,11 +260,11 @@ export interface ConfigValues {
    * needs is a property of its personality; how often it is checked is game-wide. Shortening this
    * raises the ceiling on how much money the floor can create - see that file's header. */
   npc_balance_floor_interval_game_days: number;
-  /** Live. What an NPC stable is paid for a horse whose listing ran its full window unsold and
-   * cleared to a buyer outside the game, as a fraction of the horse's own guide value. Below 1.0 on
-   * purpose - a private sale after nobody local wanted the horse must be worse than selling to a
-   * player, or an NPC would rather wait the window out than be bought from. */
-  npc_listing_clearance_fraction: number;
+  /** The pet home (src/db/petHome.ts). Live. What a horse fetches from a pet home, as a fraction of
+   * its appraised value - one number for both ways in, a player choosing it and an NPC stable's
+   * listing timing out. Well below 1.0 on purpose: a pet home has to be a worse deal than selling
+   * to a player, or nobody would ever use the market. */
+  pet_home_payout_fraction: number;
   /** Live. An NPC stable stops advertising a standing buy offer, and stops shopping open listings,
    * once its balance falls below this. Guards against a broke stable posting an offer at the
    * market_min_value floor, which reads to a child as a broken game rather than a bad deal. */

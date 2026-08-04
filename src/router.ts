@@ -29,6 +29,7 @@ import {
   horseEnterShowRoute,
   horseTestRoute,
   horseRetireRoute,
+  horsePetHomeRoute,
   horseCareRoute,
   horseLocationRoute,
   horseListRoute,
@@ -76,7 +77,7 @@ import { readAdminUnlockPayload, expireAdminUnlockCookie } from './lib/session';
 import { nowUtcSeconds } from './lib/time';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location|\/list|\/stud)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/location|\/list|\/stud)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;
@@ -169,6 +170,7 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/enter-show' && method === 'POST') return withReissuedCookie(ctx, await horseEnterShowRoute(ctx, horseId));
     if (sub === '/test') return withReissuedCookie(ctx, await horseTestRoute(ctx, method, horseId));
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
+    if (sub === '/pet-home') return withReissuedCookie(ctx, await horsePetHomeRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
     if (sub === '/list' && method === 'POST') return withReissuedCookie(ctx, await horseListRoute(ctx, horseId));
