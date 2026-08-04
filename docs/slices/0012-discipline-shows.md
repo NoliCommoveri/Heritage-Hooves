@@ -1,14 +1,15 @@
 # Slice 0012 — Discipline shows, and a fifth ability
 
-**Status: framework built, one of six disciplines built (2026-08-02).** The `agility` trait, the
+**Status: framework and all six disciplines built (2026-08-04).** The `agility` trait, the
 `disciplines` table, `scoreAbilityEntry`, the tick's discipline-class creation/judging, and every
-screen change in §9 are all built and generic to any discipline. Only Barrel Racing (`barrels`) is
-seeded (migration `0063`) - deliberately, per CLAUDE.md §9's "do not build ahead": the other five
-(§5.1's Flat Racing, Show Jumping, Endurance, Dressage, Gaited Pleasure) are a pure-data `INSERT`
-into `disciplines` when they're wanted, no code change. See the build log's 2026-08-02 discipline
-shows entry for what was decided and one correction to this document's own migration plan (§6.4's
-rebuild needed an extra step §6.4 itself doesn't mention, for a reason worth reading before writing
-a similar rebuild).
+screen change in §9 are all built and generic to any discipline. Barrel Racing (`barrels`) shipped
+first (migration `0063`, 2026-08-02) - deliberately, per CLAUDE.md §9's "do not build ahead" - and
+the other five (§5.1's Flat Racing, Show Jumping, Endurance, Dressage, Gaited Pleasure) followed as
+the pure-data `INSERT` this document always said they would be (migration `0108`, 2026-08-04, once
+the breeds stage landed alongside it - see §3.4/§5.5 below, both now superseded). See the build
+log's 2026-08-02 discipline shows entry for what was decided and one correction to this document's
+own migration plan (§6.4's rebuild needed an extra step §6.4 itself doesn't mention, for a reason
+worth reading before writing a similar rebuild), and the 2026-08-04 entry for the remaining five.
 
 The first classes judged on what a horse can *do* rather than what it looks like. Six disciplines,
 a new `agility` trait to make them distinguishable, and the scorer that reads them — reusing the
@@ -130,8 +131,13 @@ regional to national — for conformation or discipline classes. That gap is rea
 separately; it belongs with the NPC ceiling schedule, which is what makes a tier mean anything.
 
 ### 3.4 No NPC discipline barn
-`stockShowBarn` still generates Quarter Horses only. It can pad five of the six new classes, because
-they are open to all breeds — see §5.5 for the one it cannot.
+
+**Superseded 2026-08-04** — `stockShowBarn` no longer generates Quarter Horses only (see
+`docs/breed-ideal-vectors.md` §6.2 and that date's build-log entry). Left below as the reasoning
+that was true when this document was written.
+
+~~`stockShowBarn` still generates Quarter Horses only. It can pad five of the six new classes, because
+they are open to all breeds — see §5.5 for the one it cannot.~~
 
 **Slice 0011 made this more pressing than it was when this document was drafted.** NPC show-barn
 horses now age and die on the same code path as everyone else, so the barn thins on its own over
@@ -308,9 +314,16 @@ scorer.
 
 ### 5.5 Gaited Pleasure will have thin fields, and ships anyway
 
-`stockShowBarn` generates Quarter Horses, whose pool is `DMRT3 {"C":0.98,"A":0.02}` — so a show-barn
+**Superseded 2026-08-04** — the show barn now stocks Paso Fino and Icelandic horses directly (both
+breeds got their own `ideal_vector` and their own barn quota the same day), so a show-barn horse in
+either breed's pool is gaited the way a real Paso Fino or Icelandic is, not one time in a thousand.
+Left below as the reasoning that was true when this document was written, since the degrade-gracefully
+argument is still the right one for any class that stays thin for other reasons (low ownership, a
+young breed's pool).
+
+~~`stockShowBarn` generates Quarter Horses, whose pool is `DMRT3 {"C":0.98,"A":0.02}` — so a show-barn
 horse is gaited about one time in a thousand. Gaited Pleasure gets essentially **no NPC padding**
-until the show barn is breed-aware.
+until the show barn is breed-aware.~~
 
 Ship it regardless. The class degrades gracefully: `judgeOneClass` already refuses to top up a class
 nobody entered, a class of two real horses is legal and produces real placings, and the Paso Fino

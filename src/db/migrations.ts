@@ -107,6 +107,8 @@ import m0103 from '../../migrations/0103_stud_listings.sql';
 import m0104 from '../../migrations/0104_stud_bookings.sql';
 import m0105 from '../../migrations/0105_ledger_add_stud_kinds.sql';
 import m0106 from '../../migrations/0106_config_stud.sql';
+import m0107 from '../../migrations/0107_seed_breed_ideal_vectors.sql';
+import m0108 from '../../migrations/0108_seed_disciplines_remaining.sql';
 
 export interface MigrationFile {
   name: string;
@@ -230,6 +232,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0104_stud_bookings.sql', sql: m0104 },
   { name: '0105_ledger_add_stud_kinds.sql', sql: m0105 },
   { name: '0106_config_stud.sql', sql: m0106 },
+  { name: '0107_seed_breed_ideal_vectors.sql', sql: m0107 },
+  { name: '0108_seed_disciplines_remaining.sql', sql: m0108 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
