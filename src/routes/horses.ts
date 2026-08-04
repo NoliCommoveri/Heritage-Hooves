@@ -157,7 +157,8 @@ function foalColourSentences(result: ReturnType<typeof foalColourPossibilities>)
   return sentences;
 }
 
-/** Slice 0006 §6: the four conformation measurements for one horse, ready to hand to a render
+/** Slice 0006 §6 (a fifth trait, head_profile, added in slice 0021 §3): the conformation
+ * measurements for one horse, ready to hand to a render
  * function. Shared by the barn list, the horse page and (via a candidate's own genotype/seed) the
  * founding screen. */
 function conformationForHorse(horse: HorseRow, ageYears: number, config: RealizationConfig, traitRows: QuantitativeTraitRow[]) {

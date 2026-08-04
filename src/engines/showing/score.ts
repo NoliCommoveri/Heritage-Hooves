@@ -12,7 +12,7 @@ export interface IdealTrait {
   weight: number;
 }
 
-/** Only ever populated for the four conformation traits (§4.2) - a Partial because a breed with no
+/** Only ever populated for the conformation traits (§4.2, five since slice 0021 §3) - a Partial because a breed with no
  * ideal vector at all is represented as breeds.ideal_vector being null, not as an empty object. */
 export type IdealVector = Partial<Record<TraitCode, IdealTrait>>;
 

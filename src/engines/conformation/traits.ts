@@ -26,6 +26,7 @@ export const TRAIT_CATEGORY: Record<TraitCode, TraitCategory> = {
   foot_robustness: 'hidden',
   joint_robustness: 'hidden',
   ligament_robustness: 'hidden',
+  head_profile: 'conformation',
 };
 
 export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
@@ -42,9 +43,11 @@ export const TRAIT_DIRECTION: Record<TraitCode, TraitDirection> = {
   foot_robustness: 'higher_better',
   joint_robustness: 'higher_better',
   ligament_robustness: 'higher_better',
+  head_profile: 'bidirectional',
 };
 
-/** The four traits this slice ever displays (§2.1) - in TRAITS' own order. */
+/** The traits this slice ever displays (§2.1) - four originally, a fifth (head_profile) added in
+ * slice 0021 §3 - in TRAITS' own order. */
 export const CONFORMATION_TRAITS: readonly TraitCode[] = TRAITS.filter((t) => TRAIT_CATEGORY[t] === 'conformation');
 
 /** Slice 0012 §7: the five traits a discipline scorer reads - stamina, jump_scope, speed,
