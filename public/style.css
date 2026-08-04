@@ -301,6 +301,16 @@ a.button-link:hover {
   white-space: pre-line;
 }
 
+/* The message from a failed tick, on /admin/world. A raw exception message, so it can be long and
+   can contain no spaces at all - wrap it anywhere rather than letting it push the table sideways
+   off a phone screen. */
+.tick-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Tables ---------- */
 
 table {
