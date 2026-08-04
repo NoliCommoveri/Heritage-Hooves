@@ -36,6 +36,10 @@ import { nowUtcSeconds } from '../lib/time';
 // (subject_horse_id is NULL), written to every active player-owned stable when a consignment batch
 // lands (src/db/consignment.ts):
 //   consignment_batch -> {"v":1,"count":2}
+// Slice 0017 Part D (§13) adds one more, same no-migration-needed reasoning - written for the
+// STALLION's owner only (src/db/stud.ts's bookStud): the mare's owner was there, pressing the
+// button, and gets no event of their own for the same reason a buyer never gets horse_sold:
+//   stud_booked -> {"v":1,"stallion_name":"...","mare_name":"...","mare_stable_name":"...","fee":500}
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -48,7 +52,8 @@ export type EventKind =
   | 'care_due'
   | 'horse_sold'
   | 'listing_expired'
-  | 'consignment_batch';
+  | 'consignment_batch'
+  | 'stud_booked';
 
 export interface EventRow {
   id: number;

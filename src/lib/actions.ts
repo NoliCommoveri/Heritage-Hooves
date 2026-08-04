@@ -23,8 +23,11 @@ export function actionsRemaining(account: AccountActionState, tickSeq: number, a
  * bought together). buy_horse added by slice 0017 §2.5 - a purchase is a real decision and should
  * compete with breeding, showing and testing for the day's turns. **Listing a horse stays free and
  * spends nothing**, deliberately (§2.5): a listing that costs nothing is a listing a child will
- * actually use rather than hoard actions against, and the ones nobody buys expire. */
-export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse' | 'sell_to_offer';
+ * actually use rather than hoard actions against, and the ones nobody buys expire. book_stud added
+ * by slice 0017 §13 (Part D) - a distinct kind from book_covering rather than reusing it, so a
+ * future session reading the turns log can tell a cross-stable stud booking from an ordinary
+ * same-barn one at a glance. Offering a stallion at stud stays free, same reasoning as listing. */
+export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse' | 'sell_to_offer' | 'book_stud';
 
 export const ACTION_COSTS: Record<ActionKind, number> = {
   book_covering: 1,
@@ -37,6 +40,7 @@ export const ACTION_COSTS: Record<ActionKind, number> = {
   // buy_horse already costs the buyer, mirrored here onto the seller since there is no buyer turn
   // to spend in this direction.
   sell_to_offer: 1,
+  book_stud: 1,
 };
 
 /** The next tick slot's time of day, for the "more arrive at..." refusal message (§5.4). Purely

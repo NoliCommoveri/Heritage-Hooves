@@ -61,15 +61,25 @@ export interface BookCoveringParams {
   tickSeq: number;
 }
 
-export async function bookCovering(env: Env, params: BookCoveringParams): Promise<{ id: number }> {
+/**
+ * The insert statement bookCovering below runs on its own - split out for slice 0017 Part D
+ * (src/db/stud.ts's bookStud), which needs this landing in the *same* env.DB.batch() as the stud
+ * fee's ledger rows and the stud_bookings row, so a covering can never be created without the money
+ * that paid for it, or vice versa.
+ */
+export function buildBookCoveringStatement(env: Env, params: BookCoveringParams): D1PreparedStatement {
   const seed = randomSeed();
   const nowSeconds = nowUtcSeconds();
-  const result = await env.DB.prepare(
-    `INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts)
-     VALUES (?, ?, ?, ?, ?, 'booked', ?, ?)`
-  )
-    .bind(params.stableId, params.mareId, params.stallionId, params.gameDay, params.tickSeq, seed, nowSeconds)
-    .run();
+  return env.DB
+    .prepare(
+      `INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts)
+       VALUES (?, ?, ?, ?, ?, 'booked', ?, ?)`
+    )
+    .bind(params.stableId, params.mareId, params.stallionId, params.gameDay, params.tickSeq, seed, nowSeconds);
+}
+
+export async function bookCovering(env: Env, params: BookCoveringParams): Promise<{ id: number }> {
+  const result = await buildBookCoveringStatement(env, params).run();
   return { id: result.meta.last_row_id };
 }
 

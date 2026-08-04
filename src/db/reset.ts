@@ -45,8 +45,15 @@ export type ResetScope = 'horses' | 'world';
  * horses-only reset that left it behind would leave every listing pointing at a deleted horse,
  * which breaks `/market` on the first page view (§9). It is in `HORSE_TABLES` rather than
  * `WORLD_ONLY_TABLES` for exactly that reason: the scope that deletes horses must delete these.
+ *
+ * Slice 0017 Part D adds `stud_bookings` and `stud_listings`, before `listings` - `stud_bookings`
+ * has real foreign keys into `stud_listings`, `coverings`, `horses` and `stables`, so it must go
+ * before all four; `stud_listings` points at `horses` and `stables`, same reasoning as `listings`
+ * right beside it.
  */
 const HORSE_TABLES = [
+  'stud_bookings',
+  'stud_listings',
   'listings',
   'import_candidates',
   'import_offers',
@@ -90,6 +97,8 @@ export type ResetTable = (typeof RESET_TABLES)[number];
 
 /** Plain-English names for the admin page - the operator does not read table names. */
 export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
+  stud_bookings: 'Stud bookings',
+  stud_listings: 'Stallions standing at stud',
   listings: 'Horses for sale, and past sales',
   import_candidates: 'Horses offered in a batch',
   import_offers: 'Founding-stock batches',

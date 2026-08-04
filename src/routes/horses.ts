@@ -88,6 +88,7 @@ import {
   openListingsBySellerStable,
   buildWithdrawListingsForHorseStatement,
 } from '../db/listings';
+import { createStudListing, getActiveStudListingForHorse, bookingsThisSeasonCount, buildWithdrawStudListingsForHorseStatement } from '../db/stud';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
@@ -712,6 +713,14 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const guideValue =
     owner && horse.status === 'alive' ? await appraiseHorseForStable(ctx.env, horse, ownerStable.id, ctx.world.game_day, ctx.config.values) : null;
 
+  // Slice 0017 §13 (Part D): the stud state, mirroring the listing state right above it. A
+  // suggested fee reuses npc_stud_fee_fraction (the same shared "what's a typical stud fee, as a
+  // fraction of a horse's worth" number an NPC stallion's own fee is derived from) against the
+  // guide value already computed above, rather than a second config key.
+  const studListingRow = owner && horse.sex === 'stallion' ? await getActiveStudListingForHorse(ctx.env, horse.id) : null;
+  const bookedThisSeason = studListingRow ? await bookingsThisSeasonCount(ctx.env, studListingRow.id, ctx.world.season_index) : 0;
+  const suggestedStudFee = guideValue ? Math.max(10, Math.round((guideValue.value * ctx.config.values.npc_stud_fee_fraction) / 10) * 10) : null;
+
   return htmlResponse(
     renderHorsePage({
       world: ctx.world,
@@ -764,6 +773,11 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       marketCommissionPercent: ctx.config.values.market_commission_percent,
       marketError: params.get('market_error') ?? undefined,
       marketNotice: params.get('market_notice') ?? undefined,
+      studListing: studListingRow ? { studListingId: studListingRow.id, fee: studListingRow.fee, seasonCap: studListingRow.season_cap, bookedThisSeason } : null,
+      suggestedStudFee,
+      defaultStudSeasonCap: ctx.config.values.stud_default_season_cap,
+      studError: params.get('stud_error') ?? undefined,
+      studNotice: params.get('stud_notice') ?? undefined,
     })
   );
 }
@@ -805,6 +819,35 @@ export async function horseListRoute(ctx: RequestContext, horseId: number): Prom
 
   if (!result.ok) return fail(`${displayNameFor(horse)} is already on the market.`);
   return redirect(`/market/${String(result.listingId)}`);
+}
+
+/**
+ * /horses/:id/stud - slice 0017 §13 (Part D). Owner-only, the same notFound()-for-a-non-owner shape
+ * every horse-scoped route in this file uses. Only a stallion can be offered. Free: no turn, no fee
+ * (§2.5's own reasoning for listing a horse applies here too). Withdrawing runs through
+ * /market/stud/:id/withdraw, the same split listing/withdraw already uses.
+ */
+export async function horseStudRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+  if (horse.sex !== 'stallion') return notFound();
+
+  const fail = (message: string) => redirect(`/horses/${String(horseId)}?stud_error=${encodeURIComponent(message)}`);
+
+  const form = await parseForm(ctx.request);
+  const fee = Number((form.fee ?? '').trim());
+  const seasonCap = Number((form.season_cap ?? '').trim());
+  const maxFee = ctx.config.values.stud_max_fee;
+  if (!Number.isInteger(fee) || fee < 1) return fail('Type a whole number for the stud fee - at least 1.');
+  if (fee > maxFee) return fail(`That's more than the highest fee the market takes (${String(maxFee)}).`);
+  if (!Number.isInteger(seasonCap) || seasonCap < 1) return fail('Type a whole number for how many mares he can cover this season - at least 1.');
+
+  const result = await createStudListing(ctx.env, { stallionId: horseId, stableId: ownerStable.id, fee, seasonCap, gameDay: ctx.world.game_day });
+  if (!result.ok) return fail(`${displayNameFor(horse)} is already standing at stud.`);
+  return redirect(`/horses/${String(horseId)}`);
 }
 
 /** Slice 0003 §7: one line of state on a mare's page - in season now, due back in season around a
@@ -1375,6 +1418,14 @@ async function buildRetireWarnings(ctx: RequestContext, horse: HorseRow): Promis
     warnings.push(`${name} is on the market for ${String(listing.price)}. Retiring ${name} away takes ${possessive === 'her' ? 'her' : 'him'} off it - nobody can buy ${possessive === 'her' ? 'her' : 'him'} afterwards.`);
   }
 
+  // Slice 0017 §13 (Part D): the same reasoning as the listing warning right above it.
+  if (horse.sex === 'stallion') {
+    const studListing = await getActiveStudListingForHorse(ctx.env, horse.id);
+    if (studListing) {
+      warnings.push(`${name} is standing at stud for ${String(studListing.fee)}. Retiring ${name} away takes him off it - nobody can book him afterwards.`);
+    }
+  }
+
   return warnings;
 }
 
@@ -1495,6 +1546,8 @@ export async function horseRetireRoute(ctx: RequestContext, method: string, hors
     // Slice 0017 §7.4: in the same batch as the horse's own status change, so no `status = 'open'`
     // race can leave a live listing pointing at a retired horse.
     ...buildWithdrawListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
+    // Slice 0017 §13 (Part D): same reasoning, for a stud listing.
+    ...buildWithdrawStudListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
   ]);
 
   return redirect(`/stables/${String(ownerStable.id)}/horses`);

@@ -26,6 +26,8 @@
     "test/founding/consignment-d1.test.ts",
     "test/reset-d1.test.ts",
     "test/npc/buying-d1.test.ts",
-    "test/market/sell-into-offer-d1.test.ts"
+    "test/market/sell-into-offer-d1.test.ts",
+    "test/market/stud-d1.test.ts",
+    "test/npc/stud-d1.test.ts"
   ]
 }

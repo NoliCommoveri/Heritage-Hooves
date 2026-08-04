@@ -402,6 +402,20 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="npc_buying_budget_fraction" value="${String(v.npc_buying_budget_fraction)}">
       </label>
       <p class="muted">Slice 0017 §12 (Part C). An NPC stable only buys - on the standing offers board or by shopping open listings on the tick - once its free stalls are at or above the buying buffer; below that, it stops. Both routes reuse the exact appraisal and sale path a player's own purchase uses. Watch /admin/npc's buying-power column: NPC balances are real and never topped up automatically, so a stable that overspends quietly stops buying until it earns more.</p>
+      <h3>Stud services (Part D)</h3>
+      <label>Highest fee the market accepts
+        <input type="text" inputmode="numeric" name="stud_max_fee" value="${String(v.stud_max_fee)}">
+      </label>
+      <label>Default season cap suggested on the "offer at stud" form
+        <input type="text" inputmode="numeric" name="stud_default_season_cap" value="${String(v.stud_default_season_cap)}">
+      </label>
+      <label>NPC stud fee, as a fraction of guide value
+        <input type="text" inputmode="decimal" name="npc_stud_fee_fraction" value="${String(v.npc_stud_fee_fraction)}">
+      </label>
+      <label>NPC stallion's season cap
+        <input type="text" inputmode="numeric" name="npc_stud_season_cap" value="${String(v.npc_stud_season_cap)}">
+      </label>
+      <p class="muted">A stud booking moves money exactly like a sale does - the mare's owner pays the fee, the stallion's owner receives it minus the same commission a sale takes, and there is no live-foal guarantee (a missed conception is not refunded, the same as breeding two horses in one barn today). Every NPC stable's eligible stallions are offered automatically, at a fee derived from the shared fraction above, and withdrawn again the moment their quality crosses the NPC ceiling below - a stud booking combines a stallion's genetics with a player's own stock, so the ceiling has to apply here too, not only to what an NPC stable chooses to breed.</p>
       <label>Lethal foal death window (game days)
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>
