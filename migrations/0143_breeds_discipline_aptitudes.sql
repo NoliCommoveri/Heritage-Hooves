@@ -1,0 +1,25 @@
+-- A breed's suitability for each discipline: a multiplier folded into scoreAbilityEntry alongside
+-- care, tack, training and age. The counterpart to 0141's ability_bias - that one changes what a
+-- breed's horses are BORN with and only ever affects new horses, this one changes how the horse in
+-- front of you scores today. Both were commissioned together on 2026-08-04; see
+-- docs/breed-ability-and-aptitude.md for why the design uses two mechanisms rather than one.
+--
+-- This is breeds.discipline_aptitudes, named in docs/horse-game-schema.md §249 and left unbuilt by
+-- slice 0012 §3.2 ("Discipline classes are open to everyone") because the aptitudes had not been
+-- decided. They have now.
+--
+-- Shape, keyed by disciplines.code:
+--   { "v": 1, "disciplines": { "barrels": 1.05, "racing": 1.02, "jumping": 0.97,
+--                               "endurance": 0.95, "dressage": 0.98, "gaited": 1.00 } }
+--
+-- A missing discipline key, a null column, a crossbred horse, or a horse with no breed all read as
+-- 1.00 - "no opinion", never 0. This mirrors scoreAbilityEntry's own judgeWeights rule rather than
+-- its `weights` rule, and the difference matters: a 0 here would score a horse at nothing rather
+-- than leaving it unmodified.
+--
+-- LIVE TUNABLE, NOT SNAPSHOTTED (CLAUDE.md §5.5). Unlike show_classes.ability_weights, an aptitude
+-- cannot be copied onto the class at creation because it belongs to the horse's breed, not to the
+-- class - a discipline class has no breed_id at all (migration 0064's CHECK). So retuning a number
+-- here changes the result of a class that has already been entered but not yet judged, the same way
+-- retuning care or upkeep does. That is accepted; judged history is never revisited.
+ALTER TABLE breeds ADD COLUMN discipline_aptitudes TEXT;

@@ -8,6 +8,7 @@ import { randomSeed, deriveSeed } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { getBreedById } from './breeds';
 import { getSpecializableAbilityTraits } from './disciplines';
+import { parseAbilityBias } from '../engines/breeds/identity';
 import { buildFoundingHorseInsertStatements, countAliveHorses } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
@@ -175,6 +176,9 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
   // skips Part B. Both are computed once per offer, not per candidate - identical for every slot.
   const breedIdealVector = breed.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
   const eligibleAbilityTraits = await getSpecializableAbilityTraits(env);
+  // Migration 0141: the breed's ability leaning, likewise parsed once per offer rather than per
+  // candidate. Null (no leaning decided) parses to {} and every trait draws at the band chance.
+  const abilityBias = parseAbilityBias(breed.ability_bias);
 
   const slots: ('mare' | 'stallion')[] = [
     ...Array<'mare'>(offer.mare_candidates).fill('mare'),
@@ -204,6 +208,7 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
       breedIdealVector,
       eligibleAbilityTraits,
       abilitySpecialistPotential: config.values.founding_ability_specialist_potential,
+      abilityBias,
     });
     const { originPrefix, namePart } = generateFoundingName(candidateSeed);
 

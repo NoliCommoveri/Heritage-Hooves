@@ -23,6 +23,16 @@ export interface BreedRow {
    * the Quarter Horse until their own stage lands. Parse with src/engines/showing/score.ts's
    * parseIdealVector. */
   ideal_vector: string | null;
+  /** Migration 0141. JSON, { v: 1, traits: { <ability trait code>: <offset> } }, or null. An offset
+   * to the quality band's polygenic_one_chance when a horse of this breed is generated - the only
+   * thing in the game that makes a breed born better at one ability than another. Null means no
+   * leaning. Parse with src/engines/breeds/identity.ts's parseAbilityBias. */
+  ability_bias: string | null;
+  /** Migration 0143. JSON, { v: 1, disciplines: { <disciplines.code>: <multiplier> } }, or null.
+   * How suited this breed is to each discipline, multiplied into a discipline class's final score.
+   * Null means no opinion (every discipline reads 1.0). Parse with src/engines/breeds/identity.ts's
+   * parseDisciplineAptitudes. */
+  discipline_aptitudes: string | null;
 }
 
 export interface LocusRow {

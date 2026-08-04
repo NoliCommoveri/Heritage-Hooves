@@ -138,6 +138,10 @@ import m0137 from '../../migrations/0137_npc_stables_paso_fino_and_german_warmbl
 import m0138 from '../../migrations/0138_breed_image_labels.sql';
 import m0139 from '../../migrations/0139_judges_kind_and_ability_weights.sql';
 import m0140 from '../../migrations/0140_seed_discipline_judges.sql';
+import m0141 from '../../migrations/0141_breeds_ability_bias.sql';
+import m0142 from '../../migrations/0142_seed_breed_ability_bias.sql';
+import m0143 from '../../migrations/0143_breeds_discipline_aptitudes.sql';
+import m0144 from '../../migrations/0144_seed_breed_discipline_aptitudes.sql';
 
 export interface MigrationFile {
   name: string;
@@ -292,6 +296,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0138_breed_image_labels.sql', sql: m0138 },
   { name: '0139_judges_kind_and_ability_weights.sql', sql: m0139 },
   { name: '0140_seed_discipline_judges.sql', sql: m0140 },
+  { name: '0141_breeds_ability_bias.sql', sql: m0141 },
+  { name: '0142_seed_breed_ability_bias.sql', sql: m0142 },
+  { name: '0143_breeds_discipline_aptitudes.sql', sql: m0143 },
+  { name: '0144_seed_breed_discipline_aptitudes.sql', sql: m0144 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

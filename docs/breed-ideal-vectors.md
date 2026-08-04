@@ -342,13 +342,16 @@ Roughly in dependency order:
 Ideal vectors are one of five things overview §4a lists as breed identity. Seeding these did not
 close the stage — still unwritten anywhere, for all eight breeds:
 
-- `eligible_class_types` and `discipline_aptitudes` — the `disciplines` table now holds all six
-  disciplines slice 0012 §5.1 named (migrations `0063` + `0108`, 2026-08-04), so this is no longer
-  blocked on schema or on a thin discipline set either. Slice 0012 §2.1 deliberately shipped with no
-  breed gating at all (every discipline is `crosses_eligible = 1` and open to every breed) rather
-  than pre-empting this - `discipline_aptitudes` is the modifier that would make breed matter
-  *beyond* the allele pools it already lives in, and building it before the aptitudes are decided
-  would double-count
+- ~~`discipline_aptitudes`~~ — **built 2026-08-04** (migrations `0143`/`0144`), after the operator
+  reported German Warmbloods beating Quarter Horses in barrels. It landed alongside a second,
+  heritable mechanism this bullet had not anticipated, `breeds.ability_bias` (migrations
+  `0141`/`0142`), because an aptitude multiplier alone is a thumb on the scale that breeding cannot
+  answer. See `docs/breed-ability-and-aptitude.md` for both, and §4 there for why the aptitude
+  spread is ±0.05 rather than wider
+- `eligible_class_types` — still unbuilt, and still deliberate. Every discipline remains
+  `crosses_eligible = 1` and open to every breed: an aptitude says a Warmblood is *bad* at barrels,
+  not that it is *barred* from them, and a child who enters one and places fifth learns more than a
+  greyed-out button teaches
 - `height_range` and `weight_range`
 - disease panels for the seven non-Quarter-Horse breeds — the `conditions` table holds the Quarter
   Horse's four (`migrations/0053`), and overview §4a names the others' signature conditions but
