@@ -298,14 +298,31 @@ export async function listingPageRoute(ctx: RequestContext, listingId: number): 
   // public record of a completed sale, and a withdrawn one is nobody's business.
   if (listing.status !== 'open') return redirect('/market');
 
+  // `isMine` answers one question only: may this account withdraw the listing? It used to answer a
+  // second one it had no business answering - whether a buy form is drawn - and that is what made
+  // the market unable to move a horse between two barns one child runs. buyerOptionsFor already
+  // excludes the selling stable, so the account's *other* stables are exactly the set that may buy,
+  // and this route's own POST has always agreed (see its §7.1 step 2 comment): the refusal there is
+  // "a stable cannot buy its own horse", never "your account cannot". Drawing no button in front of
+  // a handler that would have accepted the press is the same class of bug as slice 0020's missing
+  // /treat route - the page and the handler disagreeing about what is allowed.
+  //
+  // CLAUDE.md §13 is what makes this the fix rather than adding a transfer button: there is
+  // deliberately no direct horse transfer between one owner's own stables, so the market *is* the
+  // route, and it has to actually work. The sale is a real sale - commission, one turn, the money
+  // moving between two balances - and the ledger's same_account flag (slice 0017 §2.2) exists
+  // precisely to make it visible rather than to forbid it.
   const isMine = listing.seller_account_id !== null && listing.seller_account_id === ctx.account!.id;
-  const buyerOptions = isMine ? [] : await buyerOptionsFor(ctx, listing.seller_stable_id);
+  const buyerOptions = await buyerOptionsFor(ctx, listing.seller_stable_id);
   const params = new URL(ctx.request.url).searchParams;
   const requested = Number(params.get('stable'));
   const selected = buyerOptions.find((o) => o.id === requested) ?? buyerOptions.find((o) => o.id === ctx.account!.last_active_stable_id) ?? buyerOptions[0];
 
   const view = await buildListingView(ctx, listing, horse, isMine);
-  const refusal = isMine ? undefined : buyRefusal(ctx, view, selected, horse);
+  // A seller with no second stable gets no refusal text at all: the withdraw card is the whole story
+  // there, and "you have no other stable that could buy this horse" would be answering a question
+  // nobody on that page asked.
+  const refusal = isMine && buyerOptions.length === 0 ? undefined : buyRefusal(ctx, view, selected, horse);
 
   return htmlResponse(
     renderListingPage({

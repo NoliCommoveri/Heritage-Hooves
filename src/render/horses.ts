@@ -36,13 +36,30 @@ function barnThumbnail(horse: HorseRow): SafeHtml {
   return html`<span class="horse-thumb horse-thumb--placeholder" aria-hidden="true"></span>`;
 }
 
+/**
+ * What to call a horse whose status is `removed`, in two words a child reads the same way on every
+ * screen.
+ *
+ * It exists because the wording had drifted onto four screens independently and three of them were
+ * wrong: the barn list, the horse's own page and /world all said "Retired away" for a horse that had
+ * gone to a pet home, while the past-horses list (endedDescription, further down this file) said
+ * "Went to a pet home". Same horse, same day, three different stories depending on which link a
+ * child followed. One function now, so a fifth screen cannot invent a fourth answer.
+ *
+ * Only a horse with foals or a show record behind it is ever labelled at all - one with neither is
+ * deleted outright when it leaves (src/db/horseRemoval.ts).
+ */
+export function removedHorseLabel(endReason: string | null): string {
+  return endReason === 'pet_home' ? 'Went to a pet home' : 'Retired away';
+}
+
 /** Slice 0010 §8/slice 0011 §8.1: a small marker for a horse that is visibly affected (a
  * signs_visible condition its genotype reads as affected by, with no test needed - §2.4), dead, or
  * retired away. Kept to one glanceable badge, the same discipline this file's own comments already
  * apply to the compact conformation line and the show-record badge - the barn list is already dense. */
 function healthBarnBadge(horse: HorseRow, visibleConditions: ConditionRow[]): SafeHtml {
   if (horse.status === 'dead') return html`<span class="badge badge-danger">Died</span>`;
-  if (horse.status === 'removed') return html`<span class="badge">Retired away</span>`;
+  if (horse.status === 'removed') return html`<span class="badge">${removedHorseLabel(horse.end_reason)}</span>`;
   if (visibleConditions.length === 0) return raw('');
   return html`<span class="badge badge-warning">${visibleConditions.map((c) => c.name).join(', ')}</span>`;
 }
@@ -1208,7 +1225,7 @@ export function renderHorsePage(params: {
     h.status === 'dead'
       ? html`<span class="badge badge-danger">Died${h.ended_game_day !== null ? html`, ${formatCalendarDate(h.ended_game_day, params.gameDaysPerYear)}` : raw('')}</span>`
       : h.status === 'removed'
-        ? html`<span class="badge">Retired away${h.ended_game_day !== null ? html`, ${formatCalendarDate(h.ended_game_day, params.gameDaysPerYear)}` : raw('')}</span>`
+        ? html`<span class="badge">${removedHorseLabel(h.end_reason)}${h.ended_game_day !== null ? html`, ${formatCalendarDate(h.ended_game_day, params.gameDaysPerYear)}` : raw('')}</span>`
         : params.ageState === 'veteran'
           ? html`<span class="badge">Veteran</span>`
           : params.ageState === 'failing'
@@ -1707,10 +1724,9 @@ export function renderPetHomeConfirmPage(params: {
  * already carries that detail for a condition death). */
 function endedDescription(h: HorseRow): string {
   // A pet-home horse is 'removed' too, so this has to read end_reason before falling through to the
-  // generic word - otherwise every horse sent to a pet home would claim it was retired away.
-  // Only horses with a record behind them reach this list at all: one that never showed and never
-  // had a foal is deleted outright rather than kept (src/db/horseRemoval.ts).
-  if (h.status === 'removed') return h.end_reason === 'pet_home' ? 'Went to a pet home' : 'Retired away';
+  // generic word - otherwise every horse sent to a pet home would claim it was retired away. Shared
+  // with the three badge screens via removedHorseLabel, which is where that reasoning now lives.
+  if (h.status === 'removed') return removedHorseLabel(h.end_reason);
   if (h.end_reason === 'old_age') return 'Died of old age';
   return 'Died';
 }

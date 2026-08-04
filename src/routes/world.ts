@@ -8,6 +8,7 @@ import { actionsLeftFor } from '../lib/context';
 import { htmlResponse, notFound } from '../lib/http';
 import { renderWorldIndexPage, renderWorldStablePage, renderWorldHorsePage, type WorldStableListRow, type WorldRosterHorse, type PublicHorseView } from '../render/world';
 import { describeHorseRow } from './horses';
+import { removedHorseLabel } from '../render/horses';
 import { placingText, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT, type ShowResultGroup } from '../render/shows';
 import { listStablesForWorld, getStableById } from '../db/stables';
 import { countAliveHorsesByStable, getHorse, listStableHorses, horseDisplayName, type HorseRow } from '../db/horses';
@@ -91,7 +92,12 @@ export async function worldStableRoute(ctx: RequestContext, stableId: number): P
  * of HorseRow on purpose: passing the full row in is fine (structural typing), but this function's
  * own body can never read a field - coi, genotype, care state - that isn't named in that subset.
  */
-export type PublicHorseSource = Pick<HorseRow, 'id' | 'registered_name' | 'barn_name' | 'sex' | 'breeder_prefix' | 'image_url' | 'status' | 'location' | 'is_cross'>;
+// end_reason joins the list so /world can say "Went to a pet home" rather than calling every ended
+// horse "Retired away" - the same wording the owner's own screens use (removedHorseLabel).
+export type PublicHorseSource = Pick<
+  HorseRow,
+  'id' | 'registered_name' | 'barn_name' | 'sex' | 'breeder_prefix' | 'image_url' | 'status' | 'location' | 'is_cross' | 'end_reason'
+>;
 
 export function buildPublicHorseView(params: {
   horse: PublicHorseSource;
@@ -131,7 +137,7 @@ export function buildPublicHorseView(params: {
     wins: params.showSummary?.wins ?? 0,
     bestPlacing: params.showSummary?.best_placing ?? null,
     recentResultGroups: params.recentResultGroups,
-    statusLabel: h.status === 'dead' ? 'Died' : h.status === 'removed' ? 'Retired away' : null,
+    statusLabel: h.status === 'dead' ? 'Died' : h.status === 'removed' ? removedHorseLabel(h.end_reason) : null,
     atPasture: h.status === 'alive' && h.location === 'pasture',
     listing: params.listing,
   };

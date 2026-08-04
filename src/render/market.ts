@@ -324,6 +324,28 @@ export function renderListingPage(params: {
         ? html`<input type="hidden" name="stable_id" value="${String(selected.id)}">`
         : raw('');
 
+  const buyCard = params.refusal
+    ? html`<div class="card"><p class="notice">${params.refusal}</p></div>`
+    : html`
+      <div class="card">
+        <h2>${l.isMine ? html`Move ${l.name} to another of your stables` : html`Buy ${l.name}`}</h2>
+        ${balanceAfterLine}
+        <p class="muted">Buying costs one turn. ${l.name}'s barn name is cleared when the horse changes hands - the registered name never changes - and the seller's test results come with ${l.sex === 'mare' ? 'her' : 'him'}.</p>
+        ${
+          l.isMine
+            ? html`<p class="muted">This is a real sale between two of your own stables: the asking price moves from one balance to the other, and the market still takes its commission out of it.</p>`
+            : raw('')
+        }
+        <form method="post" action="/market/${String(l.listingId)}/buy">
+          ${stableField}
+          <button type="submit">${l.isMine ? html`Move ${l.name} for ${String(l.price)}` : html`Buy for ${String(l.price)}`}</button>
+        </form>
+      </div>`;
+
+  // Your own listing gets the withdraw card *and*, when you have a second stable, the buy card
+  // underneath it - both are things you can genuinely do with this listing, and the page used to
+  // offer only the first. CLAUDE.md §13: the market is deliberately the only route a horse takes
+  // between two barns one child runs, so this is where that has to be possible.
   const buyBlock = l.isMine
     ? html`
       <div class="card">
@@ -332,19 +354,9 @@ export function renderListingPage(params: {
           <input type="hidden" name="return_to" value="market">
           <button type="submit" class="secondary">Withdraw from the market</button>
         </form>
-      </div>`
-    : params.refusal
-      ? html`<div class="card"><p class="notice">${params.refusal}</p></div>`
-      : html`
-        <div class="card">
-          <h2>Buy ${l.name}</h2>
-          ${balanceAfterLine}
-          <p class="muted">Buying costs one turn. ${l.name}'s barn name is cleared when the horse changes hands - the registered name never changes - and the seller's test results come with ${l.sex === 'mare' ? 'her' : 'him'}.</p>
-          <form method="post" action="/market/${String(l.listingId)}/buy">
-            ${stableField}
-            <button type="submit">Buy for ${String(l.price)}</button>
-          </form>
-        </div>`;
+      </div>
+      ${params.buyerOptions.length > 0 ? buyCard : raw('')}`
+    : buyCard;
 
   const body = html`
     <h1>${l.name}</h1>
