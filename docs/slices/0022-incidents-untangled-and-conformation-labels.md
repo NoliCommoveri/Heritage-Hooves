@@ -112,13 +112,30 @@ twelve. The code already half-agrees with itself — `rollAcuteIncidents`, `Open
 `src/db/acquiredConditions.ts` (→ `src/db/incidents.ts`) and
 `src/engines/health/acquired.ts` (→ `src/engines/incidents/risk.ts`).
 
-## A6. One thing to check with the operator before building
+## A6. The history gets trimmed
 
-The horse page keeps a **permanent** history of every past incident. If an incident is meant to be
-novelty and chance rather than a medical record, a horse that has lived a long life will accumulate
-a long list of things that happened to it and then resolved with no lasting mark. Options: keep it
-in full, show only the last few, or collapse it behind a summary line the way slice 0021 Part F did
-for the colour card. Not decided here.
+**Operator decision:** the horse page shows only incidents from roughly the last one to two game
+years. A horse that lived a long life should not accumulate a permanent medical dossier — an
+incident that happened, resolved, and left no mark is novelty, and novelty has a shelf life.
+
+- **The trim is display-only. Rows are never deleted.** `/admin/incidents` is the tuning instrument
+  for numbers that have never been checked against real play, and its outcome distribution is only
+  worth reading because it covers everything that has ever resolved. Deleting old rows would quietly
+  destroy the one measurement that says whether colic's 40%-untreated is right. Rows stay; the horse
+  page just stops drawing the old ones.
+- The window is a config value, `incident_history_game_days`, **default 720** — two game years at
+  today's `game_days_per_year` of 360. A live tunable, read directly at render time, not snapshotted
+  (`CLAUDE.md` §5.5): it only affects what is drawn on the next page load.
+- The window is measured from the incident's `resolve_game_day`, not its onset.
+- **An open incident is always shown regardless of the window**, and so is any incident whose
+  outcome is `degenerative` — that one is not history, it is the reason the horse can't be entered
+  in a class, and it must stay visible for as long as it applies.
+- When the window hides at least one incident, the card ends on a plain count rather than silently
+  dropping them: *"3 earlier incidents, all resolved."* Nothing is lost without being mentioned.
+
+Worth the operator knowing when tuning this: at `game_days_per_tick` of 10, two game years is only
+a few real weeks of play. If the list still feels long, the number to move is
+`incident_history_game_days`, and it moves without a deploy.
 
 ---
 
@@ -136,7 +153,7 @@ pairing has to hold eight breeds' ideal vectors in their head to read it.
 
 **Once a horse has shown at least once, each conformation trait gains a one-word verdict** —
 *Poor*, *Weak*, *Acceptable*, *Good*, *Outstanding* — saying how close that trait sits to what this
-horse's own breed wants.
+horse's own breed wants. A horse that has never shown reads **Unknown** on every trait.
 
 ## B2. Where the word comes from
 
@@ -165,10 +182,15 @@ Starting proposal, at the default falloff of 2.0:
 
 These are first guesses and want checking against real horses.
 
-## B3. The gate: at least one start
+## B3. The gate: at least one start, and **Unknown** before it
 
-The word appears only when `horse_show_summary.starts >= 1` for that horse. Before that, the card
-renders exactly as it does today, closing line and all.
+The real word appears only when `horse_show_summary.starts >= 1` for that horse. Before that, every
+trait reads **Unknown**.
+
+**Unknown is rendered, not omitted.** This matters more than it looks: a blank column reads as a bug
+or as an answer, and a child comparing two horses can't tell "we haven't found out yet" from
+"nothing to say." *Unknown* says the thing plainly and, better, tells them exactly what to do about
+it — enter the horse in a class.
 
 This is the promise the card already makes, kept literally: showing a horse is how you learn what
 the breed wants. It also keeps a real cost on the information — a child who wants to know whether a
@@ -179,7 +201,12 @@ A retired or dead horse that showed in its life keeps its labels; the gate is th
 `horse_show_summary` is deliberately built to outlive the horse.
 
 Where the horse's breed has no `ideal_vector` (possible only if a future breed is added without
-one — all eight in play have had one since migration `0107`), no word renders, for any trait.
+one — all eight in play have had one since migration `0107`), every trait reads *Unknown* as well.
+The two cases are genuinely the same sentence from the player's side: the game can't tell you yet.
+
+The card's closing line changes with the gate. Never shown, it keeps today's wording; once shown, it
+should stop promising something it has now delivered — one sentence saying the words are measured
+against this horse's own breed, and that a different breed would score the same horse differently.
 
 ## B4. **The bars must get shorter**
 
@@ -214,17 +241,38 @@ anywhere in this codebase and this introduces none.
 The word must be legible on its own, not by colour alone — colour may reinforce the band, never
 carry it.
 
-## B5. Where it does not go
+## B5. The breeding preview gets them too
+
+**Operator decision: yes.** This is where the labels earn their keep — the horse page is where you
+read about one horse, the breeding page is where you actually decide a pairing, which is the reason
+this slice exists at all.
+
+`/horses/breed`'s "This pairing" card gains a conformation block: one row per trait, the mare's word
+and the stallion's word side by side. It slots in beside the existing COI, conception-chance, health
+and foal-colour blocks, which already follow exactly this shape.
+
+- **Words only, no bars.** Five traits × two horses is ten bars on a card that already carries four
+  other blocks. The same phone-width argument that shortens the bars in §B4 says not to put bars
+  here at all. A two-column list of trait → word survives a narrow screen; twin bar charts do not.
+- **Each parent is judged against its own breed's ideal, not a shared one.** A cross-breed pairing
+  is possible in this game, and a Quarter Horse and an Arabian genuinely want different shoulders.
+  Never score both parents against one vector, and never against the foal's breed — the foal doesn't
+  exist yet and has no breed to have an opinion.
+- **The gate is per parent.** An unshown mare booked to a proven stallion reads *Unknown* down her
+  column and real words down his. That asymmetry is the honest picture and is worth showing.
+- The route already has both horses, both breeds and both COI-relevant records loaded for the
+  existing preview; this needs one extra lookup per parent (`horse_show_summary.starts`) and the
+  same `conformationDisplayRows` call the horse page makes.
+
+**A note the operator should hear before this ships:** the preview shows the *parents'* words, and a
+foal is not the average of its parents. Two *Outstanding* shoulders can still throw a foal with a
+poor one — that is what the genetics engine does and it is the point of the game. The block should
+carry one plain sentence saying so, or the labels will quietly teach the children a rule that isn't
+true.
+
+## B6. Where it does not go
 
 - **The barn list's compact line** (`Neck 55 · Shoulder 60 · …`). Five numbers already fill that
   line on a phone; five numbers plus five words would wrap into a paragraph per horse and make the
   list unreadable. Out of scope.
-- **Anything about ability traits, health or care.** This slice touches the Conformation card only.
-
-## B6. One thing to check with the operator before building
-
-The stated reason for wanting this is *deciding pairings* — and pairings are decided on the breeding
-preview, not the horse page. The preview could show each parent's labels side by side, which is
-closer to the actual need than the horse page is. It is also more work and more screen. Build the
-horse page first either way; whether the preview follows is the operator's call, not this
-document's.
+- **Anything about ability traits, health or care.** This slice touches conformation only.
