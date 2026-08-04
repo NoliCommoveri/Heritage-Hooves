@@ -607,13 +607,21 @@ export interface BreedPreview {
   };
 }
 
-/** One stallion standing at a ranch that is not this account's - what the third picker offers. */
+/**
+ * One stallion standing at a ranch that is not this account's - what the third picker offers.
+ *
+ * Breed first, and no colour blurb: this is a dropdown a child scrolls on a phone looking for a
+ * stallion of the right breed, not a shop window. The colour description that used to be here made
+ * every option three lines long on a narrow screen and pushed the fee off the end.
+ */
 export interface OutsideStudOption {
   studListingId: number;
+  /** Null for a cross - `breedName` then reads "Cross", which still sorts sensibly. */
+  breedId: number | null;
+  breedName: string;
   stallionName: string;
   stableName: string;
   fee: number;
-  description: string;
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -712,17 +720,20 @@ export function renderBreedPage(params: {
   // stallion, and leaving this one alone is how a player says "my own stallion above, thanks".
   // Choosing somebody here overrides the stallion picker, which the label says out loud rather
   // than leaving a child to find out by pressing the button.
+  //
+  // The list arrives already ordered by the route: the mare's own breed first, then the rest by
+  // breed name. Breed leads each line for the same reason - it is the one thing being scanned for.
   const outsideStudPicker = params.outsideStuds.length
     ? html`
       <label>...or a stallion standing at another ranch
         <select name="stud_listing_id">
           <option value="">— none, use my own stallion above —</option>
           ${params.outsideStuds.map(
-            (s) => html`<option value="${String(s.studListingId)}" ${s.studListingId === params.selectedStudListingId ? raw('selected') : raw('')}>${s.stallionName} at ${s.stableName} - ${s.description}, fee ${String(s.fee)}</option>`
+            (s) => html`<option value="${String(s.studListingId)}" ${s.studListingId === params.selectedStudListingId ? raw('selected') : raw('')}>${s.breedName} - ${s.stallionName} at ${s.stableName}. Fee ${String(s.fee)}.</option>`
           )}
         </select>
       </label>
-      <p class="muted">Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
+      <p class="muted">Stallions of the mare's own breed come first, then the other breeds in alphabetical order. Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
     : html`<p class="muted">Nobody else is standing a stallion at stud just now. When somebody does, they'll show up here.</p>`;
 
   const body = html`
@@ -1085,6 +1096,10 @@ export function renderHorsePage(params: {
   nameError?: string;
   barnNameNotice?: string;
   genotype?: Genotype;
+  /** Admin-only, and only for a horse that has already ended - null for everyone and everything
+   * else, which is what keeps the delete card off a living horse's page entirely. */
+  adminDelete?: { deletable: boolean; reason: string } | null;
+  adminError?: string;
   loci?: LocusRow[];
   mareStatus?: string;
   conformation: ConformationDisplayRow[];
@@ -1273,8 +1288,37 @@ export function renderHorsePage(params: {
         </details>`
       : raw('');
 
+  // The operator's broom (POST /horses/:id/admin-delete). Only ever drawn for an admin looking at a
+  // horse that has already ended, and only when the row is genuinely free of anything pointing at
+  // it - the same rule the pet home uses, asked and answered by the route again on submit. When the
+  // horse is ended but not deletable the card still appears, saying why not, because "why is there
+  // no button here" is the question the operator would otherwise be left with.
+  const adminDeleteBlock =
+    params.isAdmin && params.adminDelete
+      ? html`
+        <div class="card">
+          <h2>Delete this horse's row (admin only)</h2>
+          ${
+            params.adminDelete.deletable
+              ? html`
+                <p>${displayNameFor(h)} has already gone, never showed and never had a foal, so nothing in the game refers to ${h.sex === 'mare' ? 'her' : 'him'} anymore. The row can be cleared away for good.</p>
+                <p class="muted">This pays nothing and writes no receipt - the horse already left and was already paid for. Any notices about ${h.sex === 'mare' ? 'her' : 'him'} in a stable's feed keep their words and stop being links.</p>
+                <p><strong>This cannot be undone.</strong></p>
+                <form method="post" action="/horses/${String(h.id)}/admin-delete">
+                  <label class="confirm-checkbox">
+                    <input type="checkbox" name="confirm" value="yes" required>
+                    Yes, delete this row for good.
+                  </label>
+                  <button type="submit" class="secondary">Delete ${displayNameFor(h)}'s row</button>
+                </form>`
+              : html`<p class="notice">${displayNameFor(h)}'s row has to stay: ${params.adminDelete.reason}</p>`
+          }
+        </div>`
+      : raw('');
+
   const body = html`
     <h1>${displayNameFor(h)}</h1>
+    ${errorBox(params.adminError)}
     <div class="card">
       ${portraitBlock}
       ${pictureLink}
@@ -1352,6 +1396,7 @@ export function renderHorsePage(params: {
     ${params.owner ? barnNameForm : raw('')}
     ${retireLink}
     ${genotypeBlock}
+    ${adminDeleteBlock}
     <p><a href="/stables/${String(params.ownerStable.id)}/horses">Back to horses</a></p>
   `;
   return pageShell({

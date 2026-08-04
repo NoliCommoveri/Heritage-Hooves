@@ -46,7 +46,7 @@ import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type Pr
 import { formatCalendarDate } from '../lib/calendar';
 import { buildEndHorseParticipationStatements, ageModifierForHorse } from '../db/ageing';
 import { petHomePayout, sellHorseToPetHome } from '../db/petHome';
-import { isHorseDeletable } from '../db/horseRemoval';
+import { isHorseDeletable, buildDeleteHorseStatements } from '../db/horseRemoval';
 import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
@@ -578,17 +578,37 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   // stable breeding already exists at /market/stud - this only puts the same stallions in front of
   // a child who came to the Breed page to breed, rather than expecting them to know the market has
   // a stud section.
-  const outsideStudListings = (await listActiveStudListings(ctx.env, null)).filter((l) => l.stable_account_id !== ctx.account!.id);
-  const outsideStuds: OutsideStudOption[] = outsideStudListings.map((l) => {
-    const asHorse = { ...l, sex: 'stallion' as const };
-    return {
-      studListingId: l.id,
-      stallionName: displayNameFor(asHorse),
-      stableName: l.stable_name,
-      fee: l.fee,
-      description: describeHorseRow(asHorse, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance),
-    };
-  });
+  const [outsideStudListings, breedRows] = await Promise.all([
+    listActiveStudListings(ctx.env, null).then((rows) => rows.filter((l) => l.stable_account_id !== ctx.account!.id)),
+    getBreeds(ctx.env),
+  ]);
+  const outsideStudOptions: OutsideStudOption[] = outsideStudListings.map((l) => ({
+    studListingId: l.id,
+    breedId: l.breed_id,
+    // Same fallback the /market/stud list uses, so a stallion reads the same on both screens.
+    breedName: breedRows.find((b) => b.id === l.breed_id)?.name ?? (l.is_cross ? 'Cross' : 'Unknown'),
+    stallionName: displayNameFor({ ...l, sex: 'stallion' as const }),
+    stableName: l.stable_name,
+    fee: l.fee,
+  }));
+
+  /**
+   * The mare's own breed first, then every other breed alphabetically, and stallions within a breed
+   * by name. Cross-breed pairings are legal and this does not stop one - it just stops a child
+   * hunting for the Quarter Horse stallions through a list ordered by nothing at all.
+   *
+   * The mare it sorts around is whichever one the mare picker is currently showing, which on a
+   * fresh page view is the first in that list - so the order always matches the pairing the form
+   * would submit if the button were pressed right now.
+   */
+  const outsideStudsFor = (mareBreedId: number | null): OutsideStudOption[] =>
+    [...outsideStudOptions].sort((a, b) => {
+      const aOwnBreed = mareBreedId !== null && a.breedId === mareBreedId ? 0 : 1;
+      const bOwnBreed = mareBreedId !== null && b.breedId === mareBreedId ? 0 : 1;
+      if (aOwnBreed !== bOwnBreed) return aOwnBreed - bOwnBreed;
+      const byBreed = a.breedName.localeCompare(b.breedName);
+      return byBreed !== 0 ? byBreed : a.stallionName.localeCompare(b.stallionName);
+    });
 
   const page = (extra: Partial<Parameters<typeof renderBreedPage>[0]> = {}) =>
     htmlResponse(
@@ -601,7 +621,9 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         hasFoundingOffer,
         mares,
         stallions,
-        outsideStuds,
+        // The mare picker's own default, so the two agree before anything is chosen. A call site
+        // that knows which mare was picked passes its own list in `extra` and overrides this.
+        outsideStuds: outsideStudsFor(mares[0]?.breed_id ?? null),
         describe,
         ...extra,
       })
@@ -625,11 +647,11 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     // uses for a test purchase): the option list was built a page view ago and he may have been
     // withdrawn, sold or died since.
     if (!listing || listing.active !== 1 || listing.stable_account_id === ctx.account!.id) {
-      return page({ selectedMareId: mare.id, error: 'That stallion is not standing at stud anymore.' });
+      return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), error: 'That stallion is not standing at stud anymore.' });
     }
     const outsideStallion = await getHorse(ctx.env, listing.stallion_id);
     if (!outsideStallion || outsideStallion.status !== 'alive') {
-      return page({ selectedMareId: mare.id, error: 'That stallion is not standing at stud anymore.' });
+      return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), error: 'That stallion is not standing at stud anymore.' });
     }
 
     const preview = await buildBreedPreview(ctx, stableId, mare, outsideStallion, describe, {
@@ -643,28 +665,28 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     if (!refusal && actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) refusal = turnsRefusalMessage(ctx);
     preview.outsideStud = { studListingId: listing.id, stableName: listing.stable_name, fee: listing.fee, refusal };
 
-    return page({ selectedMareId: mare.id, selectedStudListingId: listing.id, preview });
+    return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStudListingId: listing.id, preview });
   }
 
   const stallionId = Number(form.stallion_id);
   const stallion = allHorses.find((h) => h.id === stallionId);
-  if (!stallion) return page({ selectedMareId: mare.id, error: 'Choose a stallion - one of your own, or one standing at another ranch.' });
+  if (!stallion) return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), error: 'Choose a stallion - one of your own, or one standing at another ranch.' });
 
   if (form.action === 'check') {
     const preview = await buildBreedPreview(ctx, stableId, mare, stallion, describe);
-    return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, preview });
+    return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStallionId: stallion.id, preview });
   }
 
   if (form.action === 'book') {
     const refusal = await validateBooking(ctx, stable, mare, stallion);
-    if (refusal) return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, error: refusal });
+    if (refusal) return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStallionId: stallion.id, error: refusal });
 
     // Slice 0009 Part B §5.3: check, act, then spend - read the budget and refuse up front if it
     // looks empty, do the game action, then spend. If the spend below loses a race (two forms
     // submitted at the same instant), it's let through free rather than charged for nothing - a
     // child charged for something that did not happen has no way to find out why or get it back.
     if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_covering) {
-      return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, error: turnsRefusalMessage(ctx) });
+      return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStallionId: stallion.id, error: turnsRefusalMessage(ctx) });
     }
 
     await bookCovering(ctx.env, {
@@ -871,6 +893,17 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // suggested fee reuses npc_stud_fee_fraction (the same shared "what's a typical stud fee, as a
   // fraction of a horse's worth" number an NPC stallion's own fee is derived from) against the
   // guide value already computed above, rather than a second config key.
+  // The admin delete card's state. Computed only for an admin looking at an ended horse - a living
+  // horse leaves through the pet home, which pays for it, and this must never look like a second
+  // way to do that. horseAdminDeleteRoute asks the same question again on submit rather than
+  // trusting the page that drew the button.
+  const adminDelete =
+    isAdmin && horse.status !== 'alive'
+      ? (await isHorseDeletable(ctx.env, horse.id))
+        ? { deletable: true, reason: '' }
+        : { deletable: false, reason: 'it has foals, a pedigree, a show record or a stud booking behind it, and other records point at it.' }
+      : null;
+
   const studListingRow = owner && horse.sex === 'stallion' ? await getActiveStudListingForHorse(ctx.env, horse.id) : null;
   const bookedThisSeason = studListingRow ? await bookingsThisSeasonCount(ctx.env, studListingRow.id, ctx.world.season_index) : 0;
   const suggestedStudFee = guideValue ? Math.max(10, Math.round((guideValue.value * ctx.config.values.npc_stud_fee_fraction) / 10) * 10) : null;
@@ -898,6 +931,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       nameError,
       barnNameNotice,
       genotype: isAdmin ? genotype : undefined,
+      adminDelete,
+      adminError: params.get('admin_error') ?? undefined,
       loci,
       mareStatus,
       conformation,
@@ -939,6 +974,54 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       incidentNotice,
     })
   );
+}
+
+/**
+ * POST /horses/:id/admin-delete - the operator's own broom, for a horse that has *already* ended.
+ *
+ * Why this exists: the pet home's delete rule (src/db/horseRemoval.ts) decides at the moment a horse
+ * leaves whether its row is worth keeping, and until 2026-08-04 it answered "keep" for every
+ * home-bred and founding horse because of two pointer clauses that were universal in practice. That
+ * is fixed for every horse that leaves from now on, but nothing goes back over the ones already
+ * marked `removed` - so the operator was left with rows the rule says should never have survived and
+ * no way, from a browser, to be rid of them. This is that way.
+ *
+ * Three deliberate limits, all of them about not making this a bigger tool than the job:
+ *
+ * - **Admin only**, and never offered to an owner. A player's route out is the pet home, which pays
+ *   them; this one pays nothing and writes no ledger row, because the horse already left and was
+ *   already paid for. Two paths that both end a horse but only one of which settles up would be a
+ *   real hazard if a child could reach either.
+ * - **Ended horses only.** An alive horse has an owner, a balance owed to it and a departure to
+ *   account for - that is sellHorseToPetHome's job, not this one. Refusing here keeps this route
+ *   incapable of skipping the money.
+ * - **The same deletability rule, not a stronger one.** It reuses isHorseDeletable unchanged, so a
+ *   horse with foals, a pedigree hanging off it, a show record or a stud booking is refused exactly
+ *   as it would be at the pet home. That rule is also the proof the delete cannot break a foreign
+ *   key, so overriding it here would turn a tidy-up button into a way to corrupt the database.
+ */
+export async function horseAdminDeleteRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  if (ctx.account!.is_admin !== 1) return notFound();
+
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+
+  const back = (message: string) => redirect(`/horses/${String(horseId)}?admin_error=${encodeURIComponent(message)}`);
+
+  if (horse.status === 'alive') {
+    return back('That horse is still alive. Send it to a pet home or retire it first - this only clears up a horse that has already gone.');
+  }
+  if (!(await isHorseDeletable(ctx.env, horse.id))) {
+    return back('That horse has foals, a show record or a stud booking behind it, so its row is holding up somebody else\'s pedigree or results. It has to stay.');
+  }
+
+  const form = await parseForm(ctx.request);
+  if (form.confirm !== 'yes') return back('Tick the box to confirm - deleting a horse\'s row cannot be undone.');
+
+  await ctx.env.DB.batch(buildDeleteHorseStatements(ctx.env, horse.id));
+
+  // The horse page this was pressed from no longer exists, so there is nowhere to go back to.
+  return redirect('/admin/horses?deleted=1');
 }
 
 /**

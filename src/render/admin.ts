@@ -1954,7 +1954,7 @@ export function renderAdminUnlockPage(params: { world: WorldRow; redirectTo: str
  * this is just the way in, since going stable by stable to find one horse isn't practical once a
  * family has more than a handful.
  */
-export function renderAdminHorseSearchPage(params: { world: WorldRow; query: string; results: HorseSearchRow[] }): SafeHtml {
+export function renderAdminHorseSearchPage(params: { world: WorldRow; query: string; results: HorseSearchRow[]; notice?: string }): SafeHtml {
   const rows = params.results.map(
     (h) => html`
     <tr>
@@ -1976,6 +1976,7 @@ export function renderAdminHorseSearchPage(params: { world: WorldRow; query: str
 
   const body = html`
     <h1>Search horses</h1>
+    ${params.notice ? html`<p class="notice">${params.notice}</p>` : raw('')}
     <p class="muted">Finds a horse by registered or barn name, from any stable - the horse's own page shows everything an owner sees, and (as an admin) the true health result straight from its genotype.</p>
     <form method="get" action="/admin/horses">
       <label>Name

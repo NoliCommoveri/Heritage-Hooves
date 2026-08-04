@@ -111,9 +111,12 @@ export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
  * the missing way in: without it, an admin had to go stable by stable to find a horse.
  */
 export async function adminHorseSearchRoute(ctx: RequestContext): Promise<Response> {
-  const query = new URL(ctx.request.url).searchParams.get('q')?.trim() ?? '';
+  const params = new URL(ctx.request.url).searchParams;
+  const query = params.get('q')?.trim() ?? '';
   const results = query.length > 0 ? await searchHorses(ctx.env, query, 50) : [];
-  return htmlResponse(renderAdminHorseSearchPage({ world: ctx.world, query, results }));
+  // Where horseAdminDeleteRoute lands, since the horse page it was pressed from no longer exists.
+  const notice = params.get('deleted') ? "That horse's row is gone for good." : undefined;
+  return htmlResponse(renderAdminHorseSearchPage({ world: ctx.world, query, results, notice }));
 }
 
 export async function adminAccountsRoute(ctx: RequestContext, method: string): Promise<Response> {
