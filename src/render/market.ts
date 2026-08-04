@@ -15,6 +15,7 @@ import { showResultGroupsHtml, type ShowResultGroup } from './shows';
 import type { WorldRow } from '../db/world';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
+import { mareExclusionPhrase, type MareExclusion } from './horses';
 
 export interface MarketListingRow {
   listingId: number;
@@ -644,6 +645,30 @@ export interface EligibleMareOption {
   name: string;
 }
 
+/** docs/fixes/breeding-eligibility-display.md §2: a mare this picker is not offering, and why -
+ * MareExclusion plus the stable she lives in, since this picker (unlike the Breed page's) spans
+ * every stable on the account. */
+export interface StudMareExclusion extends MareExclusion {
+  stableName: string;
+}
+
+function studMareExclusionsLine(exclusions: StudMareExclusion[]): SafeHtml {
+  if (exclusions.length === 0) return raw('');
+  const parts = exclusions.map((e) => `${e.name} (${mareExclusionPhrase(e)}, ${e.stableName})`);
+  return html`<p class="muted">Not shown: ${parts.join(', ')}.</p>`;
+}
+
+function noEligibleMaresForStudLine(exclusions: StudMareExclusion[], gameDaysPerYear: number): SafeHtml {
+  const sentences = exclusions.map((e) => {
+    const dated = e.reason === 'recovering' && e.recoversGameDay !== undefined
+      ? `${mareExclusionPhrase(e)} until around ${formatCalendarDate(e.recoversGameDay, gameDaysPerYear)}`
+      : mareExclusionPhrase(e);
+    return `${e.name} (${e.stableName}) is ${dated}`;
+  });
+  const joined = sentences.length <= 1 ? sentences.join('') : `${sentences.slice(0, -1).join(', ')}, and ${sentences[sentences.length - 1]}`;
+  return html`<p class="muted">None of your mares can be bred right now. ${joined}.</p>`;
+}
+
 export interface StudListingDetailView {
   studListingId: number;
   stallionId: number;
@@ -679,6 +704,8 @@ export function renderStudDetailPage(params: {
    * every render, the same "must still be true the moment the button is pressed" reasoning
    * comesWithSentences already follows. Empty when the viewer owns the listing. */
   mareOptions: EligibleMareOption[];
+  /** docs/fixes/breeding-eligibility-display.md §2: mares left off mareOptions, and why. */
+  mareExclusions: StudMareExclusion[];
   selectedMareId: number | null;
   /** A plain sentence saying why there is no book button, or undefined when there is one. */
   refusal?: string;
@@ -719,6 +746,14 @@ export function renderStudDetailPage(params: {
         </form>`
       : raw('');
 
+  // docs/fixes/breeding-eligibility-display.md §2: mares who have no chance at all (every one
+  // ineligible right now) get the detailed sentence instead of a bare "no mare to book" - the same
+  // "show why" the Breed page's own picker follows.
+  const noBookableMares =
+    !l.isMine && params.mareOptions.length === 0 && params.mareExclusions.length > 0
+      ? noEligibleMaresForStudLine(params.mareExclusions, params.gameDaysPerYear)
+      : undefined;
+
   const bookBlock = l.isMine
     ? html`
       <div class="card">
@@ -731,15 +766,18 @@ export function renderStudDetailPage(params: {
     : html`
       <div class="card">
         <h2>Book a mare to ${l.name}</h2>
-        ${marePicker}
-        ${params.refusal || !selected
-          ? html`<p class="notice">${params.refusal ?? 'You have no mare to book.'}</p>`
-          : html`
-            <p class="muted">Booking costs one turn and takes the fee out of your stable's balance right away. Neither horse changes hands - she is covered next time she comes into season, and you'll be told whether it took. There is no refund if it doesn't.</p>
-            <form method="post" action="/market/stud/${String(l.studListingId)}/book">
-              <input type="hidden" name="mare_id" value="${String(selected.id)}">
-              <button type="submit">Book ${selected.name} for ${String(l.fee)}</button>
-            </form>`}
+        ${noBookableMares ?? html`
+          ${marePicker}
+          ${studMareExclusionsLine(params.mareExclusions)}
+          ${params.refusal || !selected
+            ? html`<p class="notice">${params.refusal ?? 'You have no mare to book.'}</p>`
+            : html`
+              <p class="muted">Booking costs one turn and takes the fee out of your stable's balance right away. Neither horse changes hands - she is covered next time she comes into season, and you'll be told whether it took. There is no refund if it doesn't.</p>
+              <form method="post" action="/market/stud/${String(l.studListingId)}/book">
+                <input type="hidden" name="mare_id" value="${String(selected.id)}">
+                <button type="submit">Book ${selected.name} for ${String(l.fee)}</button>
+              </form>`}
+        `}
       </div>`;
 
   const body = html`

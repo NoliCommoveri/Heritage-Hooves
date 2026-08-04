@@ -167,28 +167,49 @@ async function contextFor(world: World, url: string, method: string, body?: stri
 }
 
 describeWithSqlite('the stud page keeps its mare picker when a booking is refused', () => {
-  it('shows the picker and the refusal together, and books the mare the player picks instead', async () => {
+  it('offers only eligible mares, names the excluded one, and books the mare the player picks', async () => {
     const world = await buildWorld();
+    // A second eligible mare, so the picker still has a real choice once the in-foal one is left
+    // off it (docs/fixes/breeding-eligibility-display.md §2: the picker itself now only offers
+    // mares that could actually be booked, rather than showing all of them and refusing after).
+    const thirdMareId = insertHorse(world.db, 'mare', 'CH Third Mare', world.playerStableId, 14);
     const { studDetailRoute } = await import('../../src/routes/market');
     const studListingId = Number(world.db.prepare('SELECT id FROM stud_listings').get().id);
 
-    // Default view: the first mare is in foal, so the booking is refused - and the picker is still
-    // there, which is the whole of the fix.
-    const refused = await studDetailRoute(await contextFor(world, `/market/stud/${studListingId}`, 'GET'), studListingId);
-    const refusedHtml = await refused.text();
-    expect(refused.status).toBe(200);
-    expect(refusedHtml).toContain('is already in foal');
-    expect(refusedHtml).toContain('name="mare"');
-    expect(refusedHtml).toContain('CH Second Mare');
+    // Default view: the in-foal mare is not offered at all, and the reason she's missing is named
+    // rather than left for a click to discover.
+    const page = await studDetailRoute(await contextFor(world, `/market/stud/${studListingId}`, 'GET'), studListingId);
+    const pageHtml = await page.text();
+    expect(page.status).toBe(200);
+    expect(pageHtml).toContain('Not shown: CH First Mare (in foal, Cedar Hollow).');
+    expect(pageHtml).not.toContain('CH First Mare</option>');
+    expect(pageHtml).toContain('name="mare"');
+    expect(pageHtml).toContain('CH Second Mare');
+    expect(pageHtml).toContain('CH Third Mare');
+    expect(pageHtml).toContain('Book CH Second Mare for 900');
 
-    // Picking the other mare gets a real book button, on the same page, without a detour.
+    // Picking the other eligible mare gets a real book button for her instead, on the same page.
     const chosen = await studDetailRoute(
-      await contextFor(world, `/market/stud/${studListingId}?mare=${world.freeMareId}`, 'GET'),
+      await contextFor(world, `/market/stud/${studListingId}?mare=${thirdMareId}`, 'GET'),
       studListingId
     );
     const chosenHtml = await chosen.text();
-    expect(chosenHtml).not.toContain('is already in foal');
-    expect(chosenHtml).toContain('Book CH Second Mare for 900');
+    expect(chosenHtml).toContain('Book CH Third Mare for 900');
+  });
+
+  it('replaces the whole book form with a plain sentence when every mare is ineligible', async () => {
+    const world = await buildWorld();
+    // The only other mare in the stable, made ineligible too - now nothing at all can be booked.
+    await world.env.DB.prepare(`UPDATE horses SET last_foaled_game_day = ? WHERE id = ?`).bind(GAME_DAY - 1, world.freeMareId).run();
+    const { studDetailRoute } = await import('../../src/routes/market');
+    const studListingId = Number(world.db.prepare('SELECT id FROM stud_listings').get().id);
+
+    const page = await studDetailRoute(await contextFor(world, `/market/stud/${studListingId}`, 'GET'), studListingId);
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain('None of your mares can be bred right now.');
+    expect(pageHtml).toContain('CH First Mare (Cedar Hollow) is in foal');
+    expect(pageHtml).toContain('CH Second Mare (Cedar Hollow) is recovering from foaling');
+    expect(pageHtml).not.toContain('<form method="post" action="/market/stud/');
   });
 });
 
@@ -321,5 +342,48 @@ describeWithSqlite('the Breed page can pair a mare with a stallion standing at a
     expect(booked.headers.get('location')).toBe(`/horses/${world.freeMareId}`);
     const coverings = world.db.prepare(`SELECT COUNT(*) AS n FROM coverings WHERE mare_id = ? AND status = 'booked'`).get(world.freeMareId) as { n: number };
     expect(coverings.n).toBe(1);
+  });
+});
+
+// docs/fixes/breeding-eligibility-display.md §2: the Breed page's own two pickers (mare, and "your
+// stallion") only offer horses that could actually be picked right now, the same fix the stud
+// page's picker above just got.
+describeWithSqlite("the Breed page's own pickers stop offering horses that cannot breed", () => {
+  it('leaves out an ineligible mare and an ineligible stallion, naming both', async () => {
+    const world = await buildWorld();
+    const { stableBreedRoute } = await import('../../src/routes/horses');
+    // A colt far short of min_breeding_age_game_days (1080) - too young, alongside a home stallion
+    // that clears it fine.
+    const coltId = insertHorse(world.db, 'stallion', 'CH Colt', world.playerStableId, 22);
+    world.db.prepare('UPDATE horses SET born_game_day = ? WHERE id = ?').run(GAME_DAY - 500, coltId);
+    const homeStallionId = insertHorse(world.db, 'stallion', 'CH Home Stallion', world.playerStableId, 23);
+
+    const page = await stableBreedRoute(await contextFor(world, `/stables/${world.playerStableId}/breed`, 'GET'), 'GET', world.playerStableId);
+    const pageHtml = await page.text();
+    expect(page.status).toBe(200);
+    // The in-foal mare from buildWorld is left off the mare picker, named in its own exclusion line.
+    expect(pageHtml).not.toContain('CH First Mare - ');
+    expect(pageHtml).toContain('Not shown: CH First Mare (in foal).');
+    expect(pageHtml).toContain('CH Second Mare - ');
+    // The colt is left off the stallion picker, named in its own exclusion line; the eligible home
+    // stallion is still offered.
+    expect(pageHtml).not.toContain('CH Colt - ');
+    expect(pageHtml).toContain('Not shown: CH Colt (too young to breed yet).');
+    expect(pageHtml).toContain('CH Home Stallion - ');
+  });
+
+  it('replaces the whole form with a plain sentence when no mare is eligible', async () => {
+    const world = await buildWorld();
+    const { stableBreedRoute } = await import('../../src/routes/horses');
+    // The only other mare in the stable, made ineligible too - now nothing at all can be booked,
+    // regardless of which stallion.
+    world.db.prepare('UPDATE horses SET last_foaled_game_day = ? WHERE id = ?').run(GAME_DAY - 1, world.freeMareId);
+
+    const page = await stableBreedRoute(await contextFor(world, `/stables/${world.playerStableId}/breed`, 'GET'), 'GET', world.playerStableId);
+    const pageHtml = await page.text();
+    expect(pageHtml).toContain('None of your mares can be bred right now.');
+    expect(pageHtml).toContain('CH First Mare is in foal');
+    expect(pageHtml).toContain('CH Second Mare is recovering from foaling');
+    expect(pageHtml).not.toContain('<form method="post" action="/stables/');
   });
 });
