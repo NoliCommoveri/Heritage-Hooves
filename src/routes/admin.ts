@@ -264,6 +264,8 @@ const NUMERIC_CONFIG_KEYS = [
   'market_min_value',
   'npc_market_capacity_buffer',
   'npc_market_max_listings_per_tick',
+  'npc_buying_capacity_buffer',
+  'npc_buying_max_purchases_per_tick',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -292,6 +294,9 @@ const DECIMAL_CONFIG_KEYS = [
   'market_win_bonus',
   'market_place_bonus',
   'market_record_cap',
+  'npc_buying_min_quality',
+  'npc_buy_offer_min_quality',
+  'npc_buying_budget_fraction',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
@@ -890,7 +895,7 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
     // disabled breed is closed to - existing policies targeting a since-disabled breed are untouched
     // (this only feeds the "found a new stable" dropdown, per renderNpcAdminPage's own use of it).
     const [stables, ceilingSchedule, breeds, disciplines] = await Promise.all([
-      listNpcStablesForAdmin(ctx.env),
+      listNpcStablesForAdmin(ctx.env, ctx.world.game_day, ctx.config.values.game_days_per_year),
       listNpcCeilingSchedule(ctx.env),
       getBreedsInPlay(ctx.env),
       getDisciplines(ctx.env),

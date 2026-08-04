@@ -20,20 +20,36 @@ import {
   renderMarketIndexPage,
   renderListingPage,
   renderSoldPage,
+  renderOfferDetailPage,
   type MarketListingRow,
   type DisclosedCondition,
   type ListingDetailView,
   type BuyerStableOption,
   type MarketTab,
+  type MarketOfferRow,
+  type OfferDetailView,
+  type EligibleHorseOption,
 } from '../render/market';
 import { getListing, listOpenListings, listSoldListings, sellListing, withdrawListing, type OpenListingRow } from '../db/listings';
-import { getHorse, horseDisplayName, countAliveHorses, type HorseRow } from '../db/horses';
+import { getHorse, horseDisplayName, countAliveHorses, listStableHorses, type HorseRow } from '../db/horses';
 import { getStableById, listStablesForAccount } from '../db/stables';
-import { getBreeds } from '../db/breeds';
+import { getBreeds, type BreedRow } from '../db/breeds';
+import { getDisciplines } from '../db/disciplines';
 import { getEnabledConditions, getKnowledgeForHorse } from '../db/health';
 import { getShowSummary, listRecentResultsForHorse, listOpenEntriesForHorse } from '../db/shows';
 import { getActivePregnancyForMare } from '../db/pregnancies';
 import { getBookedCoveringForMare } from '../db/coverings';
+import {
+  listActiveBuyOffers,
+  getActiveBuyOffer,
+  offerWantsLabel,
+  criteriaLabel,
+  parseCriteria,
+  evaluateOfferForHorse,
+  buyerRefusalForOffer,
+  sellIntoOffer,
+  type ActiveBuyOfferView,
+} from '../db/buyOffers';
 import { describeHorseRow } from './horses';
 import { placingText } from '../render/shows';
 import { formatCalendarDate } from '../lib/calendar';
@@ -45,17 +61,56 @@ function ageLabelFor(bornGameDay: number, gameDay: number, gameDaysPerYear: numb
   return years < 1 ? 'under a year' : `${String(Math.floor(years))} years`;
 }
 
+/** slice 0017 §12 (Part C): one offer, resolved into the plain-English row the Offers tab shows. */
+function buildOfferRow(ctx: RequestContext, offer: ActiveBuyOfferView, breedById: Map<number, BreedRow>, disciplineNameByCode: Map<string, string>): MarketOfferRow {
+  const criteria = parseCriteria(offer.criteria);
+  return {
+    offerId: offer.id,
+    buyerStableId: offer.stable_id,
+    buyerStableName: offer.buyer_stable_name,
+    wantsLabel: offerWantsLabel(offer, breedById, disciplineNameByCode),
+    criteriaLabel: criteriaLabel(criteria, ctx.config.values.game_days_per_year),
+    maxPrice: offer.max_price,
+  };
+}
+
 export async function marketIndexRoute(ctx: RequestContext): Promise<Response> {
   const params = new URL(ctx.request.url).searchParams;
   const rawShow = params.get('show');
   // Slice 0016 §4.1's rule, reused: a filter is not an assertion - an unrecognised tab reads as
   // 'all' rather than 404ing.
   const activeTab: MarketTab =
-    rawShow === 'mares' || rawShow === 'stallions' || rawShow === 'foals' || rawShow === 'geldings' || rawShow === 'yours' ? rawShow : 'all';
+    rawShow === 'mares' || rawShow === 'stallions' || rawShow === 'foals' || rawShow === 'geldings' || rawShow === 'yours' || rawShow === 'offers'
+      ? rawShow
+      : 'all';
   const rawBreed = Number(params.get('breed'));
   const breedId = Number.isInteger(rawBreed) && rawBreed > 0 ? rawBreed : null;
-
   const cfg = ctx.config.values;
+
+  // §12: the Offers tab is a wholly different query (buy_offers, not listings) - branch before
+  // touching listOpenListings at all, the same shape /market/sold's own separate route follows.
+  if (activeTab === 'offers') {
+    const [offers, breeds, disciplines] = await Promise.all([listActiveBuyOffers(ctx.env), getBreeds(ctx.env), getDisciplines(ctx.env)]);
+    const breedById = new Map(breeds.map((b) => [b.id, b]));
+    const disciplineNameByCode = new Map(disciplines.map((d) => [d.code, d.name]));
+    const offerRows = offers.map((o) => buildOfferRow(ctx, o, breedById, disciplineNameByCode));
+    return htmlResponse(
+      renderMarketIndexPage({
+        world: ctx.world,
+        isAdmin: ctx.account!.is_admin === 1,
+        actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: cfg.game_days_per_year,
+        rows: [],
+        activeTab,
+        breedId: null,
+        breeds: [],
+        offers: offerRows,
+        notice: params.get('notice') ?? undefined,
+        error: params.get('error') ?? undefined,
+      })
+    );
+  }
+
   const [listings, breeds] = await Promise.all([listOpenListings(ctx.env, breedId), getBreeds(ctx.env)]);
 
   // §6.1: the Yours tab is the account's own open listings, each with a Withdraw control; every
@@ -372,4 +427,134 @@ export async function marketSoldRoute(ctx: RequestContext): Promise<Response> {
       })),
     })
   );
+}
+
+// ---------------------------------------------------------------------------
+// The standing offers board (slice 0017 §12, Part C)
+// ---------------------------------------------------------------------------
+
+function offerDetailView(offer: ActiveBuyOfferView, breedById: Map<number, BreedRow>, disciplineNameByCode: Map<string, string>, gameDaysPerYear: number): OfferDetailView {
+  return {
+    offerId: offer.id,
+    buyerStableId: offer.stable_id,
+    buyerStableName: offer.buyer_stable_name,
+    wantsLabel: offerWantsLabel(offer, breedById, disciplineNameByCode),
+    criteriaLabel: criteriaLabel(parseCriteria(offer.criteria), gameDaysPerYear),
+    maxPrice: offer.max_price,
+  };
+}
+
+/** Every alive horse across the account's own stables that currently fits this offer, scored and
+ * sorted best-first - built fresh on every render (§2.6's own reasoning: it must still be true the
+ * moment the button is pressed). A horse already on the open market is skipped: selling it into an
+ * offer would need a second open listing on the same horse, which idx_listings_one_open_per_horse
+ * refuses - withdraw it first is the honest answer, not a confusing failure at the sell step. */
+async function eligibleHorsesForOffer(ctx: RequestContext, offer: ActiveBuyOfferView): Promise<EligibleHorseOption[]> {
+  const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
+  const options: EligibleHorseOption[] = [];
+  for (const stable of stables) {
+    const [horses, openListings] = await Promise.all([listStableHorses(ctx.env, stable.id), listOpenListings(ctx.env, null)]);
+    const listedHorseIds = new Set(openListings.filter((l) => l.seller_stable_id === stable.id).map((l) => l.horse_id));
+    for (const horse of horses) {
+      if (listedHorseIds.has(horse.id)) continue;
+      const evaluation = await evaluateOfferForHorse(ctx.env, offer, horse, ctx.world.game_day, ctx.config);
+      if (evaluation.eligible && evaluation.quality !== null) {
+        options.push({ id: horse.id, stableId: stable.id, stableName: stable.name, name: horseDisplayName(horse), quality: evaluation.quality });
+      }
+    }
+  }
+  return options.sort((a, b) => b.quality - a.quality);
+}
+
+export async function offerDetailRoute(ctx: RequestContext, offerId: number): Promise<Response> {
+  const offer = await getActiveBuyOffer(ctx.env, offerId);
+  if (!offer) return redirect(`/market?show=offers&notice=${encodeURIComponent('That offer is no longer available.')}`);
+
+  const [breeds, disciplines, eligible] = await Promise.all([getBreeds(ctx.env), getDisciplines(ctx.env), eligibleHorsesForOffer(ctx, offer)]);
+  const breedById = new Map(breeds.map((b) => [b.id, b]));
+  const disciplineNameByCode = new Map(disciplines.map((d) => [d.code, d.name]));
+  const view = offerDetailView(offer, breedById, disciplineNameByCode, ctx.config.values.game_days_per_year);
+
+  const params = new URL(ctx.request.url).searchParams;
+  const requested = Number(params.get('horse'));
+  const selected = eligible.find((h) => h.id === requested) ?? eligible[0];
+
+  let refusal: string | undefined;
+  if (eligible.length === 0) {
+    refusal = 'None of your horses currently fit this offer - too young, the wrong breed, a gelding, or not yet scoring highly enough.';
+  } else {
+    const actionsLeft = actionsLeftFor(ctx);
+    if (actionsLeft !== null && actionsLeft < ACTION_COSTS.sell_to_offer) {
+      refusal = turnsRefusalMessage(ctx);
+    } else {
+      const buyerStable = await getStableById(ctx.env, offer.stable_id);
+      refusal = buyerStable ? await buyerRefusalForOffer(ctx.env, buyerStable, offer.max_price) : 'That offer is no longer available.';
+    }
+  }
+
+  return htmlResponse(
+    renderOfferDetailPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
+      offer: view,
+      eligibleHorses: eligible,
+      selectedHorseId: selected?.id ?? null,
+      refusal,
+      error: params.get('error') ?? undefined,
+    })
+  );
+}
+
+export async function offerSellRoute(ctx: RequestContext, offerId: number): Promise<Response> {
+  const form = await parseForm(ctx.request);
+  const back = (message: string) => redirect(`/market/offers/${String(offerId)}?error=${encodeURIComponent(message)}`);
+
+  const offer = await getActiveBuyOffer(ctx.env, offerId);
+  if (!offer) return redirect(`/market?show=offers&notice=${encodeURIComponent('That offer is no longer available.')}`);
+
+  const horseId = Number(form.horse_id);
+  if (!Number.isInteger(horseId)) return back('Choose which horse you are selling.');
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+
+  const sellerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!sellerStable || sellerStable.account_id !== ctx.account!.id) return notFound();
+  const horseName = horseDisplayName(horse);
+
+  // Re-derived server-side rather than trusted from the page that rendered the button, the same
+  // discipline listingBuyRoute already follows for a fixed-price sale.
+  if (horse.status !== 'alive') return back(`${horseName} is no longer alive.`);
+
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.sell_to_offer) return back(turnsRefusalMessage(ctx));
+
+  const evaluation = await evaluateOfferForHorse(ctx.env, offer, horse, ctx.world.game_day, ctx.config);
+  if (!evaluation.eligible) return back(evaluation.reasons[0] ?? `${horseName} doesn't fit this offer.`);
+
+  const buyerStable = await getStableById(ctx.env, offer.stable_id);
+  if (!buyerStable) return back('That offer is no longer available.');
+  const buyerRefusal = await buyerRefusalForOffer(ctx.env, buyerStable, offer.max_price);
+  if (buyerRefusal) return back(buyerRefusal);
+
+  const result = await sellIntoOffer(ctx.env, {
+    offer,
+    horse,
+    horseName,
+    sellerStableId: sellerStable.id,
+    sellerStableName: sellerStable.name,
+    sellerAccountId: sellerStable.account_id,
+    buyerStable,
+    gameDay: ctx.world.game_day,
+    config: ctx.config.values,
+  });
+
+  if (!result.ok) {
+    if (result.error === 'already_listed') return back(`${horseName} is already on the market - withdraw that listing first.`);
+    return back(`Somebody else bought this offer's spot first - nothing was taken from ${sellerStable.name}.`);
+  }
+
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.sell_to_offer);
+  return redirect(`/horses/${String(horse.id)}`);
 }

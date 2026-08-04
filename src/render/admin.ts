@@ -386,6 +386,22 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="npc_market_max_listings_per_tick" value="${String(v.npc_market_max_listings_per_tick)}">
       </label>
       <p class="muted">An NPC stable lists its own worst-scoring horses (against its own personality's target) once its free stalls drop below the buffer above - a per-personality asking-price multiplier and spread live on each stable's own policy row, edited on /admin/npc.</p>
+      <label>NPC buying buffer (free stalls to keep before buying more)
+        <input type="text" inputmode="numeric" name="npc_buying_capacity_buffer" value="${String(v.npc_buying_capacity_buffer)}">
+      </label>
+      <label>Max NPC purchases per stable per tick
+        <input type="text" inputmode="numeric" name="npc_buying_max_purchases_per_tick" value="${String(v.npc_buying_max_purchases_per_tick)}">
+      </label>
+      <label>Quality floor for a tick purchase (0-100, against the buyer's own target)
+        <input type="text" inputmode="decimal" name="npc_buying_min_quality" value="${String(v.npc_buying_min_quality)}">
+      </label>
+      <label>Quality floor named on a standing buy offer (0-100)
+        <input type="text" inputmode="decimal" name="npc_buy_offer_min_quality" value="${String(v.npc_buy_offer_min_quality)}">
+      </label>
+      <label>Fraction of balance an NPC will spend on one horse (0-1)
+        <input type="text" inputmode="decimal" name="npc_buying_budget_fraction" value="${String(v.npc_buying_budget_fraction)}">
+      </label>
+      <p class="muted">Slice 0017 §12 (Part C). An NPC stable only buys - on the standing offers board or by shopping open listings on the tick - once its free stalls are at or above the buying buffer; below that, it stops. Both routes reuse the exact appraisal and sale path a player's own purchase uses. Watch /admin/npc's buying-power column: NPC balances are real and never topped up automatically, so a stable that overspends quietly stops buying until it earns more.</p>
       <label>Lethal foal death window (game days)
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>
@@ -1245,6 +1261,8 @@ export function renderNpcAdminPage(params: {
       <td>${s.nextCycleDueGameDay === null ? raw('&mdash;') : String(s.nextCycleDueGameDay)}</td>
       <td>${String(s.pairsLastCycle)}</td>
       <td>${s.marketPriceMultiplier.toFixed(2)}x</td>
+      <td>${String(s.spentBuyingThisSeason)}</td>
+      <td>${String(s.earnedSellingThisSeason)}</td>
     </tr>`
   );
 
@@ -1281,10 +1299,10 @@ export function renderNpcAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>Every NPC stable</h2>
-      <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after).</p>
+      <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after). The last two columns are slice 0017 §12's buying-power figure: what this stable has spent buying and earned selling since the current game year began (read from its own ledger rows, kinds 'purchase' and 'sale') - watch these against its balance. NPC balances are never topped up automatically, so a stable that consistently spends more than it earns will eventually go quiet on both buying routes without anybody being told, unless this table is checked.</p>
       <table>
-        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th><th>Market multiplier</th></tr></thead>
-        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="9" class="muted">No NPC stables yet.</td></tr>`}</tbody>
+        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th><th>Market multiplier</th><th>Spent buying (this year)</th><th>Earned selling (this year)</th></tr></thead>
+        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="11" class="muted">No NPC stables yet.</td></tr>`}</tbody>
       </table>
     </div>
     <div class="card">

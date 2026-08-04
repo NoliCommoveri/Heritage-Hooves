@@ -36,7 +36,7 @@ import {
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
 import { worldIndexRoute, worldStableRoute, worldHorseRoute } from './routes/world';
-import { marketIndexRoute, marketSoldRoute, listingPageRoute, listingBuyRoute, listingWithdrawRoute } from './routes/market';
+import { marketIndexRoute, marketSoldRoute, listingPageRoute, listingBuyRoute, listingWithdrawRoute, offerDetailRoute, offerSellRoute } from './routes/market';
 import {
   adminHomeRoute,
   adminAccountsRoute,
@@ -65,6 +65,7 @@ import { nowUtcSeconds } from './lib/time';
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
 const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location|\/list)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
+const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 const WORLD_STABLE_ROUTE = /^\/world\/stables\/(\d+)$/;
 const WORLD_HORSE_ROUTE = /^\/world\/horses\/(\d+)$/;
@@ -165,6 +166,17 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
   // a listing id.
   if (path === '/market' && method === 'GET') return withReissuedCookie(ctx, await marketIndexRoute(ctx));
   if (path === '/market/sold' && method === 'GET') return withReissuedCookie(ctx, await marketSoldRoute(ctx));
+  // Slice 0017 §12 (Part C): matched before LISTING_ROUTE - "offers" never matches \d+, so order
+  // between the two doesn't actually matter, but this keeps the two market sub-areas visually
+  // grouped in the routing table.
+  const offerMatch = path.match(OFFER_ROUTE);
+  if (offerMatch) {
+    const offerId = Number(offerMatch[1]);
+    const sub = offerMatch[2];
+    if (!sub && method === 'GET') return withReissuedCookie(ctx, await offerDetailRoute(ctx, offerId));
+    if (sub === '/sell' && method === 'POST') return withReissuedCookie(ctx, await offerSellRoute(ctx, offerId));
+    return notFound();
+  }
   const listingMatch = path.match(LISTING_ROUTE);
   if (listingMatch) {
     const listingId = Number(listingMatch[1]);

@@ -232,6 +232,23 @@ export interface ConfigValues {
   /** Intersected with the breeds in play (§6) - a breed must be both listed here and enabled for
    * the dealer to stock it. */
   consignment_breed_codes: string[];
+  /** Slice 0017 §12 (Part C). Live. Both NPC-buying routes only run when an NPC stable's free
+   * stalls are at least this many - the inverse of npc_market_capacity_buffer's "too full to keep
+   * breeding" trigger: this one is "too empty to bother buying". */
+  npc_buying_capacity_buffer: number;
+  /** Live. Caps how many horses one NPC stable buys off the open market in a single tick. */
+  npc_buying_max_purchases_per_tick: number;
+  /** Live. The quality floor (scoreEntry/scoreAbilityEntry's own 0..100 rawScore, against the
+   * buying stable's own target) an open listing must clear before runNpcMarketPurchases considers
+   * it - keeps an NPC from hoovering up culls nobody else wants. */
+  npc_buying_min_quality: number;
+  /** Live. The quality floor named on a standing buy-offer's own criteria - shown to players so a
+   * refusal on the sell-into-offer page reads as a real number, not a mystery. Deliberately a
+   * separate key from npc_buying_min_quality: the two mechanisms can be tuned apart. */
+  npc_buy_offer_min_quality: number;
+  /** Live. The fraction of an NPC stable's current balance either buying mechanism will commit to
+   * a single horse - keeps one purchase from draining a whole season's takings at once. */
+  npc_buying_budget_fraction: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;
