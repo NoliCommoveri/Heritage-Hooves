@@ -14,6 +14,7 @@ import path from 'node:path';
 import { splitSqlStatements } from '../../src/lib/sql';
 import { runNpcBalanceFloor } from '../../src/db/npcFinance';
 import { runNpcPetHomeSales, petHomePayout, sellHorseToPetHome } from '../../src/db/petHome';
+import { buildDeleteHorseStatements } from '../../src/db/horseRemoval';
 import type { Config } from '../../src/lib/config-cache';
 import type { Env } from '../../src/types';
 
@@ -399,6 +400,34 @@ describeWithSqlite('runNpcPetHomeSales', () => {
 
     expect(balanceOf(db, CEDAR_HOLLOW)).toBe(0);
     expect((db.prepare('SELECT status FROM listings WHERE horse_id = 106').get() as { status: string }).status).toBe('open');
+  });
+});
+
+describeWithSqlite('buildDeleteHorseStatements (the operator broom uses this directly)', () => {
+  // /horses/:id/admin-delete runs exactly these statements against a horse that has already ended,
+  // for the rows the pet home's rule should have deleted at the time and did not. The route's own
+  // guards (admin, ended, deletable) are checked there; what matters here is that running this
+  // batch on an already-`removed` row leaves nothing dangling behind it.
+  it('clears an already-removed horse without breaking anything that points at it', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    seedHorse(db, 300, CEDAR_HOLLOW);
+    seedHorse(db, 301, CEDAR_HOLLOW); // its dam, who stays
+    db.exec(`UPDATE horses SET status = 'removed', end_reason = 'pet_home', ended_game_day = 90 WHERE id = 300`);
+    db.exec(`INSERT INTO horse_ancestors (descendant_id, ancestor_id, depth, path_count) VALUES (300,301,1,1)`);
+    db.exec(
+      `INSERT INTO events (stable_id, game_day, kind, subject_horse_id, payload, created_real_ts)
+       VALUES (${String(CEDAR_HOLLOW)},40,'foaled',300,'{"v":1,"foal_name":"Test Horse 300"}',0)`
+    );
+
+    await env.DB.batch(buildDeleteHorseStatements(env, 300));
+
+    expect(db.prepare('SELECT COUNT(*) AS n FROM horses WHERE id = 300').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM horse_ancestors WHERE descendant_id = 300').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM horses WHERE id = 301').get()).toEqual({ n: 1 });
+    const event = db.prepare('SELECT subject_horse_id, payload FROM events').get() as { subject_horse_id: number | null; payload: string };
+    expect(event.subject_horse_id).toBe(null);
+    expect(JSON.parse(event.payload).foal_name).toBe('Test Horse 300');
   });
 });
 
