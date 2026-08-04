@@ -1446,6 +1446,11 @@ export function renderConsignmentAdminPage(params: {
     <div class="card">
       <p><strong>Next batch due:</strong> game day ${String(params.nextCycleGameDay)}.</p>
       <p class="muted">Every ${'90'} game days the dealer offers one or two outside horses, generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation.</p>
+      <form method="post" action="/admin/consignment">
+        <input type="hidden" name="action" value="mint_now">
+        <button type="submit">Mint a batch now</button>
+      </form>
+      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${'90'} game days after whichever batch is now most recent.</p>
     </div>
     <div class="card">
       <h2>Currently standing</h2>
@@ -1455,7 +1460,7 @@ export function renderConsignmentAdminPage(params: {
     </div>
     <div class="card">
       <h2>Queue an allele</h2>
-      <p class="muted">Consumed by the next batch that mints a matching horse. When it lands, that locus is pre-tested for the dealer automatically - untested, an injected allele is invisible and nobody ever pays for it.</p>
+      <p class="muted">Consumed by the next batch that mints a matching horse. If a batch is already due right now, this allele waits for the one after that, rather than the imminent batch - so it's never surprised into a batch that was already about to happen. When it lands, that locus is pre-tested for the dealer automatically - untested, an injected allele is invisible and nobody ever pays for it. "Mint a batch now" above ignores this deferral and always includes whatever's queued.</p>
       <form method="post" action="/admin/consignment">
         <input type="hidden" name="action" value="queue">
         <label>Locus and allele <select name="locus_allele" required>${localeAlleleOptions}</select></label>

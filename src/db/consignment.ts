@@ -51,6 +51,7 @@ export interface ConsignmentInjectionRow {
   sex_preference: InjectionSexPreference;
   status: InjectionStatus;
   queued_game_day: number;
+  eligible_from_game_day: number | null;
   applied_game_day: number | null;
   applied_horse_id: number | null;
   note: string | null;
@@ -76,9 +77,31 @@ export interface QueueInjectionParams {
   sexPreference: InjectionSexPreference;
   note: string | null;
   gameDay: number;
+  config: Config;
 }
 
 export type QueueInjectionResult = { ok: true } | { ok: false; error: 'unknown_locus_or_allele' };
+
+/**
+ * §5.4 follow-up: which game day a freshly-queued injection may first be picked up by a batch.
+ * runConsignments only ever mints once the dealer's cadence window has actually elapsed - see its
+ * own `dueDay` calculation, mirrored here. Two cases:
+ *  - No batch is due yet (dueDay is still in the future): the injection targets that same,
+ *    genuinely-next batch, same as before this existed.
+ *  - A batch is already due/overdue, and will mint on the very next tick with or without this
+ *    injection: queuing now must not sweep it into that already-decided batch, so it's deferred
+ *    to the one after (dueDay + cadence).
+ * A dealer that has never minted has no "current" batch to be swept into, so its very first batch
+ * is treated as next, not current.
+ */
+async function computeInjectionEligibleFromGameDay(env: Env, gameDay: number, cadenceGameDays: number): Promise<number> {
+  const dealer = await getConsignmentDealerStable(env);
+  if (!dealer) return gameDay; // migration not yet applied in this environment
+  const last = await env.DB.prepare(`SELECT MAX(listed_game_day) AS d FROM listings WHERE seller_stable_id = ?`).bind(dealer.id).first<{ d: number | null }>();
+  if (last?.d === null || last?.d === undefined) return gameDay;
+  const dueDay = last.d + cadenceGameDays;
+  return dueDay > gameDay ? dueDay : dueDay + cadenceGameDays;
+}
 
 /** §5.4/§5.5: colour and gait loci only (E, A, CR, G, DMRT3) - never a disease locus, and never a
  * free-text allele. Validated against LOCI here so a typo cannot become a queued row the tick would
@@ -88,11 +111,13 @@ export async function queueInjection(env: Env, params: QueueInjectionParams): Pr
   const locus = LOCI.find((l) => l.code === params.locusCode && colourGaitCodes.has(l.code));
   if (!locus || !locus.alleles.includes(params.allele)) return { ok: false, error: 'unknown_locus_or_allele' };
 
+  const eligibleFromGameDay = await computeInjectionEligibleFromGameDay(env, params.gameDay, params.config.values.consignment_cadence_game_days);
+
   await env.DB.prepare(
-    `INSERT INTO consignment_injections (locus_code, allele, zygosity, applies_to, sex_preference, status, queued_game_day, note, created_real_ts)
-     VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`
+    `INSERT INTO consignment_injections (locus_code, allele, zygosity, applies_to, sex_preference, status, queued_game_day, eligible_from_game_day, note, created_real_ts)
+     VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`
   )
-    .bind(params.locusCode, params.allele, params.zygosity, params.appliesTo, params.sexPreference, params.gameDay, params.note, nowUtcSeconds())
+    .bind(params.locusCode, params.allele, params.zygosity, params.appliesTo, params.sexPreference, params.gameDay, eligibleFromGameDay, params.note, nowUtcSeconds())
     .run();
   return { ok: true };
 }
@@ -240,7 +265,8 @@ async function mintConsignmentBatch(
   tickSeq: number,
   config: Config,
   dealerId: number,
-  conditions: ConditionRow[]
+  conditions: ConditionRow[],
+  respectInjectionEligibility: boolean
 ): Promise<void> {
   const cfg = config.values;
   const allBreeds = await getBreedsInPlay(env);
@@ -250,7 +276,14 @@ async function mintConsignmentBatch(
   if (eligibleBreeds.length === 0) return;
 
   const lethalTriggers = await getLethalTriggers(env);
-  const workingInjections = await listQueuedInjections(env);
+  const queuedInjections = await listQueuedInjections(env);
+  // §5.4 follow-up: a scheduled (cadence-driven) mint only picks up injections eligible by now -
+  // see computeInjectionEligibleFromGameDay. An explicit "mint now" admin action passes
+  // respectInjectionEligibility = false instead, since it's a deliberate override of scheduling
+  // altogether, not a regular cadence tick.
+  const workingInjections = respectInjectionEligibility
+    ? queuedInjections.filter((i) => i.eligible_from_game_day === null || i.eligible_from_game_day <= gameDay)
+    : queuedInjections;
   const appliedThisBatch = new Map<number, number>(); // injection id -> last horse id it touched
   const eligibleAbilityTraits = await getSpecializableAbilityTraits(env);
 
@@ -431,5 +464,30 @@ export async function runConsignments(env: Env, gameDay: number, tickSeq: number
 
   await sweepExpiredConsignmentListings(env, dealerId, gameDay);
   const conditions = await getEnabledConditions(env);
-  await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions);
+  await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions, true);
+}
+
+export type ForceConsignmentResult = { ok: true } | { ok: false; error: 'no_dealer' };
+
+/**
+ * /admin/consignment's "mint a batch now" button. Bypasses the cadence/dueDay check runConsignments
+ * makes (§5.7) so a queued injection lands the same game day it's queued, rather than waiting up to
+ * consignment_cadence_game_days for the next scheduled batch - an out-of-tick admin action, the same
+ * shape adminHorsesRoute's founding-horse creation already uses (worldTickSeq passed straight from
+ * ctx.world.tick_seq rather than a real tick run). Does NOT reset the cadence clock: it reads the
+ * dealer's last listing day exactly like runConsignments does, so if this lands before the regular
+ * due day, the next regular batch is still cadence days after whichever listing is now most recent.
+ * Also ignores eligible_from_game_day (passes respectInjectionEligibility = false to
+ * mintConsignmentBatch): it's a deliberate, explicit override of scheduling, so a queued injection
+ * always lands here even if it was deferred past an already-due cadence batch.
+ */
+export async function forceConsignmentBatchNow(env: Env, gameDay: number, tickSeq: number, config: Config): Promise<ForceConsignmentResult> {
+  const dealer = await getConsignmentDealerStable(env);
+  if (!dealer) return { ok: false, error: 'no_dealer' };
+
+  const dealerId = dealer.id;
+  await sweepExpiredConsignmentListings(env, dealerId, gameDay);
+  const conditions = await getEnabledConditions(env);
+  await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions, false);
+  return { ok: true };
 }
