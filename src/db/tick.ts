@@ -13,6 +13,7 @@ import { resolveDueCoverings } from './coverings';
 import { runNpcBreedingDecisions } from './npcBreeding';
 import { runNpcMarketListings } from './npcMarket';
 import { refreshNpcBuyOffers, runNpcMarketPurchases } from './npcBuying';
+import { runNpcBalanceFloor, runNpcListingClearance } from './npcFinance';
 import { runNpcStudListings } from './npcStud';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
@@ -65,6 +66,11 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // resolves the same way, and on the same or a later tick, as a covering a player books
       // through the route. Idempotent on npc_policy.last_bred_game_day (§6.3), the same pattern
       // stables.last_upkeep_game_day already establishes.
+      // NPC solvency (src/db/npcFinance.ts): the income floor runs first of all the NPC stages, so a
+      // stable restored to its floor this tick can spend it in the same tick's buying stages rather
+      // than sitting idle until the next one. Idempotent on its own npc_policy marker column, the
+      // same pattern runNpcBreedingDecisions uses below.
+      await runNpcBalanceFloor(env, newGameDay, config);
       await runNpcBreedingDecisions(env, newGameDay, newTickSeq, config);
       // Slice 0017 §11 (Part B): sits beside the breeding decision above - both are an NPC stable's
       // own tick-cycle choices about its stock. Naturally idempotent (a horse already listed cannot
@@ -133,6 +139,12 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // comment - a paused world must not mint consignments either (this whole branch only runs
       // when paused === 0), and any event this stage writes is subject to the same retention pass.
       await runConsignments(env, newGameDay, newTickSeq, config);
+      // NPC solvency (src/db/npcFinance.ts), immediately before expireListings and never after it:
+      // this stage claims the NPC listings that timed out with a live horse - selling each to an
+      // off-screen buyer and removing the horse - and expireListings closes everything it leaves
+      // behind, exactly as it always has. Run in the other order, expireListings would close those
+      // listings first and this stage would find nothing.
+      await runNpcListingClearance(env, newGameDay, config);
       await expireListings(env, newGameDay);
       // Slice 0017 §13 (Part D): the same lazy dead-horse sweep expireListings runs above, for a
       // stallion who died or was retired away while standing at stud.

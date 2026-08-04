@@ -401,7 +401,18 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
       <label>Fraction of balance an NPC will spend on one horse (0-1)
         <input type="text" inputmode="decimal" name="npc_buying_budget_fraction" value="${String(v.npc_buying_budget_fraction)}">
       </label>
-      <p class="muted">Slice 0017 §12 (Part C). An NPC stable only buys - on the standing offers board or by shopping open listings on the tick - once its free stalls are at or above the buying buffer; below that, it stops. Both routes reuse the exact appraisal and sale path a player's own purchase uses. Watch /admin/npc's buying-power column: NPC balances are real and never topped up automatically, so a stable that overspends quietly stops buying until it earns more.</p>
+      <label>Balance below which an NPC stops buying entirely
+        <input type="text" inputmode="numeric" name="npc_buy_offer_min_balance" value="${String(v.npc_buy_offer_min_balance)}">
+      </label>
+      <p class="muted">Slice 0017 §12 (Part C). An NPC stable only buys - on the standing offers board or by shopping open listings on the tick - once its free stalls are at or above the buying buffer; below that, it stops. Both routes reuse the exact appraisal and sale path a player's own purchase uses. Below the last number here it stops buying altogether and takes its standing offer down, rather than advertising a token amount for a good horse. Watch /admin/npc's buying-power column: NPC balances are real, so a stable that overspends stops buying until it earns more.</p>
+      <h3>Keeping NPC stables solvent</h3>
+      <label>How often the income floor is applied (game days)
+        <input type="text" inputmode="numeric" name="npc_balance_floor_interval_game_days" value="${String(v.npc_balance_floor_interval_game_days)}">
+      </label>
+      <label>What an unsold NPC listing clears for, as a fraction of guide value (0-1)
+        <input type="text" inputmode="decimal" name="npc_listing_clearance_fraction" value="${String(v.npc_listing_clearance_fraction)}">
+      </label>
+      <p class="muted">NPC stables only show when one of the children does, and only in the slots the children left, so prize money is no longer something they can live on. Two things make up the difference. Each stable has an income floor (set per stable on the NPC stables page, not here): once every interval above, a stable that has fallen below its floor is topped back up to it - and one that is earning gets nothing. Separately, an NPC horse whose listing runs the whole way to expiry without a player buying it is sold to a buyer outside the area at the fraction of guide value above, and leaves. That second one is where an NPC's money should mostly come from: it only pays for horses good enough to be worth something, and every child had the full listing window to buy the horse first. Lower the fraction to squeeze NPC income; raise it to loosen. Shortening the floor interval raises how much money the floor itself can create, so prefer changing the fraction.</p>
       <h3>Stud services (Part D)</h3>
       <label>Highest fee the market accepts
         <input type="text" inputmode="numeric" name="stud_max_fee" value="${String(v.stud_max_fee)}">
@@ -1303,6 +1314,8 @@ export function renderNpcAdminPage(params: {
       <td>${s.marketPriceMultiplier.toFixed(2)}x</td>
       <td>${String(s.spentBuyingThisSeason)}</td>
       <td>${String(s.earnedSellingThisSeason)}</td>
+      <td>${s.balanceFloor <= 0 ? raw('&mdash; (off)') : String(s.balanceFloor)}</td>
+      <td>${s.balanceFloor <= 0 ? raw('&mdash;') : s.nextFloorTopupGameDay === null ? 'Due next tick' : String(s.nextFloorTopupGameDay)}</td>
     </tr>`
   );
 
@@ -1339,10 +1352,11 @@ export function renderNpcAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>Every NPC stable</h2>
-      <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after). The last two columns are slice 0017 §12's buying-power figure: what this stable has spent buying and earned selling since the current game year began (read from its own ledger rows, kinds 'purchase' and 'sale') - watch these against its balance. NPC balances are never topped up automatically, so a stable that consistently spends more than it earns will eventually go quiet on both buying routes without anybody being told, unless this table is checked.</p>
+      <p class="muted">Each breeds on its own schedule (a tick stage, not a button) - "Next cycle due" is a projection from its last cycle, not a guarantee, since a stable in debt or at capacity is skipped and its marker still advances (it waits for the cycle after). "Spent buying" and "earned selling" are slice 0017 §12's buying-power figure: what this stable has spent and earned since the current game year began, read from its own ledger rows - watch these against its balance.</p>
+      <p class="muted">The last two columns are its safety net. These stables can only show when one of the children does, and only in the slots the children left, so prize money is not something they can live on. A stable that has fallen below its floor is topped back up to it when the floor next falls due; a stable earning enough to stay above its floor is given nothing. Most of an NPC's money should come from the other mechanism, which needs no column here: an NPC horse whose listing runs all the way to expiry unsold is bought by somebody outside the area, and leaves. If a stable's balance keeps sitting at its floor, it is living on charity rather than earning - either it is breeding horses nobody wants, or the clearance fraction on the config page is set too low.</p>
       <table>
-        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th><th>Market multiplier</th><th>Spent buying (this year)</th><th>Earned selling (this year)</th></tr></thead>
-        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="11" class="muted">No NPC stables yet.</td></tr>`}</tbody>
+        <thead><tr><th>Stable</th><th>Personality</th><th>Targets</th><th>Horses / capacity</th><th>Balance</th><th>Last bred (game day)</th><th>Next cycle due</th><th>Pairs last cycle</th><th>Market multiplier</th><th>Spent buying (this year)</th><th>Earned selling (this year)</th><th>Income floor</th><th>Floor next due</th></tr></thead>
+        <tbody>${stableRows.length ? stableRows : html`<tr><td colspan="13" class="muted">No NPC stables yet.</td></tr>`}</tbody>
       </table>
     </div>
     <div class="card">
@@ -1391,6 +1405,7 @@ export function renderNpcAdminPage(params: {
         <label>Capacity <input type="text" inputmode="numeric" name="capacity" required></label>
         <label>Market price multiplier (1.0 = asks the plain guide value; higher asks more for its culls) <input type="text" inputmode="decimal" name="market_price_multiplier" value="1.0" required></label>
         <label>Market price spread (0-1, +/- fraction randomised per listing) <input type="text" inputmode="decimal" name="market_price_spread" value="0.1" required></label>
+        <label>Income floor (the balance it is topped back up to when it falls below; 0 switches this off) <input type="text" inputmode="numeric" name="balance_floor" value="5000" required></label>
         <button type="submit">Found stable</button>
       </form>
     </div>

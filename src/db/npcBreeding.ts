@@ -51,6 +51,12 @@ export interface NpcPolicyRow {
    * property of the personality, not a game-wide config value (see migrations/0093). */
   market_price_multiplier: number;
   market_price_spread: number;
+  /** NPC solvency (migrations/0118, src/db/npcFinance.ts): the balance this stable is topped back
+   * up to once every npc_balance_floor_interval_game_days if it has fallen below, and the marker
+   * saying when that last happened. 0 disables the floor for this stable; a NULL marker means
+   * "never topped up" and reads as immediately due. Same shape as last_bred_game_day above. */
+  balance_floor: number;
+  last_floor_topup_game_day: number | null;
 }
 
 export async function listNpcPolicies(env: Env): Promise<NpcPolicyRow[]> {
@@ -132,13 +138,23 @@ export interface NpcStableAdminRow {
    * selling since the current game year started, read from the ledger's own 'purchase'/'sale' kinds
    * - so an operator can see a stable's buying power drying up before the children feel it. */
   spentBuyingThisSeason: number;
+  /** NPC solvency (src/db/npcFinance.ts): the balance this stable is restored to when its floor
+   * next falls due, and the game day that happens. 0 and null mean the floor is switched off for
+   * this stable. */
+  balanceFloor: number;
+  nextFloorTopupGameDay: number | null;
   earnedSellingThisSeason: number;
 }
 
 /** /admin/npc's per-stable table (§7.3). One pass over every npc_policy row - three stables at
  * launch (§2.1), so no batching concern yet (§4.2's own closing note). gameDay/gameDaysPerYear are
  * only used to bound the season summary (§12) - everything else here is unchanged from slice 0015. */
-export async function listNpcStablesForAdmin(env: Env, gameDay: number, gameDaysPerYear: number): Promise<NpcStableAdminRow[]> {
+export async function listNpcStablesForAdmin(
+  env: Env,
+  gameDay: number,
+  gameDaysPerYear: number,
+  floorIntervalGameDays: number
+): Promise<NpcStableAdminRow[]> {
   const [policies, breeds, disciplines] = await Promise.all([listNpcPolicies(env), getBreeds(env), getDisciplines(env)]);
   const breedById = new Map(breeds.map((b) => [b.id, b]));
   const disciplineByCode = new Map(disciplines.map((d) => [d.code, d]));
@@ -174,6 +190,14 @@ export async function listNpcStablesForAdmin(env: Env, gameDay: number, gameDays
       marketPriceMultiplier: policy.market_price_multiplier,
       spentBuyingThisSeason: tradeSummary.spentBuying,
       earnedSellingThisSeason: tradeSummary.earnedSelling,
+      balanceFloor: policy.balance_floor,
+      // Null means "due on the next tick" - either it has never been topped up, or its interval has
+      // already elapsed. The renderer distinguishes "off" from "due now" by balanceFloor, not by
+      // this being null.
+      nextFloorTopupGameDay:
+        policy.last_floor_topup_game_day === null || gameDay - policy.last_floor_topup_game_day >= floorIntervalGameDays
+          ? null
+          : policy.last_floor_topup_game_day + floorIntervalGameDays,
     });
   }
   return rows;
@@ -201,6 +225,11 @@ export async function foundNpcStable(
     capacity: number;
     marketPriceMultiplier: number;
     marketPriceSpread: number;
+    /** src/db/npcFinance.ts's income floor. Passed explicitly rather than left to the column's
+     * DEFAULT 0, because a stable founded with the floor silently switched off would look identical
+     * to a healthy one right up until it ran out of money and went quiet. 0 to switch it off on
+     * purpose. */
+    balanceFloor: number;
     gameDay: number;
   }
 ): Promise<FoundNpcStableResult> {
@@ -216,8 +245,8 @@ export async function foundNpcStable(
          VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, NULL, NULL, ?)`
       ).bind(params.prefix, params.gameDay, nowSeconds),
       env.DB.prepare(
-        `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread)
-         VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+         VALUES ((SELECT id FROM stables ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(
         params.personalityCode,
         params.targetKind,
@@ -228,7 +257,8 @@ export async function foundNpcStable(
         params.breedingIntervalGameDays,
         params.maxPairsPerCycle,
         params.marketPriceMultiplier,
-        params.marketPriceSpread
+        params.marketPriceSpread,
+        params.balanceFloor
       ),
     ]);
   } catch (err) {

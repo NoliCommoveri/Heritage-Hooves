@@ -133,6 +133,7 @@ describeWithSqlite('refreshNpcBuyOffers, against a real database (slice 0017 §1
   it('posts a standing offer once free stalls clear the buying buffer, priced within the budget fraction', async () => {
     const db = freshDb();
     // 0 horses -> 40 free stalls, well over the buffer of 3.
+    db.exec(`UPDATE stables SET balance = 4000 WHERE id = ${String(CEDAR_HOLLOW)}`);
     const env = makeEnv(db);
     await refreshNpcBuyOffers(env, GAME_DAY, await readConfig(env));
 
@@ -141,12 +142,25 @@ describeWithSqlite('refreshNpcBuyOffers, against a real database (slice 0017 §1
       criteria: string;
     };
     expect(offer).toBeTruthy();
-    // Cedar Hollow's balance is 0 (npc stables start at 0, migrations/0085/0086) -> budget fraction
-    // of 0 floors to 0, clamped up to market_min_value (50).
-    expect(offer.max_price).toBe(50);
+    expect(offer.max_price).toBe(2000); // floor(4000 * npc_buying_budget_fraction 0.5)
     const criteria = JSON.parse(offer.criteria) as { breedId: number | null; minQuality: number };
     expect(criteria.breedId).toBe(1); // QH, Cedar Hollow's conformation target
     expect(criteria.minQuality).toBe(50); // npc_buy_offer_min_quality default
+  });
+
+  // This test used to assert the opposite - that a stable sitting at a balance of 0 still posted an
+  // offer, priced at the market_min_value floor of 50. That was the bug: a 50-currency offer against
+  // a horse worth a thousand reads to a child as a broken game rather than a bad deal. The
+  // npc_buy_offer_min_balance gate in refreshOneOffer is what changed it (src/db/npcFinance.ts's
+  // header has the wider reasoning).
+  it('posts no offer at all when the stable is below the minimum buying balance', async () => {
+    const db = freshDb();
+    // Cedar Hollow's seeded balance is 0 (migrations/0085), under npc_buy_offer_min_balance (500).
+    const env = makeEnv(db);
+    await refreshNpcBuyOffers(env, GAME_DAY, await readConfig(env));
+
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM buy_offers WHERE stable_id = ${String(CEDAR_HOLLOW)} AND active = 1`).get() as { n: number };
+    expect(count.n).toBe(0);
   });
 
   it('updates the existing offer in place rather than opening a second one', async () => {
