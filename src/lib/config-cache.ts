@@ -311,10 +311,23 @@ export interface ConfigValues {
   acute_treatment_cost_navicular: number;
   acute_treatment_cost_osteoarthritis: number;
   acute_treatment_cost_suspensory: number;
-  /** Slice 0020 §2.9. Flat, applied once while any horse_conditions row reads state = 'acute',
+  /** Slice 0020 §2.9. Flat, applied once while any horse_incidents row reads state = 'acute',
    * regardless of which of the twelve - not a per-condition tuning lever. Feeds
    * careModifier's conditionDelta slot alongside slice 0014's unmanaged-genetic-condition penalty. */
   acute_incident_care_penalty: number;
+  /** Slice 0022 §A6. Live, read fresh at render time - how far back (in game days, measured from
+   * resolve_game_day) the horse page's Incidents card looks. An open incident or one whose outcome
+   * is 'degenerative' is always shown regardless of this window. Rows are never deleted; this only
+   * changes what's drawn. */
+  incident_history_game_days: number;
+  /** Slice 0022 §B2. Band edges for the conformation card's plain-word verdict, each the minimum
+   * traitScore (0-100) that word applies at. Live - the words on an already-shown horse can move if
+   * these are retuned, which is deliberate (they describe today's read of the horse, not a fact
+   * frozen at its first start). */
+  conformation_label_outstanding_min: number;
+  conformation_label_good_min: number;
+  conformation_label_acceptable_min: number;
+  conformation_label_weak_min: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

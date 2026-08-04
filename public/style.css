@@ -632,6 +632,52 @@ details.row-actions button {
   border-radius: 999px;
 }
 
+/* Slice 0022 §B4: the bar and its plain-word verdict share one flex row, the bar taking what's
+   left. min-width: 0 on .meter is required, not decoration - a flex item defaults to min-width:
+   auto and refuses to shrink below its content, which is exactly what pushes the word off a phone
+   screen without it. The reserved column is sized against "Outstanding" (11 characters). */
+.meter-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.meter-line .meter {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meter-verdict {
+  flex: 0 0 5.5rem;
+  text-align: right;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* Colour reinforces the band, never carries it alone - the word itself is always legible on its
+   own (slice 0022 §B4's own instruction). */
+.conformation-label-outstanding,
+.conformation-label-good {
+  color: var(--color-success);
+}
+
+.conformation-label-acceptable {
+  color: var(--color-text-muted);
+}
+
+.conformation-label-weak {
+  color: var(--color-warning);
+}
+
+.conformation-label-poor {
+  color: var(--color-danger);
+}
+
+.conformation-label-unknown {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
 .conformation-compact {
   font-size: 0.85rem;
 }

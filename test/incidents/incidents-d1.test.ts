@@ -1,8 +1,8 @@
 /**
- * Slice 0020 §10 tests 6-9 - the ones that need a real database. Same shim as
- * test/market/sale-d1.test.ts (node:sqlite, real migrations, a ~30-line D1 lookalike) - see that
- * file's own header for what it is and isn't. Skips rather than fails where node:sqlite is
- * unavailable.
+ * Slice 0020 §10 tests 6-9 (moved and adapted for slice 0022 Part A's incident_types/horse_incidents
+ * tables) - the ones that need a real database. Same shim as test/market/sale-d1.test.ts
+ * (node:sqlite, real migrations, a ~30-line D1 lookalike) - see that file's own header for what it
+ * is and isn't. Skips rather than fails where node:sqlite is unavailable.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
@@ -11,19 +11,19 @@ import path from 'node:path';
 import { splitSqlStatements } from '../../src/lib/sql';
 import type { Env } from '../../src/types';
 
-// src/db/health.ts's getConditions and src/lib/config-cache.ts's getConfig both cache in module
-// scope for 60s (their own header comments explain why - no cross-isolate invalidation concern in
-// a real Worker, since each isolate has its own module state). In this file every test builds a
-// brand new in-memory database, so that cache must be reset between tests or a later test's env
-// would silently read an earlier test's cached rows - the same reasoning test/db/disciplines.test.ts
-// already documents for its own resetModules() call.
+// src/db/incidents.ts's getIncidentTypes and src/lib/config-cache.ts's getConfig both cache in
+// module scope for 60s (their own header comments explain why - no cross-isolate invalidation
+// concern in a real Worker, since each isolate has its own module state). In this file every test
+// builds a brand new in-memory database, so that cache must be reset between tests or a later
+// test's env would silently read an earlier test's cached rows - the same reasoning
+// test/db/disciplines.test.ts already documents for its own resetModules() call.
 beforeEach(() => {
   vi.resetModules();
 });
 async function freshImports() {
-  const acquired = await import('../../src/db/acquiredConditions');
+  const incidents = await import('../../src/db/incidents');
   const configCache = await import('../../src/lib/config-cache');
-  return { ...acquired, getConfig: configCache.getConfig };
+  return { ...incidents, getConfig: configCache.getConfig };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -107,20 +107,20 @@ describeWithSqlite('rollAcuteIncidents / resolveAcuteIncidents, against a real d
     const config = await getConfig(env);
 
     await forceIncident(env, HORSE, 'COLIC', GAME_DAY);
-    const openRow = db.prepare(`SELECT state, resolve_game_day FROM horse_conditions WHERE horse_id = ? AND condition_code = 'COLIC'`).get(HORSE) as {
+    const openRow = db.prepare(`SELECT state, resolve_game_day FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'COLIC'`).get(HORSE) as {
       state: string;
       resolve_game_day: number;
     };
     expect(openRow.state).toBe('acute');
     expect(openRow.resolve_game_day).toBeGreaterThan(GAME_DAY);
 
-    // forceIncident refuses a second open incident for the same condition (the WHERE NOT EXISTS guard).
+    // forceIncident refuses a second open incident for the same incident type (the WHERE NOT EXISTS guard).
     await forceIncident(env, HORSE, 'COLIC', GAME_DAY);
-    const count = (db.prepare(`SELECT COUNT(*) AS n FROM horse_conditions WHERE horse_id = ? AND condition_code = 'COLIC'`).get(HORSE) as { n: number }).n;
+    const count = (db.prepare(`SELECT COUNT(*) AS n FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'COLIC'`).get(HORSE) as { n: number }).n;
     expect(count).toBe(1);
 
     await resolveAcuteIncidents(env, openRow.resolve_game_day, config);
-    const resolved = db.prepare(`SELECT state, outcome FROM horse_conditions WHERE horse_id = ? AND condition_code = 'COLIC'`).get(HORSE) as {
+    const resolved = db.prepare(`SELECT state, outcome FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'COLIC'`).get(HORSE) as {
       state: string;
       outcome: string;
     };
@@ -145,19 +145,18 @@ describeWithSqlite('rollAcuteIncidents / resolveAcuteIncidents, against a real d
     const env = makeEnv(db);
     const config = await getConfig(env);
 
-    // A synthetic condition whose untreated table is 100% death, so the outcome is deterministic
-    // regardless of rng_seed - the real seeded conditions' own tables are probabilistic on purpose
-    // and shouldn't be leaned on for a deterministic assertion.
-    const trigger = JSON.stringify({
+    // A synthetic incident type whose untreated table is 100% death, so the outcome is
+    // deterministic regardless of rng_seed - the real seeded incident types' own tables are
+    // probabilistic on purpose and shouldn't be leaned on for a deterministic assertion.
+    const riskModel = JSON.stringify({
       v: 1, kind: 'acquired', tissue: 'gut', robustnessTrait: null, robustnessWeight: 0,
       baseRatePerGameDay: 0, careWeight: 0, workloadWeight: 0, feedWeight: 0, pastureMultiplier: 1,
-      treatmentWindowGameDays: 1, treatmentCostKey: 'acute_treatment_cost_colic',
       outcomesUntreated: { resolved: 0, manageable: 0, degenerative: 0, death: 1 },
       outcomesTreated: { resolved: 1, manageable: 0, degenerative: 0, death: 0 },
     });
     db.exec(
-      `INSERT INTO conditions (code, name, category, locus_code, trigger, severity_class, signs_visible, bars_showing, breed_associations, test_cost_key, enabled, teaching_text, event_text, sort_order)
-       VALUES ('TESTDEATH','Test Death','acquired',NULL,'${trigger.replace(/'/g, "''")}','acute',1,0,'[]',NULL,1,'t','t',999)`
+      `INSERT INTO incident_types (code, name, risk_model, treatment_window_game_days, treatment_cost_key, enabled, description, event_text, sort_order)
+       VALUES ('TESTDEATH','Test Death','${riskModel.replace(/'/g, "''")}',1,'acute_treatment_cost_colic',1,'t','t',999)`
     );
 
     // A live covering and a scheduled show entry, both of which should be cancelled/withdrawn when
@@ -174,7 +173,7 @@ describeWithSqlite('rollAcuteIncidents / resolveAcuteIncidents, against a real d
     db.exec(`INSERT INTO show_entries (class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot) VALUES (1,${HORSE},${STABLE},0,1000,'{}')`);
 
     await forceIncident(env, HORSE, 'TESTDEATH', GAME_DAY);
-    const row = db.prepare(`SELECT resolve_game_day FROM horse_conditions WHERE horse_id = ? AND condition_code = 'TESTDEATH'`).get(HORSE) as { resolve_game_day: number };
+    const row = db.prepare(`SELECT resolve_game_day FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'TESTDEATH'`).get(HORSE) as { resolve_game_day: number };
     await resolveAcuteIncidents(env, row.resolve_game_day, config);
 
     const horse = db.prepare('SELECT status, end_reason FROM horses WHERE id = ?').get(HORSE) as { status: string; end_reason: string };
@@ -205,9 +204,9 @@ describeWithSqlite('rollAcuteIncidents / resolveAcuteIncidents, against a real d
     const marker = (db.prepare('SELECT last_incident_check_game_day FROM horses WHERE id = ?').get(HORSE) as { last_incident_check_game_day: number }).last_incident_check_game_day;
     expect(marker).toBe(GAME_DAY);
 
-    const countBefore = (db.prepare('SELECT COUNT(*) AS n FROM horse_conditions').get() as { n: number }).n;
+    const countBefore = (db.prepare('SELECT COUNT(*) AS n FROM horse_incidents').get() as { n: number }).n;
     await rollAcuteIncidents(env, GAME_DAY, 100, config);
-    const countAfter = (db.prepare('SELECT COUNT(*) AS n FROM horse_conditions').get() as { n: number }).n;
+    const countAfter = (db.prepare('SELECT COUNT(*) AS n FROM horse_incidents').get() as { n: number }).n;
     expect(countAfter).toBe(countBefore);
   });
 });
@@ -259,7 +258,7 @@ describeWithSqlite('acquiredBarringFlags, against a real database (§5.4/§10 te
     expect(flags.hasOpenAcuteIncident).toBe(true);
     expect(flags.hasDegenerativeIncident).toBe(false);
 
-    db.exec(`UPDATE horse_conditions SET state = 'resolved', outcome = 'degenerative' WHERE horse_id = ${HORSE} AND condition_code = 'LAMINITIS'`);
+    db.exec(`UPDATE horse_incidents SET state = 'resolved', outcome = 'degenerative' WHERE horse_id = ${HORSE} AND incident_type_code = 'LAMINITIS'`);
     flags = await acquiredBarringFlags(env, HORSE);
     expect(flags.hasOpenAcuteIncident).toBe(false);
     expect(flags.hasDegenerativeIncident).toBe(true);
@@ -276,15 +275,52 @@ describeWithSqlite('incidentAdminCensus, against a real database', () => {
 
     await forceIncident(env, HORSE, 'COLIC', GAME_DAY);
     let census = await incidentAdminCensus(env);
-    let colic = census.find((c) => c.condition.code === 'COLIC')!;
+    let colic = census.find((c) => c.incidentType.code === 'COLIC')!;
     expect(colic.openCount).toBe(1);
 
-    const row = db.prepare(`SELECT resolve_game_day FROM horse_conditions WHERE horse_id = ? AND condition_code = 'COLIC'`).get(HORSE) as { resolve_game_day: number };
+    const row = db.prepare(`SELECT resolve_game_day FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'COLIC'`).get(HORSE) as { resolve_game_day: number };
     await resolveAcuteIncidents(env, row.resolve_game_day, config);
 
     census = await incidentAdminCensus(env);
-    colic = census.find((c) => c.condition.code === 'COLIC')!;
+    colic = census.find((c) => c.incidentType.code === 'COLIC')!;
     expect(colic.openCount).toBe(0);
     expect(colic.resolved + colic.manageable + colic.degenerative + colic.death).toBe(1);
+  });
+});
+
+describeWithSqlite('incidentsForHorse - the history window (slice 0022 §A6)', () => {
+  it('hides a resolved incident older than the window, always shows an open one and a degenerative one, and counts what it hides', async () => {
+    const db = freshDb();
+    const { incidentsForHorse, forceIncident, resolveAcuteIncidents, getConfig } = await freshImports();
+    seed(db);
+    const env = makeEnv(db);
+    const config = await getConfig(env);
+
+    // An old, plain-resolved incident - forced, treated, and resolved with a synthetic 100%-resolved
+    // incident type so the outcome is deterministic, then backdated well outside the window.
+    const riskModel = JSON.stringify({
+      v: 1, kind: 'acquired', tissue: 'gut', robustnessTrait: null, robustnessWeight: 0,
+      baseRatePerGameDay: 0, careWeight: 0, workloadWeight: 0, feedWeight: 0, pastureMultiplier: 1,
+      outcomesUntreated: { resolved: 1, manageable: 0, degenerative: 0, death: 0 },
+      outcomesTreated: { resolved: 1, manageable: 0, degenerative: 0, death: 0 },
+    });
+    db.exec(
+      `INSERT INTO incident_types (code, name, risk_model, treatment_window_game_days, treatment_cost_key, enabled, description, event_text, sort_order)
+       VALUES ('TESTOLD','Test Old','${riskModel.replace(/'/g, "''")}',1,'acute_treatment_cost_colic',1,'t','t',998)`
+    );
+    await forceIncident(env, HORSE, 'TESTOLD', 100);
+    const oldRow = db.prepare(`SELECT resolve_game_day FROM horse_incidents WHERE horse_id = ? AND incident_type_code = 'TESTOLD'`).get(HORSE) as { resolve_game_day: number };
+    await resolveAcuteIncidents(env, oldRow.resolve_game_day, config);
+
+    // A currently-open incident and a degenerative one, both well outside the window by onset day
+    // but always shown regardless.
+    await forceIncident(env, HORSE, 'COLIC', GAME_DAY);
+    await forceIncident(env, HORSE, 'LAMINITIS', GAME_DAY);
+    db.exec(`UPDATE horse_incidents SET state = 'resolved', outcome = 'degenerative', resolve_game_day = 100 WHERE horse_id = ${HORSE} AND incident_type_code = 'LAMINITIS'`);
+
+    const view = await incidentsForHorse(env, HORSE, GAME_DAY, config.values);
+    expect(view.open.map((o) => o.conditionCode)).toEqual(['COLIC']);
+    expect(view.history.map((h) => h.conditionCode)).toEqual(['LAMINITIS']);
+    expect(view.hiddenCount).toBe(1);
   });
 });

@@ -13,7 +13,7 @@ import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import type { ConditionCensusRow } from '../db/health';
 import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
 import type { CareAdminData } from '../db/care';
-import type { IncidentAdminRow } from '../db/acquiredConditions';
+import type { IncidentAdminRow } from '../db/incidents';
 import type { PinAttemptDisplayRow } from '../db/pin';
 import type { HorseSearchRow } from '../db/horses';
 import { horseDisplayName } from '../db/horses';
@@ -282,6 +282,20 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="inbreeding_depression_factor" value="${String(v.inbreeding_depression_factor)}">
       </label>
       <p class="notice">Changing this one re-scores every already-inbred horse in the game immediately, because conformation is computed fresh on every page view. Best tuned in the first weeks of play, then left alone.</p>
+      <h2>Conformation labels</h2>
+      <p class="muted">Slice 0022 §B2: band edges for the plain-word verdict (Poor / Weak / Acceptable / Good / Outstanding) shown once a horse has started at least one show. Each is the minimum traitScore (0-100, the judge's own per-trait formula) that word applies at. Live - the words on an already-shown horse can move if these are retuned.</p>
+      <label>Outstanding, minimum traitScore
+        <input type="text" inputmode="numeric" name="conformation_label_outstanding_min" value="${String(v.conformation_label_outstanding_min)}">
+      </label>
+      <label>Good, minimum traitScore
+        <input type="text" inputmode="numeric" name="conformation_label_good_min" value="${String(v.conformation_label_good_min)}">
+      </label>
+      <label>Acceptable, minimum traitScore
+        <input type="text" inputmode="numeric" name="conformation_label_acceptable_min" value="${String(v.conformation_label_acceptable_min)}">
+      </label>
+      <label>Weak, minimum traitScore
+        <input type="text" inputmode="numeric" name="conformation_label_weak_min" value="${String(v.conformation_label_weak_min)}">
+      </label>
       <h2>Shows</h2>
       <label>Show interval (game days)
         <input type="text" inputmode="numeric" name="show_interval_game_days" value="${String(v.show_interval_game_days)}">
@@ -509,8 +523,12 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="consignment_horses_per_breed" value="${String(v.consignment_horses_per_breed)}">
       </label>
       <p class="muted">Both live: the cadence change takes effect from whichever batch is most recent right now (see /admin/consignment for the actual next-due day), and the per-breed count applies to the next batch minted, of every breed then in play. Doesn't retroactively change a batch already minted.</p>
-      <h2>Acquired conditions</h2>
-      <p class="muted">Colic, laminitis, and the rest - see /admin/incidents for open counts and the real outcome split. Everything here is live, per-day risk (the base rate and weighting live in each condition's own trigger row, not here).</p>
+      <h2>Incidents</h2>
+      <p class="muted">Colic, laminitis, and the rest - see /admin/incidents for open counts and the real outcome split. Everything here is live, per-day risk (the base rate and weighting live in each incident type's own risk_model row, not here).</p>
+      <label>History window shown on a horse's page (game days)
+        <input type="text" inputmode="numeric" name="incident_history_game_days" value="${String(v.incident_history_game_days)}">
+      </label>
+      <p class="muted">Display only - rows are never deleted, and an open or degenerative incident is always shown regardless of this window. 720 = two game years at today's game_days_per_year.</p>
       <label>Workload window (game days)
         <input type="text" inputmode="numeric" name="workload_window_game_days" value="${String(v.workload_window_game_days)}">
       </label>
@@ -1362,7 +1380,7 @@ export function renderIncidentsAdminPage(params: {
     const deathRate = totalResolved > 0 ? `${((row.death / totalResolved) * 100).toFixed(1)}%` : raw('&mdash;');
     return html`
     <tr>
-      <td>${row.condition.name} (${row.condition.code})</td>
+      <td>${row.incidentType.name} (${row.incidentType.code})</td>
       <td>${String(row.openCount)}</td>
       <td>${String(row.resolved)}</td>
       <td>${String(row.manageable)}</td>
@@ -1374,7 +1392,7 @@ export function renderIncidentsAdminPage(params: {
   });
 
   const horseOptions = params.horses.map((h) => html`<option value="${String(h.id)}">${h.name} (${h.stableName})</option>`);
-  const conditionOptions = params.census.map((row) => html`<option value="${row.condition.code}">${row.condition.name}</option>`);
+  const conditionOptions = params.census.map((row) => html`<option value="${row.incidentType.code}">${row.incidentType.name}</option>`);
 
   const body = html`
     <h1>Incidents</h1>

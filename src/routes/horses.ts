@@ -56,6 +56,10 @@ import { availabilityForHorse, turnOutToPasture, bringInFromPasture } from '../d
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
+import { parseIdealVector } from '../engines/showing/score';
+import type { TraitCode } from '../engines/genetics/polygenic';
+import type { ConfigValues } from '../lib/config-cache';
 import {
   getShowSummary,
   listRecentResultsForHorse,
@@ -93,7 +97,7 @@ import {
   buildWithdrawListingsForHorseStatement,
 } from '../db/listings';
 import { createStudListing, getActiveStudListingForHorse, bookingsThisSeasonCount, buildWithdrawStudListingsForHorseStatement } from '../db/stud';
-import { incidentsForHorse, treatOneIncident, openIncidentHorseIds, acuteCarePenaltyMapForHorses } from '../db/acquiredConditions';
+import { incidentsForHorse, treatOneIncident, openIncidentHorseIds, acuteCarePenaltyMapForHorses } from '../db/incidents';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
@@ -190,6 +194,32 @@ function conformationForHorse(horse: HorseRow, ageYears: number, config: Realiza
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
   const values = conformationValues(genotype, noise, ageYears, horse.coi, config);
   return conformationDisplayRows(values, traitRows);
+}
+
+/** Slice 0022 §B2: the four band edges, read straight off live config. */
+function conformationLabelBands(cfg: ConfigValues): ConformationLabelBands {
+  return {
+    outstandingMin: cfg.conformation_label_outstanding_min,
+    goodMin: cfg.conformation_label_good_min,
+    acceptableMin: cfg.conformation_label_acceptable_min,
+    weakMin: cfg.conformation_label_weak_min,
+  };
+}
+
+/**
+ * §B2/§B3: one word per trait against this horse's OWN breed - never a shared or foal's-breed
+ * vector (§B5's own warning applies here too, even though this helper serves both the horse page
+ * and the breeding preview). `eligible` is the horse-level gate: at least one show start, and a
+ * breed with an ideal_vector to judge against.
+ */
+function conformationLabelsForHorse(
+  conformation: { code: TraitCode; expressed: number }[],
+  breed: BreedRow | undefined,
+  eligible: boolean,
+  cfg: ConfigValues
+): Map<TraitCode, ConformationLabel> {
+  const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  return conformationLabelsFor(conformation, ideal, cfg.show_ideal_falloff, conformationLabelBands(cfg), eligible);
 }
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
@@ -490,6 +520,26 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     const colourNotes = foalColourSentences(
       foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear, patternPenetrance: ctx.config.values.pattern_penetrance })
     );
+    // Slice 0022 §B5: the conformation block, one row per trait, each parent judged against ITS OWN
+    // breed's ideal - never a shared vector, and never the foal's, which doesn't exist yet and has
+    // no breed to have an opinion (§B5's own warning). The gate is per parent (§B5): an unshown mare
+    // booked to a proven stallion reads Unknown down her column and real words down his.
+    const [traitRows, mareBreed, stallionBreed, mareShowSummary, stallionShowSummary] = await Promise.all([
+      getConformationTraits(ctx.env),
+      mare.breed_id ? getBreedById(ctx.env, mare.breed_id) : Promise.resolve(undefined),
+      stallion.breed_id ? getBreedById(ctx.env, stallion.breed_id) : Promise.resolve(undefined),
+      getShowSummary(ctx.env, mare.id),
+      getShowSummary(ctx.env, stallion.id),
+    ]);
+    const mareConformation = conformationForHorse(mare, mareAgeYears, ctx.config.values, traitRows);
+    const stallionConformation = conformationForHorse(stallion, stallionAgeYears, ctx.config.values, traitRows);
+    const mareLabels = conformationLabelsForHorse(mareConformation, mareBreed, (mareShowSummary?.starts ?? 0) >= 1, ctx.config.values);
+    const stallionLabels = conformationLabelsForHorse(stallionConformation, stallionBreed, (stallionShowSummary?.starts ?? 0) >= 1, ctx.config.values);
+    const conformationRows = mareConformation.map((row) => ({
+      name: row.name,
+      mareLabel: CONFORMATION_LABEL_TEXT[mareLabels.get(row.code) ?? 'unknown'],
+      stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabels.get(row.code) ?? 'unknown'],
+    }));
     const preview: BreedPreview = {
       mareId: mare.id,
       stallionId: stallion.id,
@@ -503,6 +553,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
       healthWarnings,
       colourNotes,
+      conformationRows,
     };
     return htmlResponse(
       renderBreedPage({
@@ -590,9 +641,10 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
  * Anyone who is neither gets names only.
  */
 async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
-  // Slice 0020: the twelve acquired conditions (colic, laminitis, and the rest) have no genotype to
-  // test and no knowledge boundary (§2.7) - they belong on their own Incidents card, not this one.
-  const conditions = (await getEnabledConditions(ctx.env)).filter((c) => c.category !== 'acquired');
+  // Slice 0022 Part A: the twelve acquired incidents (colic, laminitis, and the rest) live in their
+  // own table now - they belong on their own Incidents card, not this one, and getEnabledConditions
+  // already returns genetics-only rows.
+  const conditions = await getEnabledConditions(ctx.env);
 
   if (isAdmin && !owner) {
     return conditions.map((c) => {
@@ -720,6 +772,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const unregistrableFriesianChestnut = breed?.code === 'FR' && phenotype.baseColour === 'chestnut';
 
   const showSummary = await getShowSummary(ctx.env, horse.id);
+  // Slice 0022 §B3: gated on real show starts, not on the horse's status - a retired or dead horse
+  // that showed in its life keeps its labels (the show record outlives the horse on purpose).
+  const conformationLabels = conformationLabelsForHorse(conformation, breed, (showSummary?.starts ?? 0) >= 1, ctx.config.values);
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
   const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
@@ -749,7 +804,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const ageModifier = ageModifierForHorse(horse.born_game_day, ctx.config.values, ctx.world.game_day);
   // Slice 0020 §8.2: the Incidents card - open acute incidents and past outcomes, truth with no
   // knowledge boundary to cross (§2.7), so shown to the owner and admin alike; nobody else sees it.
-  const incidents = owner || isAdmin ? await incidentsForHorse(ctx.env, horse.id, ctx.world.game_day, ctx.config.values) : { open: [], history: [] };
+  const incidents = owner || isAdmin ? await incidentsForHorse(ctx.env, horse.id, ctx.world.game_day, ctx.config.values) : { open: [], history: [], hiddenCount: 0 };
   const incidentError = params.get('incident_error') ?? undefined;
   const incidentNotice = params.get('incident_treated') ? 'Vet called.' : undefined;
 
@@ -794,6 +849,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       loci,
       mareStatus,
       conformation,
+      conformationLabels,
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
       showSummary,
@@ -1113,10 +1169,9 @@ async function buildTestPageRows(
   horseId: number,
   genotype: Genotype
 ): Promise<{ rows: TestConditionOption[]; untested: ReturnType<typeof untestedConditions> }> {
-  // Slice 0020: acquired conditions have nothing to test - no genotype, no knowledge boundary
-  // (§2.7) - so they never appear on the purchase page.
-  const [allConditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
-  const conditions = allConditions.filter((c) => c.category !== 'acquired');
+  // Slice 0022 Part A: the twelve acquired incidents no longer live in `conditions` at all, so
+  // getEnabledConditions already returns genetics-only rows - nothing to filter here.
+  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
   const untested = untestedConditions(conditions, knowledge);
   const untestedCodes = new Set(untested.map((c) => c.code));
 

@@ -181,10 +181,10 @@ export async function marketIndexRoute(ctx: RequestContext): Promise<Response> {
  * let silence read as clear.
  */
 async function disclosedConditionsFor(ctx: RequestContext, sellerStableId: number, horseId: number): Promise<DisclosedCondition[]> {
-  // Slice 0020: the twelve acquired conditions carry no horse_knowledge row at all (§2.7) - a
-  // listing's open/past incidents are a different disclosure, not this genotype-test one.
-  const [allConditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, sellerStableId, horseId)]);
-  const conditions = allConditions.filter((c) => c.category !== 'acquired');
+  // Slice 0022 Part A: the twelve acquired incidents live in their own table now and carry no
+  // horse_knowledge row at all (§2.7) - a listing's open/past incidents are a different disclosure,
+  // not this genotype-test one - and getEnabledConditions already returns genetics-only rows.
+  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, sellerStableId, horseId)]);
   return conditions.map((c) => {
     const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
     return {
