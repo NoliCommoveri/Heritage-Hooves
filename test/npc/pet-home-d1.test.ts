@@ -84,7 +84,7 @@ async function readConfig(env: Env): Promise<Config> {
 // Same stable numbering test/npc/buying-d1.test.ts documents: migrations/0085 seeds Fair Meadow 1,
 // Cedar Hollow 2, Willow Creek Barrels 3; the consignment dealer is 4 and has no npc_policy row.
 const FAIR_MEADOW = 1;
-const CEDAR_HOLLOW = 2; // balance_floor 5000 (migrations/0118)
+const CEDAR_HOLLOW = 2; // balance_floor 5000 (migrations/0126)
 const DEALER = 4;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
 const GAME_DAY = 5000;

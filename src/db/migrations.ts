@@ -118,9 +118,9 @@ import m0114 from '../../migrations/0114_breed_pools_colour_pattern_loci.sql';
 import m0115 from '../../migrations/0115_config_pattern_penetrance.sql';
 import m0116 from '../../migrations/0116_config_colour_patterns_market.sql';
 import m0117 from '../../migrations/0117_condition_lethal_white.sql';
-import m0118 from '../../migrations/0118_npc_policy_balance_floor.sql';
-import m0119 from '../../migrations/0119_config_npc_finance.sql';
-import m0120 from '../../migrations/0120_ledger_add_pet_home_kind.sql';
+import m0126 from '../../migrations/0126_npc_policy_balance_floor.sql';
+import m0127 from '../../migrations/0127_config_npc_finance.sql';
+import m0128 from '../../migrations/0128_ledger_add_pet_home_kind.sql';
 
 export interface MigrationFile {
   name: string;
@@ -255,9 +255,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0115_config_pattern_penetrance.sql', sql: m0115 },
   { name: '0116_config_colour_patterns_market.sql', sql: m0116 },
   { name: '0117_condition_lethal_white.sql', sql: m0117 },
-  { name: '0118_npc_policy_balance_floor.sql', sql: m0118 },
-  { name: '0119_config_npc_finance.sql', sql: m0119 },
-  { name: '0120_ledger_add_pet_home_kind.sql', sql: m0120 },
+  { name: '0126_npc_policy_balance_floor.sql', sql: m0126 },
+  { name: '0127_config_npc_finance.sql', sql: m0127 },
+  { name: '0128_ledger_add_pet_home_kind.sql', sql: m0128 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

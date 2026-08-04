@@ -53,7 +53,7 @@ import { getStableById } from './stables';
  * balance rather than incremented, and a re-fired tick on the same game day finds the marker
  * already stamped and does nothing. A NULL marker means "never topped up" and is treated as due,
  * which is what gives the three stables seeded at a balance of 0 an opening balance on the first
- * tick after migration 0118 lands - no separate backfill migration needed.
+ * tick after migration 0126 lands - no separate backfill migration needed.
  *
  * Posted as an `adjustment` ledger row, not a new ledger kind: it is exactly what the operator's own
  * hand-adjustment at /admin/money is, just on a schedule. That also means it never inflates

@@ -51,7 +51,7 @@ export interface NpcPolicyRow {
    * property of the personality, not a game-wide config value (see migrations/0093). */
   market_price_multiplier: number;
   market_price_spread: number;
-  /** NPC solvency (migrations/0118, src/db/npcFinance.ts): the balance this stable is topped back
+  /** NPC solvency (migrations/0126, src/db/npcFinance.ts): the balance this stable is topped back
    * up to once every npc_balance_floor_interval_game_days if it has fallen below, and the marker
    * saying when that last happened. 0 disables the floor for this stable; a NULL marker means
    * "never topped up" and reads as immediately due. Same shape as last_bred_game_day above. */

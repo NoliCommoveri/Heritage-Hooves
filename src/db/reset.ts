@@ -203,7 +203,7 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
     statements.push(
       env.DB
         .prepare(
-          // balance_floor mirrors migrations/0118 - a reset that recreated these stables without it
+          // balance_floor mirrors migrations/0126 - a reset that recreated these stables without it
           // would leave every one of them with the floor switched off (the column defaults to 0),
           // and nobody would notice until the market quietly stopped moving.
           `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)

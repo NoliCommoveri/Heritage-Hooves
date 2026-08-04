@@ -23,7 +23,7 @@ import { nowUtcSeconds } from '../lib/time';
 // stud booking's commission reuses the existing 'commission' kind rather than a third new one - the
 // operator decided a stud fee carries the same commission a sale does.
 // The pet home (src/db/petHome.ts) adds one more - 'pet_home_payout', a horse leaving the game to a
-// pet home rather than to a buyer inside it, widened in 0120_ledger_add_pet_home_kind.sql. One kind
+// pet home rather than to a buyer inside it, widened in 0128_ledger_add_pet_home_kind.sql. One kind
 // covers both ways in (a player choosing it, an NPC's listing timing out) because it is one
 // mechanic at one price. Its own kind rather than 'sale' so the ledger distinguishes a child buying
 // a horse from the world beyond the five of them taking one.
