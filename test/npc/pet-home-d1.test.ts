@@ -476,6 +476,108 @@ describeWithSqlite('sellHorseToPetHome (the player entry point)', () => {
     expect(horse.end_reason).toBe('pet_home');
   });
 
+  it('deletes a home-bred foal, keeping its birth notice readable in the feed', async () => {
+    // The defect the operator hit: every foal born in a player stable gets a `foaled` event pointing
+    // at it (src/db/events.ts), and `events` used to be a keep-clause in deletableHorseSql - so the
+    // rule "never showed and never conceived is deleted" never once fired for a home-bred horse.
+    const db = freshDb();
+    seedPlayerStable(db);
+    seedHorse(db, 203, PLAYER);
+    db.exec(
+      `INSERT INTO events (stable_id, game_day, kind, subject_horse_id, payload, created_real_ts)
+       VALUES (${String(PLAYER)},40,'foaled',203,'{"v":1,"foal_name":"Test Horse 203","dam_name":"D","sire_name":"S","sex":"colt"}',0)`
+    );
+    const env = makeEnv(db);
+
+    const result = await sellHorseToPetHome(env, {
+      horse: await horseRow(env, 203),
+      sellerStableId: PLAYER,
+      appraisedValue: 1550,
+      gameDay: GAME_DAY,
+      config: await readConfig(env),
+      withdrawStatements: [],
+    });
+
+    expect(result.deleted).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM horses WHERE id = 203').get()).toEqual({ n: 0 });
+    // The operator's decision: keep the words, drop the link. The sentence is rendered from the
+    // payload, so the feed still reads normally - only the clickable subject is gone.
+    const event = db.prepare(`SELECT kind, subject_horse_id, payload FROM events WHERE stable_id = ${String(PLAYER)}`).get() as {
+      kind: string;
+      subject_horse_id: number | null;
+      payload: string;
+    };
+    expect(event.kind).toBe('foaled');
+    expect(event.subject_horse_id).toBe(null);
+    expect(JSON.parse(event.payload).foal_name).toBe('Test Horse 203');
+  });
+
+  it('deletes a founding horse, unlinking the import batch that produced it', async () => {
+    // The same defect in the other place it was universal: claimFoundingOffer writes
+    // import_candidates.horse_id for every founding horse, which used to keep it forever.
+    const db = freshDb();
+    seedPlayerStable(db);
+    seedHorse(db, 204, PLAYER);
+    db.exec(
+      `INSERT INTO import_offers (id, stable_id, account_id, source, status, quality_band, polygenic_one_chance,
+                                  mare_candidates, mare_claims, stallion_candidates, stallion_claims,
+                                  age_min_game_days, age_max_game_days, granted_game_day, rng_seed, created_real_ts)
+       VALUES (700,${String(PLAYER)},1,'founding','claimed','mid',0.5,4,2,4,2,1000,2000,0,1,0)`
+    );
+    db.exec(
+      `INSERT INTO import_candidates (id, offer_id, slot_index, sex, age_game_days, genotype, origin_prefix, name_part, rng_seed, chosen, horse_id)
+       VALUES (800,700,0,'mare',1500,'${MINIMAL_GENOTYPE}','OP','Bright',7,1,204)`
+    );
+    const env = makeEnv(db);
+
+    const result = await sellHorseToPetHome(env, {
+      horse: await horseRow(env, 204),
+      sellerStableId: PLAYER,
+      appraisedValue: 1000,
+      gameDay: GAME_DAY,
+      config: await readConfig(env),
+      withdrawStatements: [],
+    });
+
+    expect(result.deleted).toBe(true);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM horses WHERE id = 204').get()).toEqual({ n: 0 });
+    // The batch keeps its slot, its genotype and its chosen flag - it just stops naming a horse
+    // that no longer exists.
+    const candidate = db.prepare('SELECT chosen, horse_id, name_part FROM import_candidates WHERE id = 800').get() as {
+      chosen: number;
+      horse_id: number | null;
+      name_part: string;
+    };
+    expect(candidate.horse_id).toBe(null);
+    expect(candidate.chosen).toBe(1);
+    expect(candidate.name_part).toBe('Bright');
+  });
+
+  it('still keeps a horse the operator injected an allele into', async () => {
+    // consignment_injections stays a keep-clause on purpose: rare rather than universal, and
+    // /admin/consignment actually renders applied_horse_id as "Applied (horse #N)".
+    const db = freshDb();
+    seedPlayerStable(db);
+    seedHorse(db, 205, PLAYER);
+    db.exec(
+      `INSERT INTO consignment_injections (locus_code, allele, zygosity, applies_to, sex_preference, status, queued_game_day, applied_game_day, applied_horse_id, created_real_ts)
+       VALUES ('E','E','het','one','any','applied',10,20,205,0)`
+    );
+    const env = makeEnv(db);
+
+    const result = await sellHorseToPetHome(env, {
+      horse: await horseRow(env, 205),
+      sellerStableId: PLAYER,
+      appraisedValue: 1000,
+      gameDay: GAME_DAY,
+      config: await readConfig(env),
+      withdrawStatements: [],
+    });
+
+    expect(result.deleted).toBe(false);
+    expect((db.prepare('SELECT status FROM horses WHERE id = 205').get() as { status: string }).status).toBe('removed');
+  });
+
   it('pays a stable that is in debt - this is money coming in, never blocked by the debt rule', async () => {
     const db = freshDb();
     seedPlayerStable(db);

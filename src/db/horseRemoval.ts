@@ -37,9 +37,21 @@ import { buildEndHorseParticipationStatements } from './ageing';
  * booking always names both its horses, so no covering a stud_booking points at can ever belong to
  * a deletable horse.
  *
- * `events` and the two import/injection tables are defensive rather than expected, but they are not
- * free of consequence for the player-facing caller: a horse that a child has an event about (a
- * birth notice, a show result, a condition sign) is kept, which is the right instinct anyway.
+ * **`events` and `import_candidates` used to be clauses here, described as "defensive rather than
+ * expected". They were neither.** Every foal born in a player-owned stable gets a `foaled` event
+ * pointing at it the moment it is inserted (src/db/events.ts's buildFoaledEventStatement), and every
+ * founding horse gets an `import_candidates.horse_id` written when it is claimed (src/db/founding.ts
+ * claimFoundingOffer) - so between them the two clauses made a home-bred or founding horse
+ * permanently undeletable from the first day of its life, which is the whole population a child
+ * would ever send to a pet home. The rule silently did not apply to the horses it was written for.
+ * Both are now unlinked by buildDeleteHorseStatements instead of blocking the delete: the operator's
+ * decision (2026-08-04) was that the surrounding record keeps its words and loses only its pointer.
+ *
+ * `consignment_injections` stays a keep-clause, and the difference is not an oversight. It is rare
+ * rather than universal (only a horse the operator deliberately seeded an allele into has one) and
+ * `applied_horse_id` is the one of the three that is actually rendered - /admin/consignment prints
+ * "Applied (horse #N)" from it (src/render/admin.ts), and that is the operator's own audit trail of
+ * a deliberate act, not a by-product of the horse being born.
  */
 export const deletableHorseSql = `
   NOT EXISTS (SELECT 1 FROM show_entries WHERE horse_id = h.id)
@@ -49,8 +61,6 @@ export const deletableHorseSql = `
   AND NOT EXISTS (SELECT 1 FROM pregnancies WHERE dam_id = h.id OR sire_id = h.id)
   AND NOT EXISTS (SELECT 1 FROM stud_listings WHERE stallion_id = h.id)
   AND NOT EXISTS (SELECT 1 FROM stud_bookings WHERE stallion_id = h.id OR mare_id = h.id)
-  AND NOT EXISTS (SELECT 1 FROM events WHERE subject_horse_id = h.id)
-  AND NOT EXISTS (SELECT 1 FROM import_candidates WHERE horse_id = h.id)
   AND NOT EXISTS (SELECT 1 FROM consignment_injections WHERE applied_horse_id = h.id)
 `;
 
@@ -67,13 +77,23 @@ export async function isHorseDeletable(env: Env, horseId: number): Promise<boole
  * The rows that exist only to describe this one horse, deleted in child-before-parent order so the
  * foreign keys hold at every step.
  *
- * Two things are deliberately not deletes:
+ * Four things are deliberately not deletes:
  *
  * - **`pregnancies.foal_id` is set to NULL rather than the pregnancy being removed.** The horse may
  *   well have been born of one, and that pregnancy is its *dam's* history, which the operator's
  *   rule is not about. NULL is already an ordinary value in that column (every in-progress
  *   pregnancy has one), and the row keeps its status, its dates and both parents, so the record
  *   that she foaled survives intact.
+ * - **`events.subject_horse_id` is set to NULL rather than the events being removed.** The feed is
+ *   append-only in spirit and every one of its sentences is rendered from the event's own `payload`
+ *   (src/render/stables.ts's eventSentence reads names out of the JSON and never joins `horses`), so
+ *   a birth notice still reads "A bay colt was born to ..." after the colt has gone. `subject_horse_id`
+ *   is used for exactly one thing - making the row a link - and that render already handles null by
+ *   printing the sentence as plain text. This was the operator's decision when the pet home's delete
+ *   rule turned out never to fire for a home-bred horse: keep the words, drop the link.
+ * - **`import_candidates.horse_id` is set to NULL for the same reason**, with less to lose: the
+ *   column is written by claimFoundingOffer and read by nothing, so the batch keeps its slots, its
+ *   genotypes and its `chosen` flag, and only stops naming a horse that no longer exists.
  * - **Nothing touches `ledger`.** It is append-only (CLAUDE.md §7) and its rows carry the horse's
  *   name in their own description text, so a receipt stays readable after the horse is gone. What
  *   it loses is the reference_id pointer, which nothing renders.
@@ -81,6 +101,8 @@ export async function isHorseDeletable(env: Env, horseId: number): Promise<boole
 export function buildDeleteHorseStatements(env: Env, horseId: number): D1PreparedStatement[] {
   return [
     env.DB.prepare('UPDATE pregnancies SET foal_id = NULL WHERE foal_id = ?').bind(horseId),
+    env.DB.prepare('UPDATE events SET subject_horse_id = NULL WHERE subject_horse_id = ?').bind(horseId),
+    env.DB.prepare('UPDATE import_candidates SET horse_id = NULL WHERE horse_id = ?').bind(horseId),
     // Coverings that never became a pregnancy - the only kind a deletable horse can have, since
     // eligibility rules out anything that ever conceived, and pregnancies.covering_id would
     // otherwise be left pointing at nothing. **This is the one place a horse's removal touches

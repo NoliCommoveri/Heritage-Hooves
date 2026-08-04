@@ -16,6 +16,7 @@ describe('buildPublicHorseView', () => {
     status: 'alive',
     location: 'barn',
     is_cross: 0,
+    end_reason: null,
     // Fields that must never leak, attached here to prove the builder ignores them.
     coi: 0.125,
     genotype: '{"v":1,"mendelian":{}}',
