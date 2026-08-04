@@ -426,7 +426,8 @@ export async function checkHorseEligibilityForClass(
   ]);
   const genotype = parseGenotype(horse.genotype);
   const ageGameDays = gameDay - horse.born_game_day;
-  const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear, patternSeed, config.values.pattern_penetrance);
   const barredByCondition = await isBarredFromShowing(env, genotype);
 
   return checkEligibility(

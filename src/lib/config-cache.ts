@@ -9,6 +9,7 @@
 import type { Env } from '../types';
 import { nowUtcSeconds } from './time';
 import type { FeedLevelsConfig } from '../engines/care/modifier';
+import type { PatternPenetrance } from '../engines/genetics/expression';
 
 export interface ConfigValues {
   display_timezone: string;
@@ -262,6 +263,11 @@ export interface ConfigValues {
   npc_stud_fee_fraction: number;
   /** Live. How many bookings one NPC-listed stallion accepts per world.season_index. */
   npc_stud_season_cap: number;
+  /** Slice 0021 §5.5. Locus code -> probability a present pattern allele actually shows. Read fresh
+   * by every phenotype computation, never snapshotted onto a horse - a horse's apparent pattern can
+   * shift if this is retuned, which is deliberate (§5.5: setting both to 1.0 disables the
+   * mechanism). Only O and SW1 have entries; every other pattern/dilution locus is fully penetrant. */
+  pattern_penetrance: PatternPenetrance;
 }
 
 export type ConfigFlags = Record<string, boolean>;

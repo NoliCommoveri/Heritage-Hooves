@@ -61,6 +61,7 @@ export interface OpenStudListingRow extends StudListingRow {
   breed_id: number | null;
   is_cross: number;
   genotype: string;
+  rng_seed: number;
   image_url: string | null;
   stable_name: string;
   /** Null for an NPC stable. */
@@ -69,7 +70,7 @@ export interface OpenStudListingRow extends StudListingRow {
 
 const ACTIVE_STUD_SELECT = `
   SELECT sl.*, h.registered_name, h.barn_name, h.born_game_day, h.breed_id, h.is_cross, h.genotype,
-         h.image_url, s.name AS stable_name, s.account_id AS stable_account_id
+         h.rng_seed, h.image_url, s.name AS stable_name, s.account_id AS stable_account_id
     FROM stud_listings sl
     JOIN horses h ON h.id = sl.stallion_id
     JOIN stables s ON s.id = sl.stable_id`;

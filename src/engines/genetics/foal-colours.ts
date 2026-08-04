@@ -56,7 +56,9 @@ function colourFor(pairs: Partial<Record<ColourLocus, AllelePair>>, gameDaysPerY
   if (pairs.A) mendelian.A = pairs.A;
   if (pairs.CR) mendelian.CR = pairs.CR;
   const genotype: Genotype = { v: 1, mendelian, polygenic: {} };
-  const phenotype: Phenotype = expressPhenotype(genotype, 0, gameDaysPerYear);
+  // patternSeed is inert here: this synthetic genotype only ever sets E/A/CR, so every pattern
+  // locus reads as absent regardless of seed (slice 0021 §5.5 only rolls for a locus that's present).
+  const phenotype: Phenotype = expressPhenotype(genotype, 0, gameDaysPerYear, 0);
   return phenotype.visibleColour;
 }
 
