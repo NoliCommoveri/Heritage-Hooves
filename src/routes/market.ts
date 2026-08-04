@@ -35,6 +35,7 @@ import {
   type StudTab,
   type StudListingDetailView,
   type EligibleMareOption,
+  type StudMareExclusion,
 } from '../render/market';
 import { getListing, listOpenListings, listSoldListings, sellListing, withdrawListing, type OpenListingRow } from '../db/listings';
 import { getHorse, horseDisplayName, countAliveHorses, listStableHorses, type HorseRow } from '../db/horses';
@@ -45,6 +46,8 @@ import { getEnabledConditions, getKnowledgeForHorse } from '../db/health';
 import { getShowSummary, listRecentResultsForHorse, listOpenEntriesForHorse } from '../db/shows';
 import { getActivePregnancyForMare } from '../db/pregnancies';
 import { getBookedCoveringForMare } from '../db/coverings';
+import { availabilityForHorse } from '../db/care';
+import { mareIneligibility } from '../engines/breeding/eligibility';
 import {
   listActiveBuyOffers,
   getActiveBuyOffer,
@@ -686,20 +689,48 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
   };
 }
 
-/** Every alive mare across the viewer's own stables - not pre-filtered against §13.2's breeding
- * rules the way validateStudBooking checks a specific mare, since the picker's job is "which of my
- * mares", not "which of my mares happens to be eligible right now". The refusal, once one is
- * picked, is what teaches why. */
-async function mareOptionsFor(ctx: RequestContext): Promise<EligibleMareOption[]> {
+/**
+ * Every alive mare across the viewer's own stables, split into who can actually be booked right
+ * now and who can't (and why). docs/fixes/breeding-eligibility-display.md §2: this picker used to
+ * offer every mare regardless (the refusal, once one was picked, was what taught why) - now it only
+ * offers the eligible ones, with a short reason for each excluded one instead.
+ */
+async function mareOptionsFor(ctx: RequestContext): Promise<{ eligible: EligibleMareOption[]; excluded: StudMareExclusion[] }> {
+  const cfg = ctx.config.values;
   const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
-  const options: EligibleMareOption[] = [];
+  const eligible: EligibleMareOption[] = [];
+  const excluded: StudMareExclusion[] = [];
   for (const stable of stables) {
     const horses = await listStableHorses(ctx.env, stable.id);
     for (const horse of horses) {
-      if (horse.sex === 'mare') options.push({ id: horse.id, stableId: stable.id, stableName: stable.name, name: horseDisplayName(horse) });
+      if (horse.sex !== 'mare') continue;
+      const [activePregnancy, activeCovering] = await Promise.all([
+        getActivePregnancyForMare(ctx.env, horse.id),
+        getBookedCoveringForMare(ctx.env, horse.id),
+      ]);
+      const reason = mareIneligibility({
+        bornGameDay: horse.born_game_day,
+        gameDay: ctx.world.game_day,
+        minBreedingAgeGameDays: cfg.min_breeding_age_game_days,
+        availability: availabilityForHorse(horse, cfg, ctx.world.game_day),
+        lastFoaledGameDay: horse.last_foaled_game_day,
+        mareRecoveryGameDays: cfg.mare_recovery_game_days,
+        inFoal: activePregnancy !== null,
+        booked: activeCovering !== null,
+      });
+      if (!reason) {
+        eligible.push({ id: horse.id, stableId: stable.id, stableName: stable.name, name: horseDisplayName(horse) });
+        continue;
+      }
+      const stallionName =
+        reason === 'booked' && activeCovering
+          ? horseDisplayName((await getHorse(ctx.env, activeCovering.stallion_id)) ?? { sex: 'stallion' as const, registered_name: null, barn_name: null })
+          : undefined;
+      const recoversGameDay = reason === 'recovering' && horse.last_foaled_game_day !== null ? horse.last_foaled_game_day + cfg.mare_recovery_game_days : undefined;
+      excluded.push({ name: horseDisplayName(horse), stableName: stable.name, reason, stallionName, recoversGameDay });
     }
   }
-  return options;
+  return { eligible, excluded };
 }
 
 export async function studDetailRoute(ctx: RequestContext, studListingId: number): Promise<Response> {
@@ -710,28 +741,30 @@ export async function studDetailRoute(ctx: RequestContext, studListingId: number
   if (listing.active !== 1) return redirect('/market/stud');
 
   const isMine = listing.stable_account_id !== null && listing.stable_account_id === ctx.account!.id;
-  const mareOptions = isMine ? [] : await mareOptionsFor(ctx);
+  const { eligible: mareOptions, excluded: mareExclusions } = isMine ? { eligible: [], excluded: [] } : await mareOptionsFor(ctx);
   const params = new URL(ctx.request.url).searchParams;
   const requested = Number(params.get('mare'));
   const selected = mareOptions.find((o) => o.id === requested) ?? mareOptions[0];
 
   const view = await buildStudListingView(ctx, listing, stallion, isMine);
 
+  // docs/fixes/breeding-eligibility-display.md §2: no mares owned at all keeps the original generic
+  // line; owning mares that are all ineligible now gets the per-mare reasons instead (rendered by
+  // renderStudDetailPage from mareExclusions, the same "None of your mares..." sentence the Breed
+  // page's own picker uses).
   let refusal: string | undefined;
-  if (!isMine) {
-    if (mareOptions.length === 0) {
-      refusal = 'You have no mare to book. Any of your own mares can be booked, once she is old enough and not already in foal or booked elsewhere.';
+  if (!isMine && mareOptions.length === 0 && mareExclusions.length === 0) {
+    refusal = 'You have no mare to book. Any of your own mares can be booked, once she is old enough and not already in foal or booked elsewhere.';
+  } else if (!isMine && selected) {
+    const mareStable = await getStableById(ctx.env, selected.stableId);
+    const mare = await getHorse(ctx.env, selected.id);
+    const actionsLeft = actionsLeftFor(ctx);
+    if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) {
+      refusal = turnsRefusalMessage(ctx);
+    } else if (!mareStable || !mare) {
+      refusal = 'That mare is no longer available.';
     } else {
-      const mareStable = await getStableById(ctx.env, selected.stableId);
-      const mare = await getHorse(ctx.env, selected.id);
-      const actionsLeft = actionsLeftFor(ctx);
-      if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) {
-        refusal = turnsRefusalMessage(ctx);
-      } else if (!mareStable || !mare) {
-        refusal = 'That mare is no longer available.';
-      } else {
-        refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, mareStable, stallion);
-      }
+      refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, mareStable, stallion);
     }
   }
 
@@ -743,6 +776,7 @@ export async function studDetailRoute(ctx: RequestContext, studListingId: number
       gameDaysPerYear: ctx.config.values.game_days_per_year,
       listing: view,
       mareOptions,
+      mareExclusions,
       selectedMareId: selected?.id ?? null,
       refusal,
       error: params.get('error') ?? undefined,

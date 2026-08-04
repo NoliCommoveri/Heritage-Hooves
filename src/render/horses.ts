@@ -23,6 +23,7 @@ import type { BarnBucket } from '../lib/barnFilter';
 import type { OpenIncidentView, IncidentHistoryView } from '../db/incidents';
 import { CONFORMATION_LABEL_TEXT, type ConformationLabel } from '../engines/conformation/labels';
 import type { TraitCode } from '../engines/genetics/polygenic';
+import type { MareIneligibility } from '../engines/breeding/eligibility';
 
 export const displayNameFor = horseDisplayName;
 
@@ -430,6 +431,10 @@ function studCard(params: {
   horse: HorseRow;
   canManage: boolean;
   studListing: { studListingId: number; fee: number; seasonCap: number; bookedThisSeason: number } | null;
+  /** docs/fixes/breeding-eligibility-display.md §1: false for a colt below min_breeding_age_game_days. */
+  oldEnough: boolean;
+  eligibleFromGameDay: number;
+  gameDaysPerYear: number;
   suggestedFee: number | null;
   defaultSeasonCap: number;
   commissionPercent: number;
@@ -451,6 +456,14 @@ function studCard(params: {
           <input type="hidden" name="return_to" value="horse">
           <button type="submit" class="secondary">Take him off stud</button>
         </form>
+      </div>`;
+  }
+
+  if (!params.oldEnough) {
+    return html`
+      <div class="card">
+        <h2>Offer at stud</h2>
+        <p class="muted">Old enough to stand at stud from around ${formatCalendarDate(params.eligibleFromGameDay, params.gameDaysPerYear)}.</p>
       </div>`;
   }
 
@@ -624,6 +637,60 @@ export interface OutsideStudOption {
   fee: number;
 }
 
+/**
+ * docs/fixes/breeding-eligibility-display.md §2: a horse a breeding picker is not offering, and
+ * why - short, player-facing phrasing lives here rather than in the engine (which only returns a
+ * code) or in the two refusal ladders' own longer sentences (which are about a chosen pairing, not
+ * a picker deciding what to list).
+ */
+export interface MareExclusion {
+  name: string;
+  reason: MareIneligibility;
+  /** Only set for 'booked' - the stallion she is booked to, when known. */
+  stallionName?: string;
+  /** Only set for 'recovering' - when she clears, for the fuller no-eligible-mares sentence. */
+  recoversGameDay?: number;
+}
+
+/** Exported for src/render/market.ts's own mare picker (docs/fixes/breeding-eligibility-display.md
+ * §2's third row) - one phrase map for both, so the wording can't drift between the two screens. */
+export function mareExclusionPhrase(e: MareExclusion): string {
+  switch (e.reason) {
+    case 'too_young':
+      return 'too young to breed yet';
+    case 'at_pasture':
+      return 'out at pasture';
+    case 'settling_in':
+      return 'still settling in from pasture';
+    case 'recovering':
+      return 'recovering from foaling';
+    case 'in_foal':
+      return 'in foal';
+    case 'booked':
+      return e.stallionName ? `booked to ${e.stallionName}` : 'already booked to a covering';
+  }
+}
+
+/** The short parenthetical line under a picker that still has at least one eligible option left. */
+function exclusionsLine(exclusions: MareExclusion[]): SafeHtml {
+  if (exclusions.length === 0) return raw('');
+  const parts = exclusions.map((e) => `${e.name} (${mareExclusionPhrase(e)})`);
+  return html`<p class="muted">Not shown: ${parts.join(', ')}.</p>`;
+}
+
+/** Every mare is ineligible - replaces the picker (and the button beneath it) with a sentence
+ * saying why, rather than drawing an empty <select> with a live button next to it. */
+function noEligibleMaresLine(exclusions: MareExclusion[], gameDaysPerYear: number): SafeHtml {
+  const sentences = exclusions.map((e) => {
+    const dated = e.reason === 'recovering' && e.recoversGameDay !== undefined
+      ? `${mareExclusionPhrase(e)} until around ${formatCalendarDate(e.recoversGameDay, gameDaysPerYear)}`
+      : mareExclusionPhrase(e);
+    return `${e.name} is ${dated}`;
+  });
+  const joined = sentences.length <= 1 ? sentences.join('') : `${sentences.slice(0, -1).join(', ')}, and ${sentences[sentences.length - 1]}`;
+  return html`<p class="muted">None of your mares can be bred right now. ${joined}.</p>`;
+}
+
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
   if (horses.length === 0) return html`<option value="" disabled selected>None available</option>`;
   return html`${horses.map(
@@ -638,8 +705,12 @@ export function renderBreedPage(params: {
   gameDaysPerYear: number;
   stable: StableRow;
   hasFoundingOffer: boolean;
+  /** Already filtered to mares that can actually be picked right now (docs/fixes/
+   * breeding-eligibility-display.md §2) - mareExclusions says who was left out and why. */
   mares: HorseRow[];
+  mareExclusions: MareExclusion[];
   stallions: HorseRow[];
+  stallionExclusions: MareExclusion[];
   /** Every stallion standing at stud at a ranch this account does not own - NPC ranches included.
    * Empty when nobody else is standing one. */
   outsideStuds: OutsideStudOption[];
@@ -736,20 +807,29 @@ export function renderBreedPage(params: {
       <p class="muted">Stallions of the mare's own breed come first, then the other breeds in alphabetical order. Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
     : html`<p class="muted">Nobody else is standing a stallion at stud just now. When somebody does, they'll show up here.</p>`;
 
+  // docs/fixes/breeding-eligibility-display.md §2: no mare, no pairing - shown in place of the
+  // whole form rather than an empty <select> with a button that was always going to fail.
+  const breedForm = params.mares.length === 0
+    ? noEligibleMaresLine(params.mareExclusions, params.gameDaysPerYear)
+    : html`
+      <form method="post" action="/stables/${String(params.stable.id)}/breed">
+        <input type="hidden" name="action" value="check">
+        <label>Mare
+          <select name="mare_id" required>${optionsFor(params.mares, params.selectedMareId, params.describe)}</select>
+        </label>
+        ${exclusionsLine(params.mareExclusions)}
+        <label>Your stallion
+          <select name="stallion_id">${optionsFor(params.stallions, params.selectedStallionId, params.describe)}</select>
+        </label>
+        ${exclusionsLine(params.stallionExclusions)}
+        ${outsideStudPicker}
+        <button type="submit">Check pairing</button>
+      </form>`;
+
   const body = html`
     <h1>Breed</h1>
     ${errorBox(params.error)}
-    <form method="post" action="/stables/${String(params.stable.id)}/breed">
-      <input type="hidden" name="action" value="check">
-      <label>Mare
-        <select name="mare_id" required>${optionsFor(params.mares, params.selectedMareId, params.describe)}</select>
-      </label>
-      <label>Your stallion
-        <select name="stallion_id">${optionsFor(params.stallions, params.selectedStallionId, params.describe)}</select>
-      </label>
-      ${outsideStudPicker}
-      <button type="submit">Check pairing</button>
-    </form>
+    ${breedForm}
     ${previewBlock}
     <p><a href="/stables/${String(params.stable.id)}/horses">Back to horses</a></p>
   `;
@@ -1153,6 +1233,10 @@ export function renderHorsePage(params: {
   marketNotice?: string;
   /** Slice 0017 §13 (Part D): this stallion's own active stud listing, or null. */
   studListing: { studListingId: number; fee: number; seasonCap: number; bookedThisSeason: number } | null;
+  /** docs/fixes/breeding-eligibility-display.md §1: false for a colt below min_breeding_age_game_days -
+   * the offer form is replaced with a muted "not yet" line rather than being shown to fail later. */
+  stallionOldEnoughForStud: boolean;
+  stallionStudEligibleFromGameDay: number;
   suggestedStudFee: number | null;
   defaultStudSeasonCap: number;
   studError?: string;
@@ -1384,6 +1468,9 @@ export function renderHorsePage(params: {
       horse: h,
       canManage: params.canManage,
       studListing: params.studListing,
+      oldEnough: params.stallionOldEnoughForStud,
+      eligibleFromGameDay: params.stallionStudEligibleFromGameDay,
+      gameDaysPerYear: params.gameDaysPerYear,
       suggestedFee: params.suggestedStudFee,
       defaultSeasonCap: params.defaultStudSeasonCap,
       commissionPercent: params.marketCommissionPercent,

@@ -38,6 +38,8 @@ import { buildLedgerStatements } from './ledger';
 import { buildEventStatement } from './events';
 import { availabilityForHorse } from './care';
 import { isInBreedingSeason } from '../engines/breeding/season';
+import { isOldEnoughToBreed } from '../engines/breeding/maturity';
+import { mareIneligibility } from '../engines/breeding/eligibility';
 
 export interface StudListingRow {
   id: number;
@@ -213,19 +215,26 @@ export async function validateStudBooking(
   if (mare.sex !== 'mare') return `${horseDisplayName(mare)} is not a mare.`;
 
   const minAge = cfg.min_breeding_age_game_days;
-  if (worldGameDay - mare.born_game_day < minAge) return `${horseDisplayName(mare)} is not old enough to breed yet.`;
-  if (worldGameDay - stallion.born_game_day < minAge) return `${horseDisplayName(stallion)} is not old enough to breed yet.`;
-
-  if (mare.last_foaled_game_day !== null) {
-    const recovery = cfg.mare_recovery_game_days;
-    if (worldGameDay - mare.last_foaled_game_day < recovery) {
-      return `${horseDisplayName(mare)} has just foaled and needs more time to recover before breeding again.`;
-    }
-  }
+  if (!isOldEnoughToBreed(mare.born_game_day, worldGameDay, minAge)) return `${horseDisplayName(mare)} is not old enough to breed yet.`;
+  if (!isOldEnoughToBreed(stallion.born_game_day, worldGameDay, minAge)) return `${horseDisplayName(stallion)} is not old enough to breed yet.`;
 
   const [activePregnancy, activeCovering] = await Promise.all([getActivePregnancyForMare(env, mare.id), getBookedCoveringForMare(env, mare.id)]);
-  if (activePregnancy) return `${horseDisplayName(mare)} is already in foal.`;
-  if (activeCovering) return `${horseDisplayName(mare)} is already booked to a covering.`;
+  // docs/fixes/breeding-eligibility-display.md §2: same reuse validateBooking (src/routes/horses.ts)
+  // now makes of mareIneligibility - location and age are already checked above for both horses, so
+  // only the mare-only reasons below this point can still fire.
+  const mareReason = mareIneligibility({
+    bornGameDay: mare.born_game_day,
+    gameDay: worldGameDay,
+    minBreedingAgeGameDays: minAge,
+    availability: availabilityForHorse(mare, cfg, worldGameDay),
+    lastFoaledGameDay: mare.last_foaled_game_day,
+    mareRecoveryGameDays: cfg.mare_recovery_game_days,
+    inFoal: activePregnancy !== null,
+    booked: activeCovering !== null,
+  });
+  if (mareReason === 'recovering') return `${horseDisplayName(mare)} has just foaled and needs more time to recover before breeding again.`;
+  if (mareReason === 'in_foal') return `${horseDisplayName(mare)} is already in foal.`;
+  if (mareReason === 'booked') return `${horseDisplayName(mare)} is already booked to a covering.`;
 
   if (!isInBreedingSeason(worldGameDay, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year)) {
     return "It's out of season for breeding right now.";

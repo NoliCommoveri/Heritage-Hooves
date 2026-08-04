@@ -20,6 +20,7 @@ import {
   type TestConditionOption,
   type ColourLocusOption,
   type ColourInferenceRow,
+  type MareExclusion,
 } from '../render/horses';
 import { eligibilityMessage, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT } from '../render/shows';
 import {
@@ -50,6 +51,8 @@ import { isHorseDeletable, buildDeleteHorseStatements } from '../db/horseRemoval
 import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
+import { isOldEnoughToBreed } from '../engines/breeding/maturity';
+import { mareIneligibility, stallionIneligibility } from '../engines/breeding/eligibility';
 import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { canTakeOnCost } from '../lib/money';
@@ -303,11 +306,14 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear, cfg.pattern_penetrance, creamTestedHorseIds.has(horse.id)),
       // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
       // rather than a query per horse - it's already loaded on the row. Guarded to living horses
-      // only (slice 0010) - a dead mare's stored cycle slot means nothing.
+      // only (slice 0010) - a dead mare's stored cycle slot means nothing. docs/fixes/
+      // breeding-eligibility-display.md §1: also guarded to a mare old enough to breed - isInSeason
+      // itself is not wrong, the badge was asking it about foals who cannot be cycling yet.
       inSeason:
         horse.status === 'alive' &&
         horse.sex === 'mare' &&
         horse.cycle_anchor_tick_seq !== null &&
+        isOldEnoughToBreed(horse.born_game_day, ctx.world.game_day, cfg.min_breeding_age_game_days) &&
         isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
       conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
@@ -437,22 +443,29 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
   if (mare.sex !== 'mare' || stallion.sex !== 'stallion') return 'Breeding needs one mare and one stallion.';
 
   const minAge = ctx.config.values.min_breeding_age_game_days;
-  if (ctx.world.game_day - mare.born_game_day < minAge) return `${displayNameFor(mare)} is not old enough to breed yet.`;
-  if (ctx.world.game_day - stallion.born_game_day < minAge) return `${displayNameFor(stallion)} is not old enough to breed yet.`;
-
-  if (mare.last_foaled_game_day !== null) {
-    const recovery = ctx.config.values.mare_recovery_game_days;
-    if (ctx.world.game_day - mare.last_foaled_game_day < recovery) {
-      return `${displayNameFor(mare)} has just foaled and needs more time to recover before breeding again.`;
-    }
-  }
+  if (!isOldEnoughToBreed(mare.born_game_day, ctx.world.game_day, minAge)) return `${displayNameFor(mare)} is not old enough to breed yet.`;
+  if (!isOldEnoughToBreed(stallion.born_game_day, ctx.world.game_day, minAge)) return `${displayNameFor(stallion)} is not old enough to breed yet.`;
 
   const [activePregnancy, activeCovering] = await Promise.all([
     getActivePregnancyForMare(ctx.env, mare.id),
     getBookedCoveringForMare(ctx.env, mare.id),
   ]);
-  if (activePregnancy) return `${displayNameFor(mare)} is already in foal.`;
-  if (activeCovering) return `${displayNameFor(mare)} is already booked to a covering.`;
+  // docs/fixes/breeding-eligibility-display.md §2: location and age were already checked above (for
+  // both horses, not just the mare), so only the mare-only reasons below this point can still fire -
+  // reusing mareIneligibility rather than restating "recovering / in_foal / booked" a third time.
+  const mareReason = mareIneligibility({
+    bornGameDay: mare.born_game_day,
+    gameDay: ctx.world.game_day,
+    minBreedingAgeGameDays: minAge,
+    availability: availabilityForHorse(mare, ctx.config.values, ctx.world.game_day),
+    lastFoaledGameDay: mare.last_foaled_game_day,
+    mareRecoveryGameDays: ctx.config.values.mare_recovery_game_days,
+    inFoal: activePregnancy !== null,
+    booked: activeCovering !== null,
+  });
+  if (mareReason === 'recovering') return `${displayNameFor(mare)} has just foaled and needs more time to recover before breeding again.`;
+  if (mareReason === 'in_foal') return `${displayNameFor(mare)} is already in foal.`;
+  if (mareReason === 'booked') return `${displayNameFor(mare)} is already booked to a covering.`;
 
   const cfg = ctx.config.values;
   if (!isInBreedingSeason(ctx.world.game_day, cfg.breeding_season_start_game_day, cfg.breeding_season_length_game_days, cfg.game_days_per_year)) {
@@ -557,6 +570,67 @@ async function buildBreedPreview(
   };
 }
 
+/**
+ * docs/fixes/breeding-eligibility-display.md §2: which of this stable's mares can actually be
+ * picked right now, and a short reason for each one that can't. Only the mare-side,
+ * stallion-independent checks mareIneligibility already knows - a stallion has not been chosen yet
+ * when this runs, so booked/in_foal/recovering can only ever be about the mare.
+ */
+async function mareEligibilityFor(ctx: RequestContext, mares: HorseRow[]): Promise<{ eligible: HorseRow[]; excluded: MareExclusion[] }> {
+  const cfg = ctx.config.values;
+  const eligible: HorseRow[] = [];
+  const excluded: MareExclusion[] = [];
+  for (const mare of mares) {
+    const [activePregnancy, activeCovering] = await Promise.all([
+      getActivePregnancyForMare(ctx.env, mare.id),
+      getBookedCoveringForMare(ctx.env, mare.id),
+    ]);
+    const reason = mareIneligibility({
+      bornGameDay: mare.born_game_day,
+      gameDay: ctx.world.game_day,
+      minBreedingAgeGameDays: cfg.min_breeding_age_game_days,
+      availability: availabilityForHorse(mare, cfg, ctx.world.game_day),
+      lastFoaledGameDay: mare.last_foaled_game_day,
+      mareRecoveryGameDays: cfg.mare_recovery_game_days,
+      inFoal: activePregnancy !== null,
+      booked: activeCovering !== null,
+    });
+    if (!reason) {
+      eligible.push(mare);
+      continue;
+    }
+    const stallionName =
+      reason === 'booked' && activeCovering
+        ? displayNameFor((await getHorse(ctx.env, activeCovering.stallion_id)) ?? { sex: 'stallion' as const, registered_name: null, barn_name: null })
+        : undefined;
+    const recoversGameDay = reason === 'recovering' && mare.last_foaled_game_day !== null ? mare.last_foaled_game_day + cfg.mare_recovery_game_days : undefined;
+    excluded.push({ name: displayNameFor(mare), reason, stallionName, recoversGameDay });
+  }
+  return { eligible, excluded };
+}
+
+/** The stallion-side counterpart, filtered to the two reasons a stallion (not yet paired with any
+ * mare) can be ineligible for: too young, or not available to work. No DB access needed - both
+ * facts are already on the loaded row. */
+function stallionEligibilityFor(stallions: HorseRow[], gameDay: number, cfg: ConfigValues): { eligible: HorseRow[]; excluded: MareExclusion[] } {
+  const eligible: HorseRow[] = [];
+  const excluded: MareExclusion[] = [];
+  for (const stallion of stallions) {
+    const reason = stallionIneligibility({
+      bornGameDay: stallion.born_game_day,
+      gameDay,
+      minBreedingAgeGameDays: cfg.min_breeding_age_game_days,
+      availability: availabilityForHorse(stallion, cfg, gameDay),
+    });
+    if (!reason) {
+      eligible.push(stallion);
+      continue;
+    }
+    excluded.push({ name: displayNameFor(stallion), reason });
+  }
+  return { eligible, excluded };
+}
+
 export async function stableBreedRoute(ctx: RequestContext, method: string, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
@@ -569,8 +643,11 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
   const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance, creamTestedHorseIds.has(h.id));
 
-  const mares = allHorses.filter((h) => h.sex === 'mare');
-  const stallions = allHorses.filter((h) => h.sex === 'stallion');
+  // docs/fixes/breeding-eligibility-display.md §2: both pickers only offer what could actually be
+  // picked right now - allHorses (below, in the form-submit branches) stays the full list, since a
+  // stale form has to be re-validated by validateBooking regardless of what the picker showed.
+  const { eligible: mares, excluded: mareExclusions } = await mareEligibilityFor(ctx, allHorses.filter((h) => h.sex === 'mare'));
+  const { eligible: stallions, excluded: stallionExclusions } = stallionEligibilityFor(allHorses.filter((h) => h.sex === 'stallion'), ctx.world.game_day, ctx.config.values);
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
   // The third picker: every stallion standing at stud somewhere this account does not own, NPC
@@ -620,7 +697,9 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
         stable,
         hasFoundingOffer,
         mares,
+        mareExclusions,
         stallions,
+        stallionExclusions,
         // The mare picker's own default, so the two agree before anything is chosen. A call site
         // that knows which mare was picked passes its own list in `extra` and overrides this.
         outsideStuds: outsideStudsFor(mares[0]?.breed_id ?? null),
@@ -907,6 +986,12 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const studListingRow = owner && horse.sex === 'stallion' ? await getActiveStudListingForHorse(ctx.env, horse.id) : null;
   const bookedThisSeason = studListingRow ? await bookingsThisSeasonCount(ctx.env, studListingRow.id, ctx.world.season_index) : 0;
   const suggestedStudFee = guideValue ? Math.max(10, Math.round((guideValue.value * ctx.config.values.npc_stud_fee_fraction) / 10) * 10) : null;
+  // docs/fixes/breeding-eligibility-display.md §1: the "Offer at stud" card renders on any live
+  // stallion's own page, colts included, even though validateStudBooking would refuse him for being
+  // too young the moment anyone tried to book him. Passed through so studCard can show a muted "not
+  // yet" line in its place rather than a form that was always going to fail.
+  const stallionOldEnoughForStud = isOldEnoughToBreed(horse.born_game_day, ctx.world.game_day, ctx.config.values.min_breeding_age_game_days);
+  const stallionStudEligibleFromGameDay = horse.born_game_day + ctx.config.values.min_breeding_age_game_days;
 
   return htmlResponse(
     renderHorsePage({
@@ -965,6 +1050,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       marketError: params.get('market_error') ?? undefined,
       marketNotice: params.get('market_notice') ?? undefined,
       studListing: studListingRow ? { studListingId: studListingRow.id, fee: studListingRow.fee, seasonCap: studListingRow.season_cap, bookedThisSeason } : null,
+      stallionOldEnoughForStud,
+      stallionStudEligibleFromGameDay,
       suggestedStudFee,
       defaultStudSeasonCap: ctx.config.values.stud_default_season_cap,
       studError: params.get('stud_error') ?? undefined,
@@ -1099,6 +1186,15 @@ export async function horseStudRoute(ctx: RequestContext, horseId: number): Prom
 async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<string> {
   const cfg = ctx.config.values;
 
+  // docs/fixes/breeding-eligibility-display.md §1: checked above every other branch, because nothing
+  // else in this ladder can be true of a mare who has never been old enough to breed - a filly with
+  // no pregnancy, no covering and no cycle yet was reading "In season now." or a "due back around"
+  // date for a heat she was not actually having.
+  if (!isOldEnoughToBreed(mare.born_game_day, ctx.world.game_day, cfg.min_breeding_age_game_days)) {
+    const eligibleFrom = mare.born_game_day + cfg.min_breeding_age_game_days;
+    return `Too young to breed. She can be bred from around ${formatCalendarDate(eligibleFrom, cfg.game_days_per_year)}.`;
+  }
+
   const pregnancy: PregnancyRow | null = await getActivePregnancyForMare(ctx.env, mare.id);
   if (pregnancy) {
     const sire = await getHorse(ctx.env, pregnancy.sire_id);
@@ -1132,6 +1228,9 @@ async function mareStatusLine(ctx: RequestContext, mare: HorseRow): Promise<stri
   }
 
   if (mare.cycle_anchor_tick_seq === null) {
+    // The age check above makes this unreachable for the common case (a filly too young to be
+    // cycling yet) - it stays here rather than being deleted because it is still the correct
+    // answer for a mare who is old enough but has no cycle anchor set for some other reason.
     return `Not yet cycling.${seasonNote()}`;
   }
 
