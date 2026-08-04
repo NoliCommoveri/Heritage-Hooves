@@ -137,6 +137,14 @@ export interface HorseResultRow {
   show_name: string;
   class_id: number;
   class_name: string;
+  /** Which grouping this result belongs to on the horse page's Show record card (§ grouping by
+   * discipline/conformation): 'breed_conformation' groups under "Conformation", 'discipline' groups
+   * under the discipline's own name (discipline_name below). */
+  class_type: 'breed_conformation' | 'discipline';
+  /** Null for a breed_conformation result. The discipline's display name, e.g. "Barrel Racing" -
+   * joined in here rather than looked up separately since listRecentResultsForHorse already reads
+   * one row per result. */
+  discipline_name: string | null;
   scheduled_game_day: number;
   placing: number;
   final_score: number;
@@ -331,10 +339,12 @@ export async function getShowSummary(env: Env, horseId: number): Promise<HorseSh
 export async function listRecentResultsForHorse(env: Env, horseId: number, limit: number): Promise<HorseResultRow[]> {
   const result = await env.DB.prepare(
     `SELECT se.id AS entry_id, s.id AS show_id, s.name AS show_name, sc.id AS class_id, sc.name AS class_name,
+            sc.class_type, d.name AS discipline_name,
             s.scheduled_game_day, se.placing, se.final_score
      FROM show_entries se
      JOIN show_classes sc ON sc.id = se.class_id
      JOIN shows s ON s.id = sc.show_id
+     LEFT JOIN disciplines d ON d.code = sc.discipline_code
      WHERE se.horse_id = ? AND se.placing IS NOT NULL
      ORDER BY s.scheduled_game_day DESC
      LIMIT ?`
