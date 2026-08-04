@@ -799,6 +799,7 @@ export function renderBreedsAdminPage(params: {
   world: WorldRow;
   breeds: BreedRow[];
   readiness: Map<number, BreedReadiness>;
+  labels: Map<string, string>;
   error?: string;
   notice?: string;
 }): SafeHtml {
@@ -825,6 +826,29 @@ export function renderBreedsAdminPage(params: {
     </tr>`;
   });
 
+  // One row per breed that has at least one picture, with a text box per numbered picture so the
+  // operator can caption "qh-03.webp" as e.g. "flashy chestnut, jumping" without touching the file
+  // itself. Purely a memory aid for picking through the grid on /horses/:id/image - never asserted
+  // as true of whichever horse ends up wearing the picture (slice 0007 §2.1/§4.2).
+  const labelSections = params.breeds
+    .filter((b) => b.image_count > 0)
+    .map((b) => {
+      const fields = [];
+      for (let i = 1; i <= b.image_count; i++) {
+        const value = params.labels.get(`${String(b.id)}_${String(i)}`) ?? '';
+        fields.push(html`
+          <label class="image-label-field">
+            <span class="muted">${libraryImagePath(b.code, i)}</span>
+            <input type="text" name="label_${String(b.id)}_${String(i)}" value="${value}" maxlength="80" placeholder="no label" form="breed-counts">
+          </label>`);
+      }
+      return html`
+        <div class="card">
+          <h3>${b.name}</h3>
+          <div class="image-label-grid">${fields}</div>
+        </div>`;
+    });
+
   const body = html`
     <h1>Breeds</h1>
     ${errorBox(params.error)}
@@ -842,7 +866,10 @@ export function renderBreedsAdminPage(params: {
       <thead><tr><th>Code</th><th>Breed</th><th>In play</th><th>Ideal vector?</th><th>Allele pool?</th><th>Images</th><th>Horses alive</th><th>New count</th><th>Next filename</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <button type="submit" form="breed-counts">Save counts</button>
+    <h2>Picture labels</h2>
+    <p class="muted">Optional. Type a short note for a picture so you can tell them apart when picking - it's just for your own reference here, it never changes what the picker shows the kids beyond the note itself. Leave a box blank to remove its label.</p>
+    ${labelSections.length ? labelSections : html`<p class="muted">No pictures uploaded yet.</p>`}
+    <button type="submit" form="breed-counts">Save</button>
   `;
   return shell(params.world, body, 'Breeds', 'breeds');
 }

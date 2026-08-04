@@ -135,6 +135,7 @@ import m0134 from '../../migrations/0134_config_incident_history.sql';
 import m0135 from '../../migrations/0135_config_conformation_labels.sql';
 import m0136 from '../../migrations/0136_rename_qh_npc_stables.sql';
 import m0137 from '../../migrations/0137_npc_stables_paso_fino_and_german_warmblood.sql';
+import m0138 from '../../migrations/0138_breed_image_labels.sql';
 
 export interface MigrationFile {
   name: string;
@@ -286,6 +287,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0135_config_conformation_labels.sql', sql: m0135 },
   { name: '0136_rename_qh_npc_stables.sql', sql: m0136 },
   { name: '0137_npc_stables_paso_fino_and_german_warmblood.sql', sql: m0137 },
+  { name: '0138_breed_image_labels.sql', sql: m0138 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

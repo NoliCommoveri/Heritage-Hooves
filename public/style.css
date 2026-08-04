@@ -577,6 +577,24 @@ details.row-actions button {
   color: var(--color-text-muted);
 }
 
+.image-option-label {
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.image-label-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.image-label-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+}
+
 .image-placeholder-tile {
   display: flex;
   align-items: center;
