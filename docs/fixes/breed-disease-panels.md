@@ -233,17 +233,39 @@ Resulting panels:
 | Thoroughbred | — | deliberately none, §6.5 |
 | Nokota | — | deliberately none, §6.6 |
 
-**One thing to decide before seeding: this puts the lethal count at six.** GBED, LWO,
-SCID, LFS, WFFS and hydrocephalus. `docs/breed-disease-panels.md` §3 predicted five and
-called that "exactly on overview §3b's ceiling" — it forgot LWO, which landed from a
-different slice. Overview §3b's own words are that four or five "is enough to make testing
-matter" and a dozen "makes foaling an anxious event rather than a hopeful one". Six is
-over the line it drew, and foaling is the moment this game is actually about. Options, in
-order of preference: make hydrocephalus `degenerative` rather than lethal (real
-hydrocephalus foals that survive birth are profoundly affected, so a non-lethal reading is
-defensible and gives the Friesian two *visible* conditions instead of one), or drop it
-from this pass and leave the Friesian on dwarfism alone. **Your call — flagging rather
-than picking, because it changes what a child sees when a foal is born.**
+### Hydrocephalus is `degenerative`, not lethal — operator decision, 2026-08-04
+
+Seeding `docs/breed-disease-panels.md` §5.6 as written would put the lethal count at six:
+GBED, LWO, SCID, LFS, WFFS and hydrocephalus. That document's §3 predicted five and called
+it "exactly on overview §3b's ceiling", but it was written without LWO in view — that
+landed from slice 0021. Overview §3b's own words are that four or five "is enough to make
+testing matter" and a dozen "makes foaling an anxious event rather than a hopeful one".
+Six is over the line, and foaling is the moment this game is actually about.
+
+**Decision: hydrocephalus is seeded `severity_class = 'degenerative'`.** Five lethals,
+back inside the ceiling, and the Friesian gets two visible conditions instead of one. Real
+hydrocephalus foals that survive the birth are profoundly affected, so this is a
+defensible reading rather than a fudge. **This overrides §5.6 of the design document,
+which specifies lethal** — do not seed that row verbatim.
+
+Four consequences, all of which need handling and one of which is easy to miss:
+
+1. **Rewrite the teaching and event text.** §5.6's drafts both end on "the foal does not
+   survive", which is now false. Follow HERDA and dwarfism instead — visible, permanent,
+   career-ending, not fatal. `event_text` fires at signs, not at death.
+2. **`bars_showing = 1`**, matching HERDA, CA and dwarfism. Nothing else in the
+   degenerative class shows.
+3. **It leaves the lethal clamp** (`getLethalTriggers`, `src/db/health.ts:59`). The
+   founding and consignment generators will no longer refuse to mint a homozygous
+   affected Friesian, so at `0.04` roughly one founding Friesian in 600 arrives already
+   affected and barred from showing. That is exactly HERDA's situation at `0.06` and needs
+   no new code — but it is a real behaviour change and worth watching at `/admin/health`
+   after the reset.
+4. **`terminal_game_day` stays NULL** and `state` is `onset`, not `terminal` —
+   `buildHorseConditionStatements` already branches on `severity_class`, so this falls out
+   of the column rather than needing a special case.
+
+Signs delay stays `0`: a domed skull is visible at birth whether or not the foal survives.
 
 ### Corrections to `docs/breed-disease-panels.md`
 

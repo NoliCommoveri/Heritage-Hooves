@@ -86,13 +86,19 @@ copies of this ladder, which is the reason it is worth factoring now rather than
 Season and capacity stay out of `mareIneligibility` — they are barn-wide, not per-mare, and
 belong in a single sentence above the picker rather than repeated against every mare.
 
-### Show why, do not just hide
+### Show why, do not just hide — operator decision, 2026-08-04
 
 Silently dropping mares is the wrong cure for a child who is looking for one by name. List
 only eligible mares in the `<select>`, then one muted line under it naming who was left out
 and why:
 
 > Not shown: Bella (in foal), Daisy (booked to Rio), Pepper (recovering from foaling).
+
+The engine returns codes; the words live in one map in `src/render/horses.ts` beside the
+other player-facing phrasing, not in `src/engines/` — the two refusal ladders each keep
+their own longer sentences, and a third set of short parenthetical ones here is display,
+not rule. `booked` needs the stallion's name, so the picker passes the covering row it
+already has rather than the engine reaching for it.
 
 Only render the line when something is excluded. When **no** mare is eligible, say so
 instead of drawing an empty picker with a live button:
