@@ -17,6 +17,7 @@ import { getBreedsInPlay } from '../db/breeds';
 import { getConformationTraits } from '../db/quantitativeTraits';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
+import { deriveSeed } from '../lib/rng';
 import { describeHorse } from '../engines/genetics/describe';
 import { conformationValues, conformationDisplayRows, rollEnvironmentalNoise } from '../engines/conformation/model';
 import { validateHorseNamePart } from '../lib/validation';
@@ -61,7 +62,8 @@ async function renderPage(
     const [rows, traitRows] = await Promise.all([getCandidatesForOffer(ctx.env, offer.id), getConformationTraits(ctx.env)]);
     const candidates = rows.map((candidate) => {
       const genotype = parseGenotype(candidate.genotype);
-      const phenotype = expressPhenotype(genotype, candidate.age_game_days, gameDaysPerYear);
+      const patternSeed = deriveSeed(candidate.rng_seed, 'pattern_expression');
+      const phenotype = expressPhenotype(genotype, candidate.age_game_days, gameDaysPerYear, patternSeed, ctx.config.values.pattern_penetrance);
       const ageYears = candidate.age_game_days / gameDaysPerYear;
       const description = describeHorse(phenotype, candidate.sex, ageYears);
       // Slice 0006 §2.6: no noise column on import_candidates - the seed already carries it, and

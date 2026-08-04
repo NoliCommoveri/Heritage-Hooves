@@ -35,7 +35,8 @@ import {
 import { getStableById, type StableRow } from '../db/stables';
 import { getBreedById, getBreeds, getLoci, type LocusRow, type BreedRow } from '../db/breeds';
 import { parseGenotype, sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
-import { expressPhenotype } from '../engines/genetics/expression';
+import { expressPhenotype, type PatternPenetrance } from '../engines/genetics/expression';
+import { deriveSeed } from '../lib/rng';
 import { describeHorse } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
 import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
@@ -99,14 +100,16 @@ import { createStudListing, getActiveStudListingForHorse, bookingsThisSeasonCoun
  * correct public one, not merely a fallback. Pass true only where the caller has actually checked
  * this specific viewing stable's own horse_knowledge for `locus:CR`. */
 export function describeHorseRow(
-  horse: Pick<HorseRow, 'genotype' | 'born_game_day' | 'sex'>,
+  horse: Pick<HorseRow, 'genotype' | 'born_game_day' | 'sex' | 'rng_seed'>,
   gameDay: number,
   gameDaysPerYear: number,
+  patternPenetrance: PatternPenetrance,
   creamTested = false
 ): string {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = gameDay - horse.born_game_day;
-  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear, patternSeed, patternPenetrance);
   const displayPhenotype = { ...phenotype, visibleColour: displayColourName(phenotype.visibleColour, creamTested), bornColour: displayColourName(phenotype.bornColour, creamTested) };
   return describeHorse(displayPhenotype, horse.sex, ageDays / gameDaysPerYear);
 }
@@ -118,11 +121,12 @@ export function describeHorseRow(
 async function narrowedColourInference(
   ctx: RequestContext,
   stableId: number,
-  horse: Pick<HorseRow, 'id' | 'genotype' | 'born_game_day' | 'sex'>
+  horse: Pick<HorseRow, 'id' | 'genotype' | 'born_game_day' | 'sex' | 'rng_seed'>
 ): Promise<Record<string, AllelePair[]>> {
   const genotype = parseGenotype(horse.genotype);
   const ageDays = ctx.world.game_day - horse.born_game_day;
-  const phenotype = expressPhenotype(genotype, ageDays, ctx.config.values.game_days_per_year);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageDays, ctx.config.values.game_days_per_year, patternSeed, ctx.config.values.pattern_penetrance);
   const inferred = inferFromPhenotype(phenotype);
   const knowledge = await getKnowledgeForHorse(ctx.env, stableId, horse.id);
   for (const k of knowledge) {
@@ -235,7 +239,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   const rows = await Promise.all(
     horses.map(async (horse) => ({
       horse,
-      description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear, creamTestedHorseIds.has(horse.id)),
+      description: describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear, cfg.pattern_penetrance, creamTestedHorseIds.has(horse.id)),
       // Slice 0003 §7: a small badge on mares in season now, reusing horse.cycle_anchor_tick_seq
       // rather than a query per horse - it's already loaded on the row. Guarded to living horses
       // only (slice 0010) - a dead mare's stored cycle slot means nothing.
@@ -411,7 +415,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const allHorses = await listStableHorses(ctx.env, stableId);
   const creamKnownRows = await getKnownGenotypeSubjectsForHorses(ctx.env, allHorses.map((h) => h.id));
   const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
-  const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear, creamTestedHorseIds.has(h.id));
+  const describe = (h: HorseRow) => describeHorseRow(h, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance, creamTestedHorseIds.has(h.id));
 
   const mares = allHorses.filter((h) => h.sex === 'mare');
   const stallions = allHorses.filter((h) => h.sex === 'stallion');
@@ -620,7 +624,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const ageDays = ctx.world.game_day - horse.born_game_day;
   const ageYears = ageDays / gameDaysPerYear;
   const genotype = parseGenotype(horse.genotype);
-  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear, patternSeed, ctx.config.values.pattern_penetrance);
   // Amendment 0017a §4.3: only this stable's own cream test unmasks smoky black - a non-owner (or
   // an owner who has not tested) reads the same "black" a spectator at the rail would see.
   const ownKnowledge = owner ? await getKnowledgeForHorse(ctx.env, ownerStable.id, horse.id) : [];
@@ -1014,7 +1019,8 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const genotype = parseGenotype(horse.genotype);
   const ageDays = ctx.world.game_day - horse.born_game_day;
-  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageDays, gameDaysPerYear, patternSeed, ctx.config.values.pattern_penetrance);
   const isAdmin = ctx.account!.is_admin === 1;
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
   const ownCreamKnowledge = await getKnownGenotypeSubjectsForHorses(ctx.env, [horse.id]);

@@ -1,7 +1,26 @@
 // Structured phenotype -> an English sentence. Slice 0002 §5.4. This is the entire presentation
 // layer for a horse until the image slot lands, so the vocabulary below is worth getting right.
 
-import type { Phenotype } from './expression';
+import type { Phenotype, PatternCode } from './expression';
+
+// Slice 0021 §5.6. Plain-English words for each pattern code, in the sentence rather than the raw
+// code - 'frame' alone reads as a typo, 'frame overo' is the name a breeder would use.
+const PATTERN_LABELS: Record<PatternCode, string> = {
+  tobiano: 'tobiano',
+  frame: 'frame overo',
+  splash: 'splash',
+  sabino: 'sabino',
+  sabino_max: 'maximum sabino',
+  appaloosa: 'appaloosa',
+  appaloosa_blanket: 'blanket appaloosa',
+  appaloosa_leopard: 'leopard appaloosa',
+  appaloosa_fewspot: 'few-spot appaloosa',
+};
+
+/** Reads patterns[] in its own stored order (expression.ts's patternsOf) - not re-sorted here. */
+function patternClause(patterns: PatternCode[]): string {
+  return patterns.length === 0 ? '' : `${patterns.map((p) => PATTERN_LABELS[p]).join(' ')} `;
+}
 
 /** Below this age (in game years), a horse reads as a filly/colt rather than a mare/stallion/gelding. */
 const YOUNG_AGE_YEARS = 3;
@@ -40,5 +59,6 @@ export function describeHorse(phenotype: Phenotype, sex: string, ageYears: numbe
   // is needed until the grey has actually started changing how the horse reads.
   const bornClause = phenotype.greyStage !== 'none' && phenotype.greyStage !== 'foal_grey' ? `, born ${phenotype.bornColour}` : '';
   const gaitedClause = phenotype.gaited ? `, and ${pronoun(sex)} is gaited` : '';
-  return `A ${phenotype.visibleColour} ${noun}${bornClause}, ${ageClause(ageYears)}${gaitedClause}.`;
+  const patterns = patternClause(phenotype.patterns);
+  return `A ${phenotype.visibleColour} ${patterns}${noun}${bornClause}, ${ageClause(ageYears)}${gaitedClause}.`;
 }

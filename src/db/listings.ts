@@ -23,6 +23,7 @@ import { getShowSummary } from './shows';
 import { conformationValues, noiseFor } from '../engines/conformation/model';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
+import { deriveSeed } from '../lib/rng';
 import { hiddenColourAlleleCount } from '../engines/genetics/inference';
 import { displayColourName } from '../render/colour';
 import { parseIdealVector } from '../engines/showing/score';
@@ -63,6 +64,7 @@ export interface OpenListingRow extends ListingRow {
   breed_id: number | null;
   is_cross: number;
   genotype: string;
+  rng_seed: number;
   image_url: string | null;
   seller_stable_name: string;
   /** Null for an NPC stable (Parts B and C, not built) or a deleted account. */
@@ -79,7 +81,7 @@ export interface SoldListingRow extends ListingRow {
 
 const OPEN_LISTING_SELECT = `
   SELECT l.*, h.registered_name, h.barn_name, h.sex, h.born_game_day, h.breed_id, h.is_cross,
-         h.genotype, h.image_url, s.name AS seller_stable_name, s.account_id AS seller_account_id
+         h.genotype, h.rng_seed, h.image_url, s.name AS seller_stable_name, s.account_id AS seller_account_id
     FROM listings l
     JOIN horses h ON h.id = l.horse_id
     JOIN stables s ON s.id = l.seller_stable_id`;
@@ -421,7 +423,8 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
   // Amendment 0017a §4.7: colour never reads horses.genotype for this term - only the expressed
   // phenotype (public, the same "a stranger at a show can see it" rule health's visible-affected
   // check already uses) and this stable's own locus: knowledge rows.
-  const phenotype = expressPhenotype(genotype, ageGameDays, config.game_days_per_year);
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageGameDays, config.game_days_per_year, patternSeed, config.pattern_penetrance);
   const colourKnowledge = knowledge.filter((k) => k.kind === 'genotype' && k.subject_code.startsWith(LOCUS_KNOWLEDGE_PREFIX));
   const testedLocusCodes = colourKnowledge.map((k) => k.subject_code.slice(LOCUS_KNOWLEDGE_PREFIX.length));
   const creamTested = testedLocusCodes.includes('CR');

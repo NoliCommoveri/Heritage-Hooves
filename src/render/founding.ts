@@ -14,16 +14,17 @@ import { originStableFullName } from '../engines/founding/names';
 
 /** One plain sentence per breed, for the breed picker (slice 0005 §11) - not stored on the breeds
  * row because it's display copy, not data anything else reads. Keep in sync with the breed pools
- * seeded in migrations/0014_seed_breeds.sql and 0024_seed_breed_pools.sql (slice 0005 §5.3). */
+ * seeded in migrations/0014_seed_breeds.sql, 0024_seed_breed_pools.sql (slice 0005 §5.3) and
+ * 0114_breed_pools_colour_pattern_loci.sql (slice 0021 §4.3, colour/pattern loci). */
 const BREED_BLURBS: Record<string, string> = {
-  QH: 'Quarter Horse — solid stock colours (bay, black, chestnut, and the occasional palomino or buckskin), never gaited.',
-  AR: 'Arabian — refined, no dilute colours, and prone to greying out as they age.',
+  QH: 'Quarter Horse — solid stock colours (bay, black, chestnut, and the occasional palomino or buckskin), with a little roan and sabino in the mix, never gaited.',
+  AR: 'Arabian — refined, no dilute or pattern colours, and prone to greying out as they age.',
   TB: 'Thoroughbred — solid colours only, built for speed, never gaited.',
-  PF: "Paso Fino — smooth-gaited, almost always. Its famous pinto patches aren't in the game's genetics yet.",
-  IC: "Icelandic — smooth-gaited, almost always, hardy little horses. Its famous silver and dun colours aren't in the game's genetics yet.",
-  GW: 'German Warmblood — solid colours, built for jumping and dressage, never gaited.',
+  PF: 'Paso Fino — smooth-gaited, almost always, with a broad pinto palette (tobiano and sabino turn up).',
+  IC: 'Icelandic — smooth-gaited, almost always, hardy little horses, with the widest colour palette in the game: dun, silver, tobiano pinto and splash are all ordinary.',
+  GW: 'German Warmblood — mostly solid colours, built for jumping and dressage, never gaited; the growing pinto warmblood lines turn up occasionally.',
   FR: 'Friesian — black, and only black. No dilutions, no patterns, no grey.',
-  NOK: "Nokota — tough range stock; about one in a hundred is gaited. Its famous roan and grullo colours aren't in the game's genetics yet.",
+  NOK: 'Nokota — tough range stock; about one in a hundred is gaited. Blue roan and appaloosa spotting are the breed\'s identity.',
 };
 
 function candidateSexLabel(sex: 'mare' | 'stallion'): string {

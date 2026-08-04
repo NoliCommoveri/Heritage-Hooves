@@ -115,6 +115,7 @@ import m0111 from '../../migrations/0111_breeds_head_profile_ideal.sql';
 import m0112 from '../../migrations/0112_judges_head_profile_weights.sql';
 import m0113 from '../../migrations/0113_seed_colour_pattern_loci.sql';
 import m0114 from '../../migrations/0114_breed_pools_colour_pattern_loci.sql';
+import m0115 from '../../migrations/0115_config_pattern_penetrance.sql';
 
 export interface MigrationFile {
   name: string;
@@ -246,6 +247,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0112_judges_head_profile_weights.sql', sql: m0112 },
   { name: '0113_seed_colour_pattern_loci.sql', sql: m0113 },
   { name: '0114_breed_pools_colour_pattern_loci.sql', sql: m0114 },
+  { name: '0115_config_pattern_penetrance.sql', sql: m0115 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

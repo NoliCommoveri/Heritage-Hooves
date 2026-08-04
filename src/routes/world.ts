@@ -58,7 +58,7 @@ export async function worldStableRoute(ctx: RequestContext, stableId: number): P
     horses.map(async (h) => ({
       id: h.id,
       name: horseDisplayName(h),
-      description: describeHorseRow(h, ctx.world.game_day, gameDaysPerYear),
+      description: describeHorseRow(h, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance),
       imageUrl: h.image_url,
       ribbon: ribbonBadge(await getShowSummary(ctx.env, h.id)),
     }))
@@ -147,7 +147,7 @@ export async function worldHorseRoute(ctx: RequestContext, horseId: number): Pro
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const ageYears = (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear;
   const ageLabel = ageYears < 1 ? 'under a year' : `${String(Math.floor(ageYears))} years`;
-  const description = describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear);
+  const description = describeHorseRow(horse, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance);
 
   const breed = horse.breed_id ? await getBreedById(ctx.env, horse.breed_id) : undefined;
   const breederStable = horse.breeder_stable_id ? await getStableById(ctx.env, horse.breeder_stable_id) : null;

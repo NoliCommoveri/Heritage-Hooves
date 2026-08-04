@@ -11,6 +11,7 @@ function phenotype(overrides: Partial<Phenotype> = {}): Phenotype {
     visibleColour: 'bay',
     bornColour: 'bay',
     gaited: false,
+    patterns: [],
     ...overrides,
   };
 }
@@ -38,5 +39,18 @@ describe('describeHorse', () => {
     expect(describeHorse(gaitedMare, 'mare', 5)).toBe('A bay mare, 5 years old, and she is gaited.');
     const gaitedStallion = phenotype({ gaited: true });
     expect(describeHorse(gaitedStallion, 'stallion', 5)).toBe('A bay stallion, 5 years old, and he is gaited.');
+  });
+
+  it('adds a single pattern clause before the noun', () => {
+    const tobianoMare = phenotype({ patterns: ['tobiano'] });
+    expect(describeHorse(tobianoMare, 'mare', 4)).toBe('A bay tobiano mare, 4 years old.');
+  });
+
+  it('reads multiple patterns in patterns[] order, and gives frame its full name', () => {
+    const sabinoSplash = phenotype({ dilutedColour: 'chestnut', visibleColour: 'chestnut', patterns: ['sabino', 'splash'] });
+    expect(describeHorse(sabinoSplash, 'mare', 0.4)).toBe('A chestnut sabino splash filly, under a year old.');
+
+    const framed = phenotype({ patterns: ['frame'] });
+    expect(describeHorse(framed, 'stallion', 5)).toBe('A bay frame overo stallion, 5 years old.');
   });
 });
