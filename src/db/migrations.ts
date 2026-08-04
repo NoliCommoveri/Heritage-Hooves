@@ -109,6 +109,7 @@ import m0105 from '../../migrations/0105_ledger_add_stud_kinds.sql';
 import m0106 from '../../migrations/0106_config_stud.sql';
 import m0107 from '../../migrations/0107_seed_breed_ideal_vectors.sql';
 import m0108 from '../../migrations/0108_seed_disciplines_remaining.sql';
+import m0109 from '../../migrations/0109_config_remove_consignment_breed_codes.sql';
 
 export interface MigrationFile {
   name: string;
@@ -234,6 +235,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0106_config_stud.sql', sql: m0106 },
   { name: '0107_seed_breed_ideal_vectors.sql', sql: m0107 },
   { name: '0108_seed_disciplines_remaining.sql', sql: m0108 },
+  { name: '0109_config_remove_consignment_breed_codes.sql', sql: m0109 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

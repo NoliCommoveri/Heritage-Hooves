@@ -233,9 +233,6 @@ export interface ConfigValues {
   /** disease-test count per consigned horse -> weight, e.g. {"0":55,"2":25,...}. */
   consignment_test_count_weights: Record<string, number>;
   consignment_price_multiplier: number;
-  /** Intersected with the breeds in play (§6) - a breed must be both listed here and enabled for
-   * the dealer to stock it. */
-  consignment_breed_codes: string[];
   /** Slice 0017 §12 (Part C). Live. Both NPC-buying routes only run when an NPC stable's free
    * stalls are at least this many - the inverse of npc_market_capacity_buffer's "too full to keep
    * breeding" trigger: this one is "too empty to bother buying". */
