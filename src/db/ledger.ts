@@ -142,6 +142,29 @@ export async function listStableBalancesForAdmin(env: Env): Promise<StableBalanc
   return result.results ?? [];
 }
 
+/** Slice 0017 §12 (Part C)'s named mitigation 1: "a 'buying power' figure on /admin/npc - each NPC
+ * stable's balance next to what it has spent and earned this season. The operator can see the
+ * market drying up before the children feel it." Reads the ledger's own 'purchase' and 'sale' kinds
+ * (§5.3) rather than a running counter - the ledger is already the source of truth for money moved,
+ * and a season boundary is just a game_day cutoff, so nothing needs to be written specially for
+ * this to work. */
+export interface SeasonTradeSummary {
+  spentBuying: number;
+  earnedSelling: number;
+}
+
+export async function getSeasonTradeSummary(env: Env, stableId: number, seasonStartGameDay: number): Promise<SeasonTradeSummary> {
+  const row = await env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN kind = 'purchase' THEN -amount ELSE 0 END), 0) AS spent_buying,
+       COALESCE(SUM(CASE WHEN kind = 'sale' THEN amount ELSE 0 END), 0) AS earned_selling
+     FROM ledger WHERE stable_id = ? AND game_day >= ?`
+  )
+    .bind(stableId, seasonStartGameDay)
+    .first<{ spent_buying: number; earned_selling: number }>();
+  return { spentBuying: row?.spent_buying ?? 0, earnedSelling: row?.earned_selling ?? 0 };
+}
+
 export interface AdjustmentRow extends LedgerRow {
   stable_name: string;
 }

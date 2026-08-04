@@ -76,8 +76,13 @@ const HORSE_TABLES = [
  * world reset fail outright the moment an NPC stable has a policy row. Left out of `HORSE_TABLES`
  * deliberately: a horses-only reset keeps stables (and therefore their policies) exactly as it
  * keeps everything else about a stable.
+ *
+ * Slice 0017 §12 (Part C) adds `buy_offers`, same reasoning as `npc_policy` right beside it - a
+ * real foreign key into `stables` (stable_id) and no dependency on `horses` at all (an offer is
+ * criteria, not a link to a specific horse), so a horses-only reset leaves it exactly as it leaves
+ * every other stable-scoped row.
  */
-const WORLD_ONLY_TABLES = ['stable_prefix_history', 'ledger', 'npc_policy', 'stables', 'tick_run'] as const;
+const WORLD_ONLY_TABLES = ['stable_prefix_history', 'ledger', 'npc_policy', 'buy_offers', 'stables', 'tick_run'] as const;
 
 export const RESET_TABLES = [...HORSE_TABLES, ...WORLD_ONLY_TABLES] as const;
 
@@ -102,6 +107,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   stable_prefix_history: 'Claimed prefixes',
   ledger: 'Money history',
   npc_policy: 'NPC stables\' breeding policies',
+  buy_offers: 'NPC standing buy offers',
   stables: 'Stables',
   tick_run: 'Tick history',
 };

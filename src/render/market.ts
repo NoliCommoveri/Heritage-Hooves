@@ -33,7 +33,7 @@ export interface MarketListingRow {
   expiresGameDay: number;
 }
 
-export type MarketTab = BarnBucket | 'all' | 'yours';
+export type MarketTab = BarnBucket | 'all' | 'yours' | 'offers';
 
 function marketTabs(activeTab: MarketTab, breedId: number | null): SafeHtml {
   const tabs: { key: MarketTab; label: string }[] = [
@@ -43,6 +43,7 @@ function marketTabs(activeTab: MarketTab, breedId: number | null): SafeHtml {
     { key: 'foals', label: 'Foals' },
     { key: 'geldings', label: 'Geldings' },
     { key: 'yours', label: 'Yours' },
+    { key: 'offers', label: 'Offers' },
   ];
   const href = (key: string): string => {
     const qs = new URLSearchParams({ show: key });
@@ -74,6 +75,40 @@ function breedPicker(activeTab: string, breedId: number | null, breeds: { id: nu
     </form>`;
 }
 
+/** slice 0017 §12 (Part C): one row of the Offers tab - an NPC stable's standing demand, in plain
+ * English, with nothing to click but "Look" (the offer detail page is where a horse is picked). */
+export interface MarketOfferRow {
+  offerId: number;
+  buyerStableId: number;
+  buyerStableName: string;
+  /** e.g. "Quarter Horses" or "Barrel Racing prospects" - src/db/buyOffers.ts's offerWantsLabel. */
+  wantsLabel: string;
+  /** e.g. "a mare or a stallion (not a gelding), at least 3 years old, scoring at least 50 against
+   * what this stable is breeding for" - src/db/buyOffers.ts's criteriaLabel. */
+  criteriaLabel: string;
+  maxPrice: number;
+}
+
+function offersTable(offers: MarketOfferRow[]): SafeHtml {
+  if (offers.length === 0) return html`<p>No NPC stable is buying right now. Check back later - offers come and go with each stable's own capacity and balance.</p>`;
+  return html`
+    <table>
+      <thead><tr><th>Buyer</th><th>Wants</th><th>Looking for</th><th>Pays up to</th><th></th></tr></thead>
+      <tbody>
+        ${offers.map(
+          (o) => html`
+          <tr>
+            <td><a href="/world/stables/${String(o.buyerStableId)}">${o.buyerStableName}</a></td>
+            <td>${o.wantsLabel}</td>
+            <td>${o.criteriaLabel}</td>
+            <td>${String(o.maxPrice)}</td>
+            <td><a href="/market/offers/${String(o.offerId)}">Look</a></td>
+          </tr>`
+        )}
+      </tbody>
+    </table>`;
+}
+
 export function renderMarketIndexPage(params: {
   world: WorldRow;
   isAdmin: boolean;
@@ -83,9 +118,32 @@ export function renderMarketIndexPage(params: {
   activeTab: MarketTab;
   breedId: number | null;
   breeds: { id: number; name: string }[];
+  /** Only populated (and only rendered) when activeTab is 'offers' (slice 0017 §12). */
+  offers?: MarketOfferRow[];
   notice?: string;
   error?: string;
 }): SafeHtml {
+  if (params.activeTab === 'offers') {
+    const body = html`
+      <h1>Market</h1>
+      ${errorBox(params.error)}
+      ${noticeBox(params.notice)}
+      <p class="muted">What NPC stables are standing ready to buy right now, and the most each will pay. Sell into one straight from the offer's own page - no listing, no waiting.</p>
+      ${marketTabs(params.activeTab, params.breedId)}
+      ${offersTable(params.offers ?? [])}
+      <p><a href="/market/sold">What has sold recently</a></p>
+    `;
+    return pageShell({
+      title: 'Market',
+      world: params.world,
+      loggedIn: true,
+      isAdmin: params.isAdmin,
+      actionsLeft: params.actionsLeft,
+      gameDaysPerYear: params.gameDaysPerYear,
+      body,
+    });
+  }
+
   const rows = params.rows.map(
     (r) => html`
     <tr>
@@ -315,6 +373,97 @@ export function renderListingPage(params: {
   `;
   return pageShell({
     title: l.name,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
+}
+
+/** slice 0017 §12 (Part C): one of the account's own horses that fits an offer's criteria - the
+ * quality is shown so a player understands why the game thinks it qualifies, the same "teach, don't
+ * just assert" reasoning the appraisal's own factors list follows (§4.5). */
+export interface EligibleHorseOption {
+  id: number;
+  stableId: number;
+  stableName: string;
+  name: string;
+  quality: number;
+}
+
+export interface OfferDetailView {
+  offerId: number;
+  buyerStableId: number;
+  buyerStableName: string;
+  wantsLabel: string;
+  criteriaLabel: string;
+  maxPrice: number;
+}
+
+/** The offer detail page: what a standing offer wants, and (for anyone who owns a horse that
+ * fits) a picker to sell straight into it. No browsing period, no auction - the sale happens the
+ * moment the button is pressed, same as any other fixed-price sale (§2.1). */
+export function renderOfferDetailPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  offer: OfferDetailView;
+  /** Every alive horse across the viewer's own stables that currently fits this offer's criteria -
+   * built fresh on every render (§2.6's own reasoning: it must still be true the moment the button
+   * is pressed). Empty means nobody currently has anything that qualifies. */
+  eligibleHorses: EligibleHorseOption[];
+  selectedHorseId: number | null;
+  /** A plain sentence saying why there is no sell button right now (offer's buyer can't afford it,
+   * or nothing of the viewer's qualifies), or undefined when there is one. */
+  refusal?: string;
+  error?: string;
+}): SafeHtml {
+  const o = params.offer;
+  const selected = params.eligibleHorses.find((h) => h.id === params.selectedHorseId) ?? params.eligibleHorses[0];
+
+  const horseField =
+    params.eligibleHorses.length > 1
+      ? html`
+        <label>Which horse
+          <select name="horse_id">
+            ${params.eligibleHorses.map(
+              (h) => html`<option value="${String(h.id)}" ${h.id === selected?.id ? raw('selected') : raw('')}>${h.name} (${h.stableName}) - scores ${String(Math.round(h.quality))}</option>`
+            )}
+          </select>
+        </label>`
+      : selected
+        ? html`<input type="hidden" name="horse_id" value="${String(selected.id)}"><p>Selling <strong>${selected.name}</strong> (${selected.stableName}), which scores ${String(Math.round(selected.quality))} against what this stable is breeding for.</p>`
+        : raw('');
+
+  const sellBlock = params.refusal
+    ? html`<div class="card"><p class="notice">${params.refusal}</p></div>`
+    : html`
+      <div class="card">
+        <h2>Sell into this offer</h2>
+        <p class="muted">Selling costs one turn. The barn name is cleared when the horse changes hands, and your own test results go with it, the same as any other sale.</p>
+        <form method="post" action="/market/offers/${String(o.offerId)}/sell">
+          ${horseField}
+          <button type="submit">Sell for ${String(o.maxPrice)}</button>
+        </form>
+      </div>`;
+
+  const body = html`
+    <h1>${o.buyerStableName} wants ${o.wantsLabel}</h1>
+    ${errorBox(params.error)}
+    <div class="card">
+      <p><strong>Buying stable:</strong> <a href="/world/stables/${String(o.buyerStableId)}">${o.buyerStableName}</a></p>
+      <p><strong>Looking for:</strong> ${o.criteriaLabel}</p>
+      <p><strong>Pays:</strong> ${String(o.maxPrice)}</p>
+      <p class="muted">This is a standing offer, not a listing - there is nothing here to browse. Any horse of yours that fits can be sold into it instantly.</p>
+    </div>
+    ${sellBlock}
+    <p><a href="/market?show=offers">Back to the offers board</a></p>
+  `;
+  return pageShell({
+    title: `${o.buyerStableName}'s offer`,
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,
