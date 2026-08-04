@@ -110,6 +110,11 @@ import m0106 from '../../migrations/0106_config_stud.sql';
 import m0107 from '../../migrations/0107_seed_breed_ideal_vectors.sql';
 import m0108 from '../../migrations/0108_seed_disciplines_remaining.sql';
 import m0109 from '../../migrations/0109_config_remove_consignment_breed_codes.sql';
+import m0110 from '../../migrations/0110_quantitative_traits_head_profile.sql';
+import m0111 from '../../migrations/0111_breeds_head_profile_ideal.sql';
+import m0112 from '../../migrations/0112_judges_head_profile_weights.sql';
+import m0113 from '../../migrations/0113_seed_colour_pattern_loci.sql';
+import m0114 from '../../migrations/0114_breed_pools_colour_pattern_loci.sql';
 
 export interface MigrationFile {
   name: string;
@@ -236,6 +241,11 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0107_seed_breed_ideal_vectors.sql', sql: m0107 },
   { name: '0108_seed_disciplines_remaining.sql', sql: m0108 },
   { name: '0109_config_remove_consignment_breed_codes.sql', sql: m0109 },
+  { name: '0110_quantitative_traits_head_profile.sql', sql: m0110 },
+  { name: '0111_breeds_head_profile_ideal.sql', sql: m0111 },
+  { name: '0112_judges_head_profile_weights.sql', sql: m0112 },
+  { name: '0113_seed_colour_pattern_loci.sql', sql: m0113 },
+  { name: '0114_breed_pools_colour_pattern_loci.sql', sql: m0114 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

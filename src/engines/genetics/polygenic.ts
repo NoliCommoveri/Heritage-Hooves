@@ -44,6 +44,11 @@ export const TRAITS = [
   'foot_robustness',
   'joint_robustness',
   'ligament_robustness',
+  // Added in slice 0021 §3.1, alongside a full world reset (§8) - so unlike fertility above, no
+  // legacy horse is ever missing this key and no *Potential() stand-in is needed. Appended after
+  // the three robustness traits for the same reason every other addition here is appended: TRAITS'
+  // order is the RNG draw order, and this is the fifth conformation trait, not a fifth ability one.
+  'head_profile',
 ] as const;
 
 export type TraitCode = (typeof TRAITS)[number];

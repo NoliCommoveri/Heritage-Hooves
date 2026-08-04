@@ -45,6 +45,19 @@ export const LOCI: readonly Locus[] = [
   { code: 'PSSM1', alleles: ['N', 'P1'], wildType: 'N' },
   { code: 'HERDA', alleles: ['N', 'Hrd'], wildType: 'N' },
   { code: 'GBED', alleles: ['N', 'Gb'], wildType: 'N' },
+  // Ten colour/pattern loci, slice 0021 §4.1. Appended after GBED, never inserted earlier, for the
+  // same RNG-order reason as the disease loci above. Dominant white ("W") was in the operator's
+  // original draft and is deliberately dropped (slice 0021 §1) - eleven became ten.
+  { code: 'D', alleles: ['D', 'nd'], wildType: 'nd' },
+  { code: 'Z', alleles: ['Z', 'z'], wildType: 'z' },
+  { code: 'CH', alleles: ['Ch', 'ch'], wildType: 'ch' },
+  { code: 'RN', alleles: ['Rn', 'rn'], wildType: 'rn' },
+  { code: 'TO', alleles: ['TO', 'n'], wildType: 'n' },
+  { code: 'O', alleles: ['O', 'n'], wildType: 'n' },
+  { code: 'SW1', alleles: ['SW1', 'n'], wildType: 'n' },
+  { code: 'SB1', alleles: ['SB1', 'n'], wildType: 'n' },
+  { code: 'LP', alleles: ['Lp', 'lp'], wildType: 'lp' },
+  { code: 'PATN1', alleles: ['PATN1', 'n'], wildType: 'n' },
 ] as const;
 
 // Ancestors beyond this many generations are treated as unrelated founders (pedigree.ts). This is

@@ -9,12 +9,13 @@ import { parseIdealVector, type IdealVector } from '../../src/engines/showing/sc
 /**
  * Pulls one breed's founding_allele_pool JSON straight out of migration SQL, so these tests
  * exercise the pool this codebase actually ships rather than a hand-copied duplicate that could
- * quietly drift from it. Reads 0051_breed_pools_disease_loci.sql, not 0014/0024 - that migration
- * (slice 0010 §4.3) rewrites every breed's whole pool to add the four disease loci, so it is the
- * final, authoritative state, the same way a later UPDATE always supersedes the INSERT it followed.
+ * quietly drift from it. Reads 0114_breed_pools_colour_pattern_loci.sql, not 0051/0014/0024 - that
+ * migration (slice 0021 §4.3) rewrites every breed's whole pool to add the ten colour/pattern
+ * loci, so it is the final, authoritative state, the same way a later UPDATE always supersedes the
+ * INSERT it followed.
  */
 function poolJsonForBreed(code: string): string {
-  const migrationName = '0051_breed_pools_disease_loci.sql';
+  const migrationName = '0114_breed_pools_colour_pattern_loci.sql';
   const migration = MIGRATIONS.find((m) => m.name === migrationName);
   if (!migration) throw new Error(`migration ${migrationName} not found`);
   const pattern = new RegExp(`founding_allele_pool = '(\\{[^']*\\})' WHERE code = '${code}'`);
@@ -27,14 +28,27 @@ const QH_POOL = parseAllelePool(poolJsonForBreed('QH'));
 const FR_POOL = parseAllelePool(poolJsonForBreed('FR'));
 
 /** Slice 0019: the Quarter Horse's real ideal_vector, pulled from its own migration the same way
- * poolJsonForBreed pulls a pool - exercises the vector this codebase actually ships. */
+ * poolJsonForBreed pulls a pool - exercises the vector this codebase actually ships. The base four
+ * traits come from 0035; head_profile is patched in separately via json_set in 0111 (slice 0021
+ * §3.3), so it's merged in here the same way test/genetics/consistency.test.ts merges it. */
 function qhIdealVector(): IdealVector {
   const migrationName = '0035_seed_qh_ideal_vector.sql';
   const migration = MIGRATIONS.find((m) => m.name === migrationName);
   if (!migration) throw new Error(`migration ${migrationName} not found`);
   const match = migration.sql.match(/ideal_vector = '(\{[^']*\})'/);
   if (!match) throw new Error(`ideal_vector not found in ${migrationName}`);
-  return parseIdealVector(match[1]);
+  const ideal = parseIdealVector(match[1]);
+
+  const headProfileMigrationName = '0111_breeds_head_profile_ideal.sql';
+  const headProfileMigration = MIGRATIONS.find((m) => m.name === headProfileMigrationName);
+  if (!headProfileMigration) throw new Error(`migration ${headProfileMigrationName} not found`);
+  const headProfileMatch = headProfileMigration.sql.match(
+    /json_set\(ideal_vector,\s*'\$\.traits\.head_profile',\s*json\('(\{[^']*\})'\)\)\s*WHERE code = 'QH'/
+  );
+  if (!headProfileMatch) throw new Error(`QH head_profile patch not found in ${headProfileMigrationName}`);
+  ideal.head_profile = JSON.parse(headProfileMatch[1]) as { target: number; weight: number };
+
+  return ideal;
 }
 const QH_IDEAL = qhIdealVector();
 

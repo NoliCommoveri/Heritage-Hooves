@@ -131,11 +131,11 @@ describe('full siblings differ', () => {
 });
 
 describe('conformationValues', () => {
-  it('only ever returns the four conformation traits, never ability or hidden', () => {
+  it('only ever returns the five conformation traits, never ability or hidden', () => {
     const genotype: Genotype = { v: 1, mendelian: {}, polygenic: {} };
     const noise = rollEnvironmentalNoise(1, 6);
     const values = conformationValues(genotype, noise, 5, 0, CONFIG);
-    expect(values.map((v) => v.code)).toEqual(['neck_length', 'shoulder_angle', 'back_length', 'hock_set']);
+    expect(values.map((v) => v.code)).toEqual(['neck_length', 'shoulder_angle', 'back_length', 'hock_set', 'head_profile']);
   });
 
   it('draws one noise value per trait in TRAITS order, reproducibly from the same seed', () => {
@@ -181,6 +181,7 @@ describe('abilityValues', () => {
       foot_robustness: 0,
       joint_robustness: 0,
       ligament_robustness: 0,
+      head_profile: 0,
     };
     const gv = geneticValue(genotype, 'agility', 0);
     expect(gv).toBe(70);

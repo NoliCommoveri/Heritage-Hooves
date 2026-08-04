@@ -3,11 +3,11 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { generateCandidate, type LethalTrigger } from '../../src/engines/founding/generate';
 
-/** Same helper as test/founding/generate.test.ts - reads the final, post-0051 pool state rather
- * than the pre-disease-loci pools in 0014/0024. */
+/** Same helper as test/founding/generate.test.ts - reads the final, post-0114 pool state rather
+ * than the pre-colour-loci pools in 0014/0024/0051. */
 function poolJsonForBreed(code: string): string {
-  const migration = MIGRATIONS.find((m) => m.name === '0051_breed_pools_disease_loci.sql');
-  if (!migration) throw new Error('migration 0051_breed_pools_disease_loci.sql not found');
+  const migration = MIGRATIONS.find((m) => m.name === '0114_breed_pools_colour_pattern_loci.sql');
+  if (!migration) throw new Error('migration 0114_breed_pools_colour_pattern_loci.sql not found');
   const match = migration.sql.match(new RegExp(`founding_allele_pool = '(\\{[^']*\\})' WHERE code = '${code}'`));
   if (!match) throw new Error(`pool not found for breed ${code}`);
   return match[1];
