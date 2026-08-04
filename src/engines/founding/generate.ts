@@ -4,8 +4,9 @@
 import { makeRng, deriveSeed, type Rng } from '../../lib/rng';
 import { LOCI, type Locus } from '../genetics/loci';
 import { sortAllelePair, GENOTYPE_VERSION, type Genotype, type AllelePair } from '../genetics/genotype';
-import { TRAITS, LOCI_PER_TRAIT } from '../genetics/polygenic';
-import { ROBUSTNESS_TRAITS } from '../conformation/traits';
+import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../genetics/polygenic';
+import { ROBUSTNESS_TRAITS, CONFORMATION_TRAITS } from '../conformation/traits';
+import type { IdealVector } from '../showing/score';
 import type { AllelePool } from './pool';
 
 const TRAIT_STRING_LENGTH = LOCI_PER_TRAIT * 2;
@@ -57,11 +58,50 @@ export interface GenerateCandidateInput {
    * signature stays optional so a future non-founding caller of this same function isn't forced to
    * supply an empty array). */
   lethalTriggers?: LethalTrigger[];
+  /** Slice 0019 Part A: the breed's ideal vector, already parsed by the caller from
+   * breeds.ideal_vector. Undefined or null skips Part A entirely - true for seven of the eight
+   * breeds today (no seeded ideal_vector), so that is the common path, not an edge case (§10). */
+  breedIdealVector?: IdealVector | null;
+  /** Slice 0019 Part B: ability traits with a nonzero weight in at least one *enabled* discipline
+   * (src/db/disciplines.ts's getSpecializableAbilityTraits) - never all of ABILITY_TRAITS, since a
+   * specialist in a trait no running discipline scores would be a dead gift (§4.2). Undefined or
+   * empty skips Part B entirely. */
+  eligibleAbilityTraits?: TraitCode[];
+  /** Slice 0019 §4.1: config's founding_ability_specialist_potential - the ability specialist's
+   * potential before its own +/-1 offset. Required whenever eligibleAbilityTraits is non-empty; a
+   * missing value there throws rather than silently picking a number, the same reasoning
+   * robustnessOneChance's own comment gives for not defaulting a live tunable. */
+  abilitySpecialistPotential?: number;
 }
 
 export interface GeneratedCandidate {
   genotype: Genotype;
   ageGameDays: number;
+  /** Slice 0019 §10: which trait (if any) was overwritten as this candidate's specialist on each
+   * side - null when that side's Part was skipped (no ideal vector / no eligible ability trait).
+   * Exists so determinism and "only one trait moved" are both directly testable rather than
+   * inferred by re-deriving expected potentials from the genotype. */
+  specialistTraits: {
+    conformation: TraitCode | null;
+    ability: TraitCode | null;
+  };
+}
+
+const SPECIALIST_OFFSETS = [-1, 0, 1];
+
+function clampPotential(value: number): number {
+  return Math.max(0, Math.min(TRAIT_STRING_LENGTH, value));
+}
+
+/** Slice 0019 §7: the specialist's alleles land at random positions among the twenty, never
+ * grouped into homozygous pairs - controlling zygosity here would hand a child the game's best
+ * long-term breeding reward (0018 §1.1) in the founding grant itself. */
+function specialistBits(rng: Rng, potentialValue: number): string {
+  const positions = rng.shuffle(Array.from({ length: TRAIT_STRING_LENGTH }, (_, i) => i));
+  const ones = new Set(positions.slice(0, potentialValue));
+  let bits = '';
+  for (let i = 0; i < TRAIT_STRING_LENGTH; i++) bits += ones.has(i) ? '1' : '0';
+  return bits;
 }
 
 /**
@@ -113,5 +153,42 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
   const ageSpan = input.ageMaxGameDays - input.ageMinGameDays;
   const ageGameDays = input.ageMinGameDays + (ageSpan > 0 ? ageRng.int(ageSpan + 1) : 0);
 
-  return { genotype: { v: GENOTYPE_VERSION, mendelian, polygenic }, ageGameDays };
+  // Slice 0019 Parts A/B: every founding horse arrives genuinely good at one thing. This runs
+  // strictly after the loop above, from its own fresh streams (never-before-used labels), and
+  // overwrites rather than resamples - per §7, the polygenic loop must draw exactly the same 20
+  // bits per trait regardless of whether a specialist is chosen afterwards, or every trait after
+  // it would shift and the same seed would stop producing the same horse.
+  let conformationSpecialist: TraitCode | null = null;
+  if (input.breedIdealVector) {
+    const idealVector = input.breedIdealVector;
+    const available = CONFORMATION_TRAITS.filter((t) => idealVector[t] !== undefined);
+    if (available.length > 0) {
+      const choiceRng = makeRng(deriveSeed(input.seed, 'specialist_choice_conformation'));
+      conformationSpecialist = available[choiceRng.int(available.length)];
+      const target = idealVector[conformationSpecialist]!.target;
+      const offset = SPECIALIST_OFFSETS[choiceRng.int(SPECIALIST_OFFSETS.length)];
+      const potentialValue = clampPotential(Math.round(target / 5) + offset);
+      const allelesRng = makeRng(deriveSeed(input.seed, 'specialist_alleles_conformation'));
+      polygenic[conformationSpecialist] = specialistBits(allelesRng, potentialValue);
+    }
+  }
+
+  let abilitySpecialist: TraitCode | null = null;
+  if (input.eligibleAbilityTraits && input.eligibleAbilityTraits.length > 0) {
+    if (input.abilitySpecialistPotential === undefined) {
+      throw new Error('generateCandidate: abilitySpecialistPotential is required when eligibleAbilityTraits is non-empty');
+    }
+    const choiceRng = makeRng(deriveSeed(input.seed, 'specialist_choice_ability'));
+    abilitySpecialist = input.eligibleAbilityTraits[choiceRng.int(input.eligibleAbilityTraits.length)];
+    const offset = SPECIALIST_OFFSETS[choiceRng.int(SPECIALIST_OFFSETS.length)];
+    const potentialValue = clampPotential(input.abilitySpecialistPotential + offset);
+    const allelesRng = makeRng(deriveSeed(input.seed, 'specialist_alleles_ability'));
+    polygenic[abilitySpecialist] = specialistBits(allelesRng, potentialValue);
+  }
+
+  return {
+    genotype: { v: GENOTYPE_VERSION, mendelian, polygenic },
+    ageGameDays,
+    specialistTraits: { conformation: conformationSpecialist, ability: abilitySpecialist },
+  };
 }
