@@ -141,8 +141,8 @@ describe('rollOutcome - the cumulative distribution', () => {
   });
 });
 
-describe('the seed migration (0121) - every trigger blob', () => {
-  const sql = readFileSync(new URL('../../migrations/0121_seed_acquired_conditions.sql', import.meta.url), 'utf8');
+describe('the seed migration (0125) - every trigger blob', () => {
+  const sql = readFileSync(new URL('../../migrations/0125_seed_acquired_conditions.sql', import.meta.url), 'utf8');
   const triggerJsonBlobs = [...sql.matchAll(/'(\{"v":1,"kind":"acquired"[^']*)'/g)].map((m) => m[1]);
 
   it('seeds exactly twelve conditions', () => {

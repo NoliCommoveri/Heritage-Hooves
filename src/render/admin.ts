@@ -489,6 +489,14 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="care_modifier_max" value="${String(v.care_modifier_max)}">
       </label>
       <p class="muted">All ten are live - retuning any of them only changes the modifier computed on the next read, never a horse's own stored dates (last_farrier_game_day, last_vet_game_day). Watch /admin/care after a change.</p>
+      <h2>Consignment dealer</h2>
+      <label>Cadence between batches (game days)
+        <input type="text" inputmode="numeric" name="consignment_cadence_game_days" value="${String(v.consignment_cadence_game_days)}">
+      </label>
+      <label>Horses minted per breed, each batch
+        <input type="text" inputmode="numeric" name="consignment_horses_per_breed" value="${String(v.consignment_horses_per_breed)}">
+      </label>
+      <p class="muted">Both live: the cadence change takes effect from whichever batch is most recent right now (see /admin/consignment for the actual next-due day), and the per-breed count applies to the next batch minted, of every breed then in play. Doesn't retroactively change a batch already minted.</p>
       <h2>Acquired conditions</h2>
       <p class="muted">Colic, laminitis, and the rest - see /admin/incidents for open counts and the real outcome split. Everything here is live, per-day risk (the base rate and weighting live in each condition's own trigger row, not here).</p>
       <label>Workload window (game days)
@@ -1551,6 +1559,9 @@ function injectionStatusLabel(row: ConsignmentInjectionRow): string {
 export function renderConsignmentAdminPage(params: {
   world: WorldRow;
   nextCycleGameDay: number;
+  cadenceGameDays: number;
+  horsesPerBreed: number;
+  breedsInPlayCount: number;
   standingListings: { horseName: string; price: number; expiresGameDay: number }[];
   queued: ConsignmentInjectionRow[];
   history: ConsignmentInjectionRow[];
@@ -1605,12 +1616,12 @@ export function renderConsignmentAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <p><strong>Next batch due:</strong> game day ${String(params.nextCycleGameDay)}.</p>
-      <p class="muted">Every ${'90'} game days the dealer offers one or two outside horses, generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation.</p>
+      <p class="muted">Every ${String(params.cadenceGameDays)} game days the dealer offers ${String(params.horsesPerBreed)} horse${params.horsesPerBreed === 1 ? '' : 's'} of each breed currently in play (${String(params.breedsInPlayCount)} breed${params.breedsInPlayCount === 1 ? '' : 's'} right now, ${String(params.horsesPerBreed * params.breedsInPlayCount)} horses total), generated like founding stock at the mid quality band - colour and gait alleles only, never a shortcut past breeding for conformation. Both the cadence and the count per breed are config-driven (<code>consignment_cadence_game_days</code>, <code>consignment_horses_per_breed</code>) - change them from <a href="/admin/config">Config</a>, not here.</p>
       <form method="post" action="/admin/consignment">
         <input type="hidden" name="action" value="mint_now">
         <button type="submit">Mint a batch now</button>
       </form>
-      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${'90'} game days after whichever batch is now most recent.</p>
+      <p class="muted">Mints immediately, today, instead of waiting for the next scheduled batch - useful right after queueing an allele below. Doesn't reset the regular cadence: the next scheduled batch is still ${String(params.cadenceGameDays)} game days after whichever batch is now most recent.</p>
     </div>
     <div class="card">
       <h2>Currently standing</h2>

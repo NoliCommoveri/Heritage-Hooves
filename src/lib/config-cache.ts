@@ -233,8 +233,10 @@ export interface ConfigValues {
   /** Snapshotted onto listings.expires_game_day at listing time (CLAUDE.md §5.5) - retuning this
    * must never move a standing consignment listing's expiry. */
   consignment_listing_game_days: number;
-  consignment_batch_min: number;
-  consignment_batch_max: number;
+  /** How many horses of EACH breed currently in play (src/db/breeds.ts's getBreedsInPlay) the
+   * dealer mints per batch - e.g. 2 means two per breed, not two total. Live: retuning this only
+   * changes future batches. */
+  consignment_horses_per_breed: number;
   /** disease-test count per consigned horse -> weight, e.g. {"0":55,"2":25,...}. */
   consignment_test_count_weights: Record<string, number>;
   consignment_price_multiplier: number;
