@@ -158,7 +158,11 @@ export async function runNpcMarketListings(env: Env, gameDay: number, config: Co
   const policies = await listNpcPolicies(env);
   if (policies.length === 0) return;
 
-  const [breeds, disciplines, conditions] = await Promise.all([getBreeds(env), getDisciplines(env), getEnabledConditions(env)]);
+  const [breeds, disciplines, allConditions] = await Promise.all([getBreeds(env), getDisciplines(env), getEnabledConditions(env)]);
+  // Slice 0020: the panel this stage pays for is a genotype test - the twelve acquired conditions
+  // have no genotype to test (§2.7), so they're excluded here the same way the player-facing test
+  // page excludes them.
+  const conditions = allConditions.filter((c) => c.category !== 'acquired');
   const breedById = new Map(breeds.map((b) => [b.id, b]));
   const disciplineByCode = new Map(disciplines.map((d) => [d.code, d]));
 

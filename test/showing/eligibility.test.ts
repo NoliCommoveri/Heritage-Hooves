@@ -19,11 +19,26 @@ const ELIGIBLE_HORSE: EligibilityHorse = {
   gaited: false,
   alreadyEntered: false,
   barredByCondition: false,
+  hasOpenAcuteIncident: false,
+  hasDegenerativeIncident: false,
   // The location flag: the baseline horse is in the barn and settled.
   availability: { available: true },
 };
 
 describe('checkEligibility', () => {
+  // Slice 0020 §5.4/§10 test 9.
+  it('refuses a horse with an open acute incident', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, hasOpenAcuteIncident: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'acute_incident' });
+  });
+
+  it('refuses a horse with a resolved-degenerative incident', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, hasDegenerativeIncident: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'degenerative_incident' });
+  });
+
+  it('does not refuse a horse whose incident resolved clean or into management', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, hasOpenAcuteIncident: false, hasDegenerativeIncident: false }, QH_CLASS, 0)).toEqual({ ok: true });
+  });
+
   // The location flag. Checked above every fact about the horse itself, so a horse that is both out
   // at pasture and the wrong breed is told the thing it can actually do something about.
   it('refuses a horse that is out at pasture', () => {

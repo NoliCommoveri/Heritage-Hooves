@@ -13,6 +13,7 @@ import type { StableBalanceForAdmin, AdjustmentRow } from '../db/ledger';
 import type { ConditionCensusRow } from '../db/health';
 import type { LivingHorseAdminDisplay, RecentDeathAdminDisplay } from '../db/ageing';
 import type { CareAdminData } from '../db/care';
+import type { IncidentAdminRow } from '../db/acquiredConditions';
 import type { PinAttemptDisplayRow } from '../db/pin';
 import type { HorseSearchRow } from '../db/horses';
 import { horseDisplayName } from '../db/horses';
@@ -37,6 +38,7 @@ type AdminSubnavPage =
   | 'health'
   | 'ageing'
   | 'care'
+  | 'incidents'
   | 'npc'
   | 'consignment'
   | 'security'
@@ -58,6 +60,7 @@ function adminSubnav(active: AdminSubnavPage): NavLink[] {
     { label: 'Health', href: '/admin/health', active: active === 'health' },
     { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
     { label: 'Care', href: '/admin/care', active: active === 'care' },
+    { label: 'Incidents', href: '/admin/incidents', active: active === 'incidents' },
     { label: 'NPC stables', href: '/admin/npc', active: active === 'npc' },
     { label: 'Consignment dealer', href: '/admin/consignment', active: active === 'consignment' },
     { label: 'Security', href: '/admin/security', active: active === 'security' },
@@ -486,6 +489,56 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="care_modifier_max" value="${String(v.care_modifier_max)}">
       </label>
       <p class="muted">All ten are live - retuning any of them only changes the modifier computed on the next read, never a horse's own stored dates (last_farrier_game_day, last_vet_game_day). Watch /admin/care after a change.</p>
+      <h2>Acquired conditions</h2>
+      <p class="muted">Colic, laminitis, and the rest - see /admin/incidents for open counts and the real outcome split. Everything here is live, per-day risk (the base rate and weighting live in each condition's own trigger row, not here).</p>
+      <label>Workload window (game days)
+        <input type="text" inputmode="numeric" name="workload_window_game_days" value="${String(v.workload_window_game_days)}">
+      </label>
+      <label>Workload ceiling (show entries)
+        <input type="text" inputmode="numeric" name="workload_ceiling_entries" value="${String(v.workload_ceiling_entries)}">
+      </label>
+      <label>Daily onset probability ceiling (0-1)
+        <input type="text" inputmode="decimal" name="incident_probability_ceiling_per_game_day" value="${String(v.incident_probability_ceiling_per_game_day)}">
+      </label>
+      <label>Acute incident care penalty
+        <input type="text" inputmode="decimal" name="acute_incident_care_penalty" value="${String(v.acute_incident_care_penalty)}">
+      </label>
+      <label>Treat colic
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_colic" value="${String(v.acute_treatment_cost_colic)}">
+      </label>
+      <label>Treat choke
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_choke" value="${String(v.acute_treatment_cost_choke)}">
+      </label>
+      <label>Treat gastric ulcers
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_ulcers" value="${String(v.acute_treatment_cost_ulcers)}">
+      </label>
+      <label>Treat sporadic tying-up
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_tying_up" value="${String(v.acute_treatment_cost_tying_up)}">
+      </label>
+      <label>Treat strangles
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_strangles" value="${String(v.acute_treatment_cost_strangles)}">
+      </label>
+      <label>Treat hoof abscess / thrush
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_abscess" value="${String(v.acute_treatment_cost_abscess)}">
+      </label>
+      <label>Treat rain rot / mud fever
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_skin" value="${String(v.acute_treatment_cost_skin)}">
+      </label>
+      <label>Treat eye injury
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_eye_injury" value="${String(v.acute_treatment_cost_eye_injury)}">
+      </label>
+      <label>Treat laminitis
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_laminitis" value="${String(v.acute_treatment_cost_laminitis)}">
+      </label>
+      <label>Treat navicular
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_navicular" value="${String(v.acute_treatment_cost_navicular)}">
+      </label>
+      <label>Treat osteoarthritis
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_osteoarthritis" value="${String(v.acute_treatment_cost_osteoarthritis)}">
+      </label>
+      <label>Treat suspensory injury
+        <input type="text" inputmode="numeric" name="acute_treatment_cost_suspensory" value="${String(v.acute_treatment_cost_suspensory)}">
+      </label>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
@@ -1269,6 +1322,73 @@ export function renderCareAdminPage(params: { world: WorldRow; data: CareAdminDa
     </div>
   `;
   return shell(params.world, body, 'Care', 'care');
+}
+
+/**
+ * /admin/incidents (slice 0020 §8.4): per condition, how many are currently open, and the real
+ * outcome split across everything resolved so far - the tuning instrument §12 says to watch closely
+ * once this ships, the same role /admin/health already plays for the single-gene panel. One testing
+ * control: force an incident onto a chosen horse, bypassing the roll.
+ */
+export function renderIncidentsAdminPage(params: {
+  world: WorldRow;
+  census: (IncidentAdminRow & { cost: number })[];
+  horses: { id: number; name: string; stableName: string }[];
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  const rows = params.census.map((row) => {
+    const totalResolved = row.resolved + row.manageable + row.degenerative + row.death;
+    const deathRate = totalResolved > 0 ? `${((row.death / totalResolved) * 100).toFixed(1)}%` : raw('&mdash;');
+    return html`
+    <tr>
+      <td>${row.condition.name} (${row.condition.code})</td>
+      <td>${String(row.openCount)}</td>
+      <td>${String(row.resolved)}</td>
+      <td>${String(row.manageable)}</td>
+      <td>${String(row.degenerative)}</td>
+      <td>${String(row.death)}</td>
+      <td>${deathRate}</td>
+      <td>${String(row.cost)}</td>
+    </tr>`;
+  });
+
+  const horseOptions = params.horses.map((h) => html`<option value="${String(h.id)}">${h.name} (${h.stableName})</option>`);
+  const conditionOptions = params.census.map((row) => html`<option value="${row.condition.code}">${row.condition.name}</option>`);
+
+  const body = html`
+    <h1>Incidents</h1>
+    <p class="muted">The twelve acquired conditions - colic, laminitis, and the rest. Open counts and the real outcome split across everything that has ever resolved, the instrument these numbers should be checked against after real play (CLAUDE.md's slice 0020 entry).</p>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <div class="card">
+      <table>
+        <thead><tr><th>Condition</th><th>Open</th><th>Resolved</th><th>Manageable</th><th>Degenerative</th><th>Death</th><th>Death rate (of resolved)</th><th>Treatment cost</th></tr></thead>
+        <tbody>${rows.length ? rows : html`<tr><td colspan="8" class="muted">No conditions seeded yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Force an incident</h2>
+      <p class="muted">Testing control - writes the acute row directly onto the chosen horse, bypassing the roll, so the full lifecycle (onset, treatment, resolution) can be watched without waiting on real probabilities.</p>
+      <form method="post" action="/admin/incidents">
+        <input type="hidden" name="action" value="force_incident">
+        <label>Horse
+          <select name="horse_id" required>
+            <option value="">Choose a horse</option>
+            ${horseOptions}
+          </select>
+        </label>
+        <label>Condition
+          <select name="condition_code" required>
+            <option value="">Choose a condition</option>
+            ${conditionOptions}
+          </select>
+        </label>
+        <button type="submit" class="secondary">Force incident</button>
+      </form>
+    </div>
+  `;
+  return shell(params.world, body, 'Incidents', 'incidents');
 }
 
 /**

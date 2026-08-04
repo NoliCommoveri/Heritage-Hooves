@@ -19,7 +19,11 @@ export type EligibilityReason =
   // sentences on screen: "she's out at pasture" is a thing the owner chose and can undo today,
   // "she came in four days ago" is a wait with an end date.
   | 'at_pasture'
-  | 'settling_in';
+  | 'settling_in'
+  // Slice 0020 §5.4. Two reasons, not one, because they call for different sentences and different
+  // futures: an open incident clears the moment it resolves, a degenerative outcome never does.
+  | 'acute_incident'
+  | 'degenerative_incident';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: EligibilityReason };
 
@@ -35,6 +39,14 @@ export interface EligibilityHorse {
    * this is truth already visible without a test (§2.4), not knowledge, so no boundary is crossed
    * reading it here. */
   barredByCondition: boolean;
+  /** Slice 0020 §5.4: true when this horse has an open (state = 'acute') horse_conditions row for
+   * any of the twelve acquired conditions, computed by the caller from horse_conditions - this is
+   * truth, no test or knowledge boundary involved (§2.7). */
+  hasOpenAcuteIncident: boolean;
+  /** Slice 0020 §5.4: true when a past incident's own outcome resolved 'degenerative' - permanent,
+   * unlike hasOpenAcuteIncident which clears the moment the incident resolves. Read from the
+   * per-incident horse_conditions.outcome column, not conditions.bars_showing (§6.1/§6.2). */
+  hasDegenerativeIncident: boolean;
   /** src/engines/care/location.ts's workAvailability, already evaluated by the caller. Passed in
    * resolved rather than as (location, changedDay, settleDays) so there is exactly one
    * implementation of the settling rule in the codebase - breeding, which is not a show and never
@@ -61,6 +73,11 @@ export interface EligibilityClass {
 export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass, stableEntryCountInClass: number): EligibilityResult {
   if (horse.alreadyEntered) return { ok: false, reason: 'already_entered' };
   if (horse.barredByCondition) return { ok: false, reason: 'barred_by_condition' };
+  // Slice 0020 §5.4: checked alongside the single-gene bar, before availability - an open emergency
+  // or a permanent degenerative outcome are facts about the horse itself, the same footing
+  // barred_by_condition already stands on.
+  if (horse.hasOpenAcuteIncident) return { ok: false, reason: 'acute_incident' };
+  if (horse.hasDegenerativeIncident) return { ok: false, reason: 'degenerative_incident' };
   // Checked high, above every fact about the horse itself: a horse at pasture has not failed a
   // rule, it is simply not in work. Being told "she's out at pasture" is more use than being told
   // she is the wrong breed for a class she was never going to enter this month.

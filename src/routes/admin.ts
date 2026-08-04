@@ -16,6 +16,7 @@ import {
   renderHealthAdminPage,
   renderAgeingAdminPage,
   renderCareAdminPage,
+  renderIncidentsAdminPage,
   renderNpcAdminPage,
   renderConsignmentAdminPage,
   renderAdminSecurityPage,
@@ -87,6 +88,8 @@ import { parseImageCount } from '../lib/images';
 import { getEnabledConditions, conditionCensus } from '../db/health';
 import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward, ageModifierDistribution } from '../db/ageing';
 import { getCareAdminData, makeAllHorsesOverdue } from '../db/care';
+import { incidentAdminCensus, forceIncident, treatmentCostFor } from '../db/acquiredConditions';
+import { parseAcquiredTrigger } from '../engines/health/acquired';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -277,6 +280,20 @@ const NUMERIC_CONFIG_KEYS = [
   'stud_max_fee',
   'stud_default_season_cap',
   'npc_stud_season_cap',
+  'workload_window_game_days',
+  'workload_ceiling_entries',
+  'acute_treatment_cost_colic',
+  'acute_treatment_cost_choke',
+  'acute_treatment_cost_ulcers',
+  'acute_treatment_cost_tying_up',
+  'acute_treatment_cost_strangles',
+  'acute_treatment_cost_abscess',
+  'acute_treatment_cost_skin',
+  'acute_treatment_cost_eye_injury',
+  'acute_treatment_cost_laminitis',
+  'acute_treatment_cost_navicular',
+  'acute_treatment_cost_osteoarthritis',
+  'acute_treatment_cost_suspensory',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -309,6 +326,8 @@ const DECIMAL_CONFIG_KEYS = [
   'npc_buy_offer_min_quality',
   'npc_buying_budget_fraction',
   'npc_stud_fee_fraction',
+  'incident_probability_ceiling_per_game_day',
+  'acute_incident_care_penalty',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
@@ -904,6 +923,44 @@ export async function adminCareRoute(ctx: RequestContext, method: string): Promi
 
   await makeAllHorsesOverdue(ctx.env, ctx.world.game_day, ctx.config.values);
   return redirect('/admin/care?forced=1');
+}
+
+/**
+ * /admin/incidents - slice 0020 §8.4. Read-only per-condition open counts and outcome distribution
+ * (the tuning instrument §12 says to watch closely once this ships), plus one testing control:
+ * force an incident onto a chosen horse, bypassing the roll, so the full lifecycle can be watched
+ * without waiting on real probabilities - the same shape /admin/ageing's force-death and
+ * /admin/care's make-overdue controls already use.
+ */
+export async function adminIncidentsRoute(ctx: RequestContext, method: string): Promise<Response> {
+  async function page(error?: string, notice?: string): Promise<Response> {
+    const [census, livingHorses] = await Promise.all([incidentAdminCensus(ctx.env), listLivingHorsesForAdmin(ctx.env, ctx.world.game_day, ctx.config)]);
+    return htmlResponse(
+      renderIncidentsAdminPage({
+        world: ctx.world,
+        census: census.map((row) => ({ ...row, cost: treatmentCostFor(parseAcquiredTrigger(row.condition.trigger), ctx.config.values) })),
+        horses: livingHorses.map((h) => ({ id: h.id, name: h.name, stableName: h.stableName })),
+        error,
+        notice,
+      })
+    );
+  }
+
+  if (method === 'GET') {
+    const notice = new URL(ctx.request.url).searchParams.get('forced') ? 'Incident forced onto that horse.' : undefined;
+    return page(undefined, notice);
+  }
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.action !== 'force_incident') return notFound();
+
+  const horseId = Number(form.horse_id);
+  const conditionCode = typeof form.condition_code === 'string' ? form.condition_code : '';
+  if (!Number.isInteger(horseId) || conditionCode.length === 0) return page('Choose a horse and a condition.');
+
+  await forceIncident(ctx.env, horseId, conditionCode, ctx.world.game_day);
+  return redirect('/admin/incidents?forced=1');
 }
 
 /**

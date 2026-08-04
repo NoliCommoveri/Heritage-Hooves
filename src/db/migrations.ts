@@ -118,6 +118,10 @@ import m0114 from '../../migrations/0114_breed_pools_colour_pattern_loci.sql';
 import m0115 from '../../migrations/0115_config_pattern_penetrance.sql';
 import m0116 from '../../migrations/0116_config_colour_patterns_market.sql';
 import m0117 from '../../migrations/0117_condition_lethal_white.sql';
+import m0118 from '../../migrations/0118_horse_conditions_acquired.sql';
+import m0119 from '../../migrations/0119_horses_incident_check.sql';
+import m0120 from '../../migrations/0120_config_acquired_conditions.sql';
+import m0121 from '../../migrations/0121_seed_acquired_conditions.sql';
 
 export interface MigrationFile {
   name: string;
@@ -252,6 +256,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0115_config_pattern_penetrance.sql', sql: m0115 },
   { name: '0116_config_colour_patterns_market.sql', sql: m0116 },
   { name: '0117_condition_lethal_white.sql', sql: m0117 },
+  { name: '0118_horse_conditions_acquired.sql', sql: m0118 },
+  { name: '0119_horses_incident_check.sql', sql: m0119 },
+  { name: '0120_config_acquired_conditions.sql', sql: m0120 },
+  { name: '0121_seed_acquired_conditions.sql', sql: m0121 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

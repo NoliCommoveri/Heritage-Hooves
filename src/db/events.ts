@@ -40,6 +40,14 @@ import { nowUtcSeconds } from '../lib/time';
 // STALLION's owner only (src/db/stud.ts's bookStud): the mare's owner was there, pressing the
 // button, and gets no event of their own for the same reason a buyer never gets horse_sold:
 //   stud_booked -> {"v":1,"stallion_name":"...","mare_name":"...","mare_stable_name":"...","fee":500}
+// Slice 0020 §7.4 adds two more, same no-migration-needed reasoning:
+//   incident_onset    -> {"v":1,"horse_name":"...","condition_name":"...","condition_code":"COLIC",
+//                         "window_game_days":4,"treatment_cost":180}
+//   incident_resolved -> {"v":1,"horse_name":"...","condition_name":"...","condition_code":"COLIC",
+//                         "outcome":"resolved"|"manageable"|"degenerative"|"death","treated":true}
+// A 'death' outcome writes incident_resolved AND horse_died (the latter reused unchanged from slice
+// 0010, condition_code carrying the acquired condition's code) - the same two-event shape a lethal
+// single-gene condition never needed, because horse_conditions never carried an 'acute' row before.
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -53,7 +61,9 @@ export type EventKind =
   | 'horse_sold'
   | 'listing_expired'
   | 'consignment_batch'
-  | 'stud_booked';
+  | 'stud_booked'
+  | 'incident_onset'
+  | 'incident_resolved';
 
 export interface EventRow {
   id: number;

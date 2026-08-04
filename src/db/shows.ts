@@ -26,6 +26,7 @@ import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
 import { isBarredFromShowing, getEnabledConditions, conditionDeltaMapForHorses } from './health';
+import { acquiredBarringFlags, acuteCarePenaltyMapForHorses } from './acquiredConditions';
 import { careModifierForHorse, availabilityForHorse } from './care';
 import { ageModifierForHorse } from './ageing';
 
@@ -429,6 +430,7 @@ export async function checkHorseEligibilityForClass(
   const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
   const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear, patternSeed, config.values.pattern_penetrance);
   const barredByCondition = await isBarredFromShowing(env, genotype);
+  const { hasOpenAcuteIncident, hasDegenerativeIncident } = await acquiredBarringFlags(env, horse.id);
 
   return checkEligibility(
     {
@@ -439,6 +441,8 @@ export async function checkHorseEligibilityForClass(
       gaited: phenotype.gaited,
       alreadyEntered: existing !== null,
       barredByCondition,
+      hasOpenAcuteIncident,
+      hasDegenerativeIncident,
       // The location flag: needs pasture_settle_game_days, which is why this function now takes the
       // live config rather than the two loose numbers it used to.
       availability: availabilityForHorse(horse, config.values, gameDay),
@@ -718,6 +722,11 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     gameDay,
     config.values.unmanaged_condition_penalty
   );
+  // Slice 0020 §2.9: careModifier's conditionDelta slot gains a second contributor - normally a
+  // horse with an open incident was already refused entry (§5.4), but one entered before the
+  // incident started and not yet judged still scores with the penalty applied, same as its own
+  // Care card would show.
+  const acuteDeltaByHorseId = await acuteCarePenaltyMapForHorses(env, Array.from(horseById.keys()), config.values.acute_incident_care_penalty);
 
   // Slice 0012 §8.2: branch once, at the top, on class_type. Everything after this block (NPC
   // top-up already happened above, placings/summaries/prizes/events below) is shared and
@@ -746,7 +755,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
     const noise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
     const feedLevel = feedLevelByStableId.get(horse.owner_stable_id) ?? 'standard';
-    const conditionDelta = conditionDeltaByHorseId.get(horse.id)?.delta ?? 0;
+    const conditionDelta = (conditionDeltaByHorseId.get(horse.id)?.delta ?? 0) + (acuteDeltaByHorseId.get(horse.id) ?? 0);
     const care = careModifierForHorse(horse, feedLevel, config.values, gameDay, conditionDelta);
     // Slice 0014 §4.3: a horse's age is not a barn-wide thing like feed, so no batching is needed
     // the way feedLevelByStableId batches one lookup per stable - this is a pure function of a

@@ -116,6 +116,34 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = `The consignment dealer has ${String(count)} new horse${count === 1 ? '' : 's'} on the market. Standing for 90 game days, or until claimed.`;
       break;
     }
+    // Slice 0020 §7.4: the acute-incident lifecycle's two events. Calm and specific, per §4.5's own
+    // instruction that the wording never read as blame - the same register slice 0010 §5.6
+    // established for GBED, applied here to an incident with no genetic cause at all.
+    case 'incident_onset': {
+      const name = str('horse_name', 'A horse');
+      const condition = str('condition_name', 'a condition');
+      const window = typeof payload.window_game_days === 'number' ? payload.window_game_days : null;
+      const cost = typeof payload.treatment_cost === 'number' ? payload.treatment_cost : null;
+      const windowSentence = window !== null ? ` Call the vet within ${String(window)} day${window === 1 ? '' : 's'}${cost !== null ? ` - ${String(cost)}` : ''}.` : '';
+      sentence = `${name} has ${condition}.${windowSentence}`;
+      break;
+    }
+    case 'incident_resolved': {
+      const name = str('horse_name', 'A horse');
+      const condition = str('condition_name', 'a condition');
+      const outcome = str('outcome', 'resolved');
+      const treated = payload.treated === true;
+      const outcomeSentence =
+        outcome === 'resolved'
+          ? `${name} has recovered from ${condition}.`
+          : outcome === 'manageable'
+            ? `${name}'s ${condition} has settled into an ongoing management plan.`
+            : outcome === 'degenerative'
+              ? `${name}'s ${condition} has left a lasting problem, and ${name} can no longer be shown.`
+              : `${name} did not survive ${condition}. ${name} stays in the barn's records, in every pedigree ${name} belongs to, exactly as ${name} was.`;
+      sentence = treated || outcome === 'death' ? outcomeSentence : `${outcomeSentence} (untreated)`;
+      break;
+    }
     default:
       sentence = row.kind;
   }
