@@ -25,6 +25,7 @@ const KIND_LABELS: Record<LedgerKind, string> = {
   commission: 'Market commission',
   stud_fee_paid: 'Stud fee paid',
   stud_fee_received: 'Stud fee received',
+  pet_home_payout: 'Went to a pet home',
 };
 
 export function renderMoneyPage(params: {

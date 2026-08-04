@@ -296,6 +296,8 @@ const NUMERIC_CONFIG_KEYS = [
   'acute_treatment_cost_navicular',
   'acute_treatment_cost_osteoarthritis',
   'acute_treatment_cost_suspensory',
+  'npc_balance_floor_interval_game_days',
+  'npc_buy_offer_min_balance',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -330,6 +332,7 @@ const DECIMAL_CONFIG_KEYS = [
   'npc_stud_fee_fraction',
   'incident_probability_ceiling_per_game_day',
   'acute_incident_care_penalty',
+  'pet_home_payout_fraction',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {
@@ -977,7 +980,7 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
     // disabled breed is closed to - existing policies targeting a since-disabled breed are untouched
     // (this only feeds the "found a new stable" dropdown, per renderNpcAdminPage's own use of it).
     const [stables, ceilingSchedule, breeds, disciplines] = await Promise.all([
-      listNpcStablesForAdmin(ctx.env, ctx.world.game_day, ctx.config.values.game_days_per_year),
+      listNpcStablesForAdmin(ctx.env, ctx.world.game_day, ctx.config.values.game_days_per_year, ctx.config.values.npc_balance_floor_interval_game_days),
       listNpcCeilingSchedule(ctx.env),
       getBreedsInPlay(ctx.env),
       getDisciplines(ctx.env),
@@ -1038,13 +1041,15 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
     const capacity = Number(form.capacity);
     const marketPriceMultiplier = Number(form.market_price_multiplier);
     const marketPriceSpread = Number(form.market_price_spread);
+    const balanceFloor = Number(form.balance_floor);
 
     if (!name || !prefix || !personalityCode || !targetKind) return page('Fill in a name, a prefix, a personality label and a target kind.');
     if (targetKind === 'conformation' && !targetBreedId) return page('Choose a breed for a conformation-specialist stable.');
     if (targetKind === 'ability' && !targetDisciplineCode) return page('Choose a discipline for a discipline-barn stable.');
-    if (![selectionNoiseSd, retentionBias, breedingIntervalGameDays, maxPairsPerCycle, capacity, marketPriceMultiplier, marketPriceSpread].every(Number.isFinite)) {
-      return page('Every breeding-policy number, including the market price multiplier and spread, must be filled in.');
+    if (![selectionNoiseSd, retentionBias, breedingIntervalGameDays, maxPairsPerCycle, capacity, marketPriceMultiplier, marketPriceSpread, balanceFloor].every(Number.isFinite)) {
+      return page('Every breeding-policy number, including the market price multiplier, spread and income floor, must be filled in.');
     }
+    if (balanceFloor < 0) return page('The income floor cannot be negative - use 0 to switch it off for this stable.');
 
     const result = await foundNpcStable(ctx.env, {
       name,
@@ -1060,6 +1065,7 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
       capacity,
       marketPriceMultiplier,
       marketPriceSpread,
+      balanceFloor,
       gameDay: ctx.world.game_day,
     });
     if (!result.ok) return page('That prefix is already taken - choose another.');

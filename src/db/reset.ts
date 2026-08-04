@@ -203,8 +203,11 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
     statements.push(
       env.DB
         .prepare(
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'volume_breeder', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 12.0, 0.05, 60, 4, 0.85, 0.15)`
+          // balance_floor mirrors migrations/0126 - a reset that recreated these stables without it
+          // would leave every one of them with the floor switched off (the column defaults to 0),
+          // and nobody would notice until the market quietly stopped moving.
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'volume_breeder', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 12.0, 0.05, 60, 4, 0.85, 0.15, 3000)`
         )
         .bind(SHOW_BARN_PREFIX)
     );
@@ -227,8 +230,8 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
     statements.push(
       env.DB
         .prepare(
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'conformation_specialist', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 3.0, 0.10, 180, 2, 1.25, 0.08)`
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_breed_id, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'conformation_specialist', 'conformation', (SELECT id FROM breeds WHERE code = 'QH'), 3.0, 0.10, 180, 2, 1.25, 0.08, 5000)`
         )
         .bind(CEDAR_HOLLOW_PREFIX)
     );
@@ -251,8 +254,8 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
     statements.push(
       env.DB
         .prepare(
-          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread)
-           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'discipline_barn', 'ability', 'barrels', 4.0, 0.10, 150, 2, 1.10, 0.10)`
+          `INSERT INTO npc_policy (stable_id, personality_code, target_kind, target_discipline_code, selection_noise_sd, retention_bias, breeding_interval_game_days, max_pairs_per_cycle, market_price_multiplier, market_price_spread, balance_floor)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), 'discipline_barn', 'ability', 'barrels', 4.0, 0.10, 150, 2, 1.10, 0.10, 5000)`
         )
         .bind(WILLOW_CREEK_BARRELS_PREFIX)
     );

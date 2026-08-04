@@ -18,11 +18,17 @@
 // stables for no reason. Both mechanisms also exclude geldings - the entire point of NPC buying is
 // outcross breeding stock (overview §10f), and a gelding can never be bred.
 //
-// **The named risk (§12):** NPC balances are real and never topped up automatically. A stable that
-// overspends on either route simply stops buying until it earns more (Part B is its income) or an
-// operator adjusts it by hand from /admin/money. Nothing here works around that - both routes read
-// the stable's live balance and free stalls fresh every tick, so a broke or full stable naturally
-// falls silent rather than erroring.
+// **The named risk (§12):** NPC balances are real. A stable that overspends on either route simply
+// stops buying until it earns more. Nothing here works around that - both routes read the stable's
+// live balance and free stalls fresh every tick, so a broke or full stable naturally falls silent
+// rather than erroring.
+//
+// What has since changed: §12 assumed balances are *never* topped up automatically, and that stopped
+// being survivable once NPC stables were barred from showing unless a player enters (their prize
+// income became a function of how much the children happen to show). src/db/npcFinance.ts now gives
+// them a once-a-game-year income floor and pays them for listings that time out unsold. Both routes
+// here are unchanged apart from the balance gate below - they still read a real balance that can
+// still run out, and an operator can still adjust one by hand from /admin/money.
 
 import type { Env } from '../types';
 import type { Config } from '../lib/config-cache';
@@ -51,7 +57,12 @@ async function refreshOneOffer(
 ): Promise<void> {
   const cfg = config.values;
   const stable = await getStableById(env, policy.stable_id);
-  if (!stable || !canTakeOnCost(stable.balance)) {
+  // npc_buy_offer_min_balance, not just canTakeOnCost: maxPrice below floors at market_min_value
+  // (50), so a stable sitting at a balance of 0 used to keep advertising a standing offer at 50 for
+  // a horse worth a thousand. A child reads that as the game being broken, not as a bad deal - a
+  // stable with no money should have no offer up at all. See src/db/npcFinance.ts's header for the
+  // two mechanisms that are meant to keep a stable above this line in the first place.
+  if (!stable || !canTakeOnCost(stable.balance) || stable.balance < cfg.npc_buy_offer_min_balance) {
     await deactivateOfferForStable(env, policy.stable_id);
     return;
   }
@@ -135,7 +146,11 @@ async function runOnePurchasePolicy(
 ): Promise<void> {
   const cfg = config.values;
   const stable = await getStableById(env, policy.stable_id);
-  if (!stable || !canTakeOnCost(stable.balance)) return;
+  // The same balance gate the standing offer uses above, for the same reason and from the same key -
+  // a stable too broke to advertise an offer has no business shopping open listings either, and
+  // keeping the two mechanisms on one threshold means they can never disagree about whether a
+  // stable is solvent.
+  if (!stable || !canTakeOnCost(stable.balance) || stable.balance < cfg.npc_buy_offer_min_balance) return;
 
   const aliveCount = await countAliveHorses(env, policy.stable_id);
   let stallsLeft = stable.capacity - aliveCount;

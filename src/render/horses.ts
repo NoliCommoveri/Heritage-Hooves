@@ -1094,8 +1094,11 @@ export function renderHorsePage(params: {
       ? html`<p class="notice">${displayNameFor(h)} is getting on in years now, and ${possessive === 'her' ? 'she' : 'he'} is starting to slow down. ${possessive === 'her' ? 'She' : 'He'} can still be shown and still be bred, and there is nothing that needs treating - this is just what getting old looks like.</p>`
       : raw('');
 
+  // Both one-way exits sit together: a child weighing one should see the other. The pet home pays
+  // and takes the horse; retiring away pays nothing and is for a horse going to somebody known.
   const retireLink = params.canManage
-    ? html`<p><a href="/horses/${String(h.id)}/retire">Retire ${displayNameFor(h)} away</a></p>`
+    ? html`<p><a href="/horses/${String(h.id)}/pet-home">Send ${displayNameFor(h)} to a pet home</a></p>
+           <p><a href="/horses/${String(h.id)}/retire">Retire ${displayNameFor(h)} away</a></p>`
     : raw('');
 
   // Slice 0014 §8.1: silence for 'prime' is the correct display for "no effect" - only past_peak
@@ -1485,11 +1488,90 @@ export function renderRetireConfirmPage(params: {
   });
 }
 
+/**
+ * The pet home confirmation (src/db/petHome.ts). Deliberately shaped like the retire-away page
+ * above rather than like the market's own listing form - it is the same kind of decision, one that
+ * cannot be undone, and a child who has seen one should recognise the other.
+ *
+ * Two things this page must be honest about, because they are the whole reason a child might regret
+ * it: what the horse would fetch from a real buyer (so the pet home reads as the poor deal it is),
+ * and whether the horse will be gone completely or stay on the past-horses list.
+ */
+export function renderPetHomeConfirmPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  ownerStable: StableRow;
+  hasFoundingOffer: boolean;
+  horse: HorseRow;
+  ageYears: number;
+  appraisedValue: number;
+  payout: number;
+  willBeDeleted: boolean;
+  warnings: string[];
+  error?: string;
+}): SafeHtml {
+  const h = params.horse;
+  const possessive = h.sex === 'mare' ? 'her' : 'his';
+  const subject = h.sex === 'mare' ? 'She' : 'He';
+  const ageText = params.ageYears < 1 ? 'under a year old' : `${String(Math.floor(params.ageYears))} years old`;
+  const portrait = h.image_url ? html`<img class="horse-portrait" src="${h.image_url}" width="240" alt="">` : raw('');
+
+  const body = html`
+    <h1>Send ${displayNameFor(h)} to a pet home</h1>
+    ${errorBox(params.error)}
+    <div class="card">
+      ${portrait}
+      <p><strong>${displayNameFor(h)}</strong>, ${ageText}.</p>
+      <p>A pet home will take ${displayNameFor(h)} today and pay <strong>${String(params.payout)}</strong>.</p>
+      <p class="notice">
+        ${subject} is worth about ${String(params.appraisedValue)} to a real buyer. A pet home always pays less than that -
+        it is somewhere for a horse to go when nobody wants to buy ${possessive === 'her' ? 'her' : 'him'}, not a way to
+        make money. If you are not in a hurry, listing ${possessive === 'her' ? 'her' : 'him'} on the market is worth trying first.
+      </p>
+      <p><strong>This cannot be undone.</strong></p>
+      ${
+        params.willBeDeleted
+          ? html`<p class="notice">
+              ${displayNameFor(h)} has never been shown and has never had a foal, so once ${possessive === 'her' ? 'she' : 'he'} goes
+              there will be nothing left on ${possessive} page and ${possessive === 'her' ? 'she' : 'he'} will not appear in your past
+              horses. If you want to keep a record of ${possessive === 'her' ? 'her' : 'him'}, take a screenshot first.
+            </p>`
+          : html`<p>${possessive === 'her' ? 'Her' : 'His'} pedigree and show record stay. Any foals ${possessive === 'her' ? 'she has had' : 'he has had'} keep their family tree, and you will still find ${possessive === 'her' ? 'her' : 'him'} under your past horses.</p>`
+      }
+      ${params.warnings.map((w) => html`<p class="notice">${w}</p>`)}
+      <form method="post" action="/horses/${String(h.id)}/pet-home">
+        <label class="confirm-checkbox">
+          <input type="checkbox" name="confirm" value="yes" required>
+          Yes, I understand this cannot be undone.
+        </label>
+        <button type="submit">Send ${displayNameFor(h)} to a pet home for ${String(params.payout)}</button>
+      </form>
+      <p><a href="/horses/${String(h.id)}">Cancel</a></p>
+    </div>
+  `;
+  return pageShell({
+    title: `Send ${displayNameFor(h)} to a pet home`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
+    body,
+  });
+}
+
 /** Slice 0011 §8.1: how a past horse ended, in plain words - kept deliberately generic rather than
  * naming a specific condition (§3.5: no special layout, no tribute card - the horse's own page
  * already carries that detail for a condition death). */
 function endedDescription(h: HorseRow): string {
-  if (h.status === 'removed') return 'Retired away';
+  // A pet-home horse is 'removed' too, so this has to read end_reason before falling through to the
+  // generic word - otherwise every horse sent to a pet home would claim it was retired away.
+  // Only horses with a record behind them reach this list at all: one that never showed and never
+  // had a foal is deleted outright rather than kept (src/db/horseRemoval.ts).
+  if (h.status === 'removed') return h.end_reason === 'pet_home' ? 'Went to a pet home' : 'Retired away';
   if (h.end_reason === 'old_age') return 'Died of old age';
   return 'Died';
 }

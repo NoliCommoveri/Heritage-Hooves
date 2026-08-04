@@ -123,6 +123,9 @@ import m0122 from '../../migrations/0122_horse_conditions_acquired.sql';
 import m0123 from '../../migrations/0123_horses_incident_check.sql';
 import m0124 from '../../migrations/0124_config_acquired_conditions.sql';
 import m0125 from '../../migrations/0125_seed_acquired_conditions.sql';
+import m0126 from '../../migrations/0126_npc_policy_balance_floor.sql';
+import m0127 from '../../migrations/0127_config_npc_finance.sql';
+import m0128 from '../../migrations/0128_ledger_add_pet_home_kind.sql';
 
 export interface MigrationFile {
   name: string;
@@ -262,6 +265,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0123_horses_incident_check.sql', sql: m0123 },
   { name: '0124_config_acquired_conditions.sql', sql: m0124 },
   { name: '0125_seed_acquired_conditions.sql', sql: m0125 },
+  { name: '0126_npc_policy_balance_floor.sql', sql: m0126 },
+  { name: '0127_config_npc_finance.sql', sql: m0127 },
+  { name: '0128_ledger_add_pet_home_kind.sql', sql: m0128 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

@@ -257,6 +257,20 @@ export interface ConfigValues {
   /** Live. The fraction of an NPC stable's current balance either buying mechanism will commit to
    * a single horse - keeps one purchase from draining a whole season's takings at once. */
   npc_buying_budget_fraction: number;
+  /** NPC solvency (see src/db/npcFinance.ts). Live. How often the income floor is applied. The
+   * floor itself is per-stable (npc_policy.balance_floor), because how much buying power a stable
+   * needs is a property of its personality; how often it is checked is game-wide. Shortening this
+   * raises the ceiling on how much money the floor can create - see that file's header. */
+  npc_balance_floor_interval_game_days: number;
+  /** The pet home (src/db/petHome.ts). Live. What a horse fetches from a pet home, as a fraction of
+   * its appraised value - one number for both ways in, a player choosing it and an NPC stable's
+   * listing timing out. Well below 1.0 on purpose: a pet home has to be a worse deal than selling
+   * to a player, or nobody would ever use the market. */
+  pet_home_payout_fraction: number;
+  /** Live. An NPC stable stops advertising a standing buy offer, and stops shopping open listings,
+   * once its balance falls below this. Guards against a broke stable posting an offer at the
+   * market_min_value floor, which reads to a child as a broken game rather than a bad deal. */
+  npc_buy_offer_min_balance: number;
   /** Slice 0017 Part D (§13). Live. A typo guard on the stud fee field, the same job
    * market_max_price does for a sale's asking price. */
   stud_max_fee: number;

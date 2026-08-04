@@ -10,6 +10,7 @@ import {
   renderImagePickerPage,
   renderTestPage,
   renderRetireConfirmPage,
+  renderPetHomeConfirmPage,
   renderPastHorsesPage,
   displayNameFor,
   type BreedPreview,
@@ -43,6 +44,8 @@ import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listB
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
 import { formatCalendarDate } from '../lib/calendar';
 import { buildEndHorseParticipationStatements, ageModifierForHorse } from '../db/ageing';
+import { petHomePayout, sellHorseToPetHome } from '../db/petHome';
+import { isHorseDeletable } from '../db/horseRemoval';
 import { ageState } from '../engines/ageing/lifespan';
 import { isInSeason, ticksUntilNextEstrus } from '../engines/breeding/cycle';
 import { isInBreedingSeason, nextSeasonStartGameDay } from '../engines/breeding/season';
@@ -1545,6 +1548,79 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
   const cost = service === 'farrier' ? cfg.farrier_cost : cfg.vet_wellness_cost;
   await callOneHorseCare(ctx.env, { horse, ownerStableId: ownerStable.id, service, cost, gameDay: ctx.world.game_day });
   return redirect(`/horses/${String(horseId)}?care_done=${service}`);
+}
+
+/**
+ * /horses/:id/pet-home - the player's half of the pet home (src/db/petHome.ts). Owner-only, the same
+ * notFound()-for-a-non-owner shape every horse-scoped route in this file uses, and shaped
+ * deliberately like horseRetireRoute below: same confirmation, same one-way warning.
+ *
+ * Spends no turn. Retiring a horse away already costs none (slice 0011 §6.4), and this is the same
+ * decision with money attached - a child who has run out of turns should still be able to stop
+ * paying board on a horse they have given up on. It is also never blocked by canTakeOnCost: it pays
+ * *in*, and a stable in debt is exactly the one that needs it.
+ *
+ * An open market listing or stud listing is withdrawn rather than refused, matching horseRetireRoute
+ * - a child who wants a horse gone should not have to go and un-list it first to be allowed to say
+ * so.
+ */
+export async function horsePetHomeRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const appraisal = await appraiseHorseForStable(ctx.env, horse, ownerStable.id, ctx.world.game_day, ctx.config.values);
+  const payout = petHomePayout(appraisal.value, ctx.config);
+
+  const render = async (error?: string) => {
+    const [hasFoundingOffer, warnings, willBeDeleted] = await Promise.all([
+      hasWaitingFoundingOffer(ctx.env, ownerStable.id),
+      buildRetireWarnings(ctx, horse),
+      isHorseDeletable(ctx.env, horse.id),
+    ]);
+    return htmlResponse(
+      renderPetHomeConfirmPage({
+        world: ctx.world,
+        isAdmin: ctx.account!.is_admin === 1,
+        actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
+        ownerStable,
+        hasFoundingOffer,
+        horse,
+        ageYears: (ctx.world.game_day - horse.born_game_day) / ctx.config.values.game_days_per_year,
+        appraisedValue: appraisal.value,
+        payout,
+        willBeDeleted,
+        warnings,
+        error,
+      })
+    );
+  };
+
+  if (method === 'GET') return render();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.confirm !== 'yes') return render("Tick the box to confirm - sending a horse to a pet home can't be undone.");
+
+  await sellHorseToPetHome(ctx.env, {
+    horse,
+    sellerStableId: ownerStable.id,
+    appraisedValue: appraisal.value,
+    gameDay: ctx.world.game_day,
+    config: ctx.config,
+    // In the same batch as the payment and the departure, so no `status = 'open'` race can leave a
+    // live listing pointing at a horse that has gone - the reasoning horseRetireRoute's own listing
+    // withdrawal already follows.
+    withdrawStatements: [
+      ...buildWithdrawListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
+      ...buildWithdrawStudListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
+    ],
+  });
+
+  return redirect(`/stables/${String(ownerStable.id)}/horses`);
 }
 
 /**
