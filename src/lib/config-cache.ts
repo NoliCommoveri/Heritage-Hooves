@@ -274,6 +274,33 @@ export interface ConfigValues {
    * shift if this is retuned, which is deliberate (§5.5: setting both to 1.0 disables the
    * mechanism). Only O and SW1 have entries; every other pattern/dilution locus is fully penetrant. */
   pattern_penetrance: PatternPenetrance;
+  /** Slice 0020 §2.4/§4.2. Live - read fresh at each onset check. Workload, for now, is show-entry
+   * frequency: how many game days back the count looks, and how many entries in that window reads
+   * as "at maximum workload contribution" (1.0, before ceiling clamps in the engine anyway). */
+  workload_window_game_days: number;
+  workload_ceiling_entries: number;
+  /** Slice 0020 §4.2. The backstop on every acquired condition's own daily probability - no
+   * combination of neglect, workload, feed and weak robustness can push a single condition above
+   * this many per game day. */
+  incident_probability_ceiling_per_game_day: number;
+  /** Slice 0020 §6.4. One key per condition, read via conditions.trigger.treatmentCostKey - live,
+   * a price change affects the next incident's treatment, never re-prices one already paid for. */
+  acute_treatment_cost_colic: number;
+  acute_treatment_cost_choke: number;
+  acute_treatment_cost_ulcers: number;
+  acute_treatment_cost_tying_up: number;
+  acute_treatment_cost_strangles: number;
+  acute_treatment_cost_abscess: number;
+  acute_treatment_cost_skin: number;
+  acute_treatment_cost_eye_injury: number;
+  acute_treatment_cost_laminitis: number;
+  acute_treatment_cost_navicular: number;
+  acute_treatment_cost_osteoarthritis: number;
+  acute_treatment_cost_suspensory: number;
+  /** Slice 0020 §2.9. Flat, applied once while any horse_conditions row reads state = 'acute',
+   * regardless of which of the twelve - not a per-condition tuning lever. Feeds
+   * careModifier's conditionDelta slot alongside slice 0014's unmanaged-genetic-condition penalty. */
+  acute_incident_care_penalty: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

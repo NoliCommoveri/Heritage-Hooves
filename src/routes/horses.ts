@@ -90,6 +90,7 @@ import {
   buildWithdrawListingsForHorseStatement,
 } from '../db/listings';
 import { createStudListing, getActiveStudListingForHorse, bookingsThisSeasonCount, buildWithdrawStudListingsForHorseStatement } from '../db/stud';
+import { incidentsForHorse, treatOneIncident, openIncidentHorseIds, acuteCarePenaltyMapForHorses } from '../db/acquiredConditions';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
@@ -251,6 +252,8 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   // same discipline getKnownGenotypeSubjectsForHorses was already built for (slice 0014 §5.2).
   const creamKnownRows = await getKnownGenotypeSubjectsForHorses(ctx.env, horses.map((h) => h.id));
   const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
+  // Slice 0020 §8.3: one query for the whole barn's open incidents, not one per row.
+  const openIncidentIds = await openIncidentHorseIds(ctx.env, horses.map((h) => h.id));
 
   const rows = await Promise.all(
     horses.map(async (horse) => ({
@@ -267,6 +270,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
       visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions),
+      hasOpenIncident: openIncidentIds.has(horse.id),
       // Slice 0011 §4.3/§8.1: one glanceable marker for a living horse's own Veteran/Failing state
       // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
       // already has that logic; this is additive to it, not a replacement).
@@ -583,7 +587,9 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
  * Anyone who is neither gets names only.
  */
 async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boolean, ownerStableId: number, horseId: number, genotype: Genotype): Promise<HealthConditionDisplay[]> {
-  const conditions = await getEnabledConditions(ctx.env);
+  // Slice 0020: the twelve acquired conditions (colic, laminitis, and the rest) have no genotype to
+  // test and no knowledge boundary (§2.7) - they belong on their own Incidents card, not this one.
+  const conditions = (await getEnabledConditions(ctx.env)).filter((c) => c.category !== 'acquired');
 
   if (isAdmin && !owner) {
     return conditions.map((c) => {
@@ -722,11 +728,27 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
     horse.status === 'alive' ? await managementPlanRowsForHorse(ctx.env, horse, enabledConditions, ctx.world.game_day, ctx.config.values) : [];
   const conditionDeltaMap =
     horse.status === 'alive' ? await conditionDeltaMapForHorses(ctx.env, [horse], enabledConditions, ctx.world.game_day, ctx.config.values.unmanaged_condition_penalty) : null;
+  // Slice 0020 §2.9: careModifier's conditionDelta slot gains a second contributor - a flat penalty
+  // while any acquired condition reads state = 'acute', summed with the unmanaged-single-gene delta
+  // above rather than a second modifier slot.
+  const acuteDeltaMap =
+    horse.status === 'alive' ? await acuteCarePenaltyMapForHorses(ctx.env, [horse.id], ctx.config.values.acute_incident_care_penalty) : null;
   const care =
     horse.status === 'alive'
-      ? careCardViewFor(horse, ownerStable.feed_level, ctx.config.values, ctx.world.game_day, conditionDeltaMap?.get(horse.id)?.delta ?? 0)
+      ? careCardViewFor(
+          horse,
+          ownerStable.feed_level,
+          ctx.config.values,
+          ctx.world.game_day,
+          (conditionDeltaMap?.get(horse.id)?.delta ?? 0) + (acuteDeltaMap?.get(horse.id) ?? 0)
+        )
       : null;
   const ageModifier = ageModifierForHorse(horse.born_game_day, ctx.config.values, ctx.world.game_day);
+  // Slice 0020 §8.2: the Incidents card - open acute incidents and past outcomes, truth with no
+  // knowledge boundary to cross (§2.7), so shown to the owner and admin alike; nobody else sees it.
+  const incidents = owner || isAdmin ? await incidentsForHorse(ctx.env, horse.id, ctx.world.game_day, ctx.config.values) : { open: [], history: [] };
+  const incidentError = params.get('incident_error') ?? undefined;
+  const incidentNotice = params.get('incident_treated') ? 'Vet called.' : undefined;
 
   // Slice 0017 §6.3/§2.7: the listing state, and the guide value - which the owner sees and nobody
   // else does, admin included. It is computed against the OWNER's knowledge rows, since a
@@ -801,6 +823,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       defaultStudSeasonCap: ctx.config.values.stud_default_season_cap,
       studError: params.get('stud_error') ?? undefined,
       studNotice: params.get('stud_notice') ?? undefined,
+      incidents,
+      incidentError,
+      incidentNotice,
     })
   );
 }
@@ -1085,7 +1110,10 @@ async function buildTestPageRows(
   horseId: number,
   genotype: Genotype
 ): Promise<{ rows: TestConditionOption[]; untested: ReturnType<typeof untestedConditions> }> {
-  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  // Slice 0020: acquired conditions have nothing to test - no genotype, no knowledge boundary
+  // (§2.7) - so they never appear on the purchase page.
+  const [allConditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  const conditions = allConditions.filter((c) => c.category !== 'acquired');
   const untested = untestedConditions(conditions, knowledge);
   const untestedCodes = new Set(untested.map((c) => c.code));
 
@@ -1517,6 +1545,47 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
   const cost = service === 'farrier' ? cfg.farrier_cost : cfg.vet_wellness_cost;
   await callOneHorseCare(ctx.env, { horse, ownerStableId: ownerStable.id, service, cost, gameDay: ctx.world.game_day });
   return redirect(`/horses/${String(horseId)}?care_done=${service}`);
+}
+
+/**
+ * /horses/:id/treat - slice 0020 §8.1. Owner-only, the same notFound()-for-a-non-owner shape every
+ * horse-scoped route in this file uses. Re-derives the open incident from horse_conditions itself
+ * (never trusted from the form, the same discipline slice 0010 §7.1 step 1 uses for a test
+ * purchase). Refused via canTakeOnCost if the stable is in the red - a discretionary purchase, even
+ * an urgent one, the same rule callOneHorseCare and callOneConditionManagement already follow. No
+ * turn spent, matching every other care-shaped purchase in this game (slice 0013 §2.2).
+ */
+export async function horseTreatRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+
+  const form = await parseForm(ctx.request);
+  const conditionCode = typeof form.condition_code === 'string' ? form.condition_code : null;
+  if (!conditionCode) return redirect(`/horses/${String(horseId)}`);
+
+  const { open } = await incidentsForHorse(ctx.env, horse.id, ctx.world.game_day, ctx.config.values);
+  const incident = open.find((o) => o.conditionCode === conditionCode);
+  if (!incident) return redirect(`/horses/${String(horseId)}`);
+
+  if (!canTakeOnCost(ownerStable.balance)) {
+    return redirect(
+      `/horses/${String(horseId)}?incident_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`)}`
+    );
+  }
+
+  const treated = await treatOneIncident(ctx.env, {
+    horseId: horse.id,
+    horseName: displayNameFor(horse),
+    ownerStableId: ownerStable.id,
+    conditionCode: incident.conditionCode,
+    cost: incident.cost,
+    gameDay: ctx.world.game_day,
+  });
+  if (!treated) return redirect(`/horses/${String(horseId)}`);
+  return redirect(`/horses/${String(horseId)}?incident_treated=1`);
 }
 
 /**
