@@ -4,8 +4,10 @@
 import type { Phenotype, PatternCode } from './expression';
 
 // Slice 0021 §5.6. Plain-English words for each pattern code, in the sentence rather than the raw
-// code - 'frame' alone reads as a typo, 'frame overo' is the name a breeder would use.
-const PATTERN_LABELS: Record<PatternCode, string> = {
+// code - 'frame' alone reads as a typo, 'frame overo' is the name a breeder would use. Exported for
+// slice 0021 Part D (§6.2): foal-colours.ts's foal preview composes the same words onto a predicted
+// colour name, so there is exactly one place a pattern code becomes English.
+export const PATTERN_LABELS: Record<PatternCode, string> = {
   tobiano: 'tobiano',
   frame: 'frame overo',
   splash: 'splash',

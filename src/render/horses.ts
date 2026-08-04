@@ -740,12 +740,53 @@ export interface ColourInferenceRow {
   summary: string;
 }
 
-function colourCard(params: { rows: ColourInferenceRow[]; canTest: boolean; horseId: number }): SafeHtml {
+/** Slice 0021 Part F (§7.2): which of the testing page's four presentational groups a locus code
+ * belongs to. Presentational only, not the source of truth (loci.category remains that) - PATN1
+ * sits in Patterns despite being category 'modifier' because that's where a player looking for the
+ * appaloosa genes would look for it, and Grey joins Dilutions for the same reason (it modifies how
+ * the base colour shows, same as cream/dun/champagne/silver) even though the slice's own §7.2 text
+ * only named E/A/CR/D/Z/CH/RN/TO/O/SW1/SB1/LP/PATN1/DMRT3 and didn't say where G goes. */
+function colourGroupFor(code: string): 'base' | 'dilution' | 'pattern' | 'gait' {
+  if (code === 'E' || code === 'A') return 'base';
+  if (code === 'CR' || code === 'D' || code === 'Z' || code === 'CH' || code === 'G') return 'dilution';
+  if (code === 'DMRT3') return 'gait';
+  return 'pattern'; // RN, TO, O, SW1, SB1, LP, PATN1 - and a safe default for any future locus
+}
+
+const COLOUR_GROUP_LABEL: Record<string, string> = { base: 'Base colour', dilution: 'Dilutions', pattern: 'Patterns', gait: 'Gait' };
+const COLOUR_GROUP_ORDER = ['base', 'dilution', 'pattern', 'gait'] as const;
+
+interface ColourGroup<T> {
+  key: string;
+  label: string;
+  rows: T[];
+}
+
+function groupByColourCategory<T extends { code: string }>(rows: T[]): ColourGroup<T>[] {
+  const byGroup = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = colourGroupFor(row.code);
+    const list = byGroup.get(key) ?? [];
+    list.push(row);
+    byGroup.set(key, list);
+  }
+  return COLOUR_GROUP_ORDER.filter((key) => byGroup.has(key)).map((key) => ({ key, label: COLOUR_GROUP_LABEL[key], rows: byGroup.get(key)! }));
+}
+
+/** Slice 0021 Part F (§7.2): collapsed by default - the fifteen-locus version of this card would
+ * otherwise be the longest thing on the page a child looks at most. The summary line is the part
+ * they actually came for (the horse's visible colour and pattern list); every per-locus detail sits
+ * behind the disclosure. */
+function colourCard(params: { rows: ColourInferenceRow[]; visibleColour: string; patternWords: string[]; canTest: boolean; horseId: number }): SafeHtml {
   if (params.rows.length === 0) return raw('');
+  const summary = params.patternWords.length > 0 ? `${params.visibleColour} ${params.patternWords.join(' ')}` : params.visibleColour;
   return html`
     <div class="card">
       <h2>Colour and gait</h2>
-      ${params.rows.map((row) => html`<p><strong>${row.name}:</strong> ${row.summary}</p>`)}
+      <details class="section-collapse">
+        <summary>${summary}</summary>
+        ${params.rows.map((row) => html`<p><strong>${row.name}:</strong> ${row.summary}</p>`)}
+      </details>
       ${params.canTest ? html`<p><a class="button-link" href="/horses/${String(params.horseId)}/test">Test</a></p>` : raw('')}
     </div>`;
 }
@@ -853,6 +894,9 @@ export function renderHorsePage(params: {
   /** Amendment 0017a §4.5 point 2: empty for a non-owner, non-admin viewer - the whole card omits
    * itself the same way health's does. */
   colour: ColourInferenceRow[];
+  /** Slice 0021 Part F (§7.2): plain-English pattern words (PATTERN_LABELS), already display-mapped
+   * for the collapsed colour card's summary line - not the raw PatternCode[] array. */
+  patternWords: string[];
   /** Slice 0013 §8.1: null for an ended horse - the whole Care card is omitted for one. */
   care: CareCardView | null;
   careError?: string;
@@ -1032,7 +1076,7 @@ export function renderHorsePage(params: {
     </div>
     ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
-    ${colourCard({ rows: params.colour, canTest: params.canManage, horseId: h.id })}
+    ${colourCard({ rows: params.colour, visibleColour: params.visibleColour, patternWords: params.patternWords, canTest: params.canManage, horseId: h.id })}
     ${careCard({
       care: params.care,
       feedLevelName: params.feedLevelName,
@@ -1173,18 +1217,28 @@ export function renderTestPage(params: {
 
   // Amendment 0017a §4.5 point 4: a second panel, same page, same mechanism - a locus result shown
   // as its stored pair rather than a clear/carrier/affected badge, since colour has no severity.
-  const colourRows = params.colourRows.map((row) => html`
-    <div class="health-row">
-      <p><strong>${row.name}:</strong> ${row.known !== null ? html`<span>${row.known}</span>` : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
-      <p class="muted">${row.teachingText}</p>
-      ${row.price !== null
-        ? html`
-          <form method="post" action="/horses/${String(h.id)}/test">
-            <input type="hidden" name="locus_code" value="${row.code}">
-            <button type="submit">Test for ${row.name} (${String(row.price)})</button>
-          </form>`
-        : raw('')}
-    </div>`);
+  // Slice 0021 Part F (§7.2): grouped into four collapsed <details>, all closed by default - nine
+  // rows became nineteen and the flat list stopped being something a child would read.
+  const colourGroups = groupByColourCategory(params.colourRows).map((group) => {
+    const stillUnknown = group.rows.filter((row) => row.price !== null).length;
+    const summary = stillUnknown > 0 ? `${group.label} - ${String(stillUnknown)} of ${String(group.rows.length)} still unknown` : `${group.label} - all known`;
+    return html`
+    <details class="section-collapse">
+      <summary>${summary}</summary>
+      ${group.rows.map((row) => html`
+        <div class="health-row">
+          <p><strong>${row.name}:</strong> ${row.known !== null ? html`<span>${row.known}</span>` : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
+          <p class="muted">${row.teachingText}</p>
+          ${row.price !== null
+            ? html`
+              <form method="post" action="/horses/${String(h.id)}/test">
+                <input type="hidden" name="locus_code" value="${row.code}">
+                <button type="submit">Test for ${row.name} (${String(row.price)})</button>
+              </form>`
+            : raw('')}
+        </div>`)}
+    </details>`;
+  });
 
   const colourPanelBlock =
     params.untestedColourCount > 1
@@ -1209,9 +1263,9 @@ export function renderTestPage(params: {
     ${panelBlock}
     ${nothingLeft}
     <h2>Colour and gait</h2>
-    ${colourRows}
     ${colourPanelBlock}
     ${colourNothingLeft}
+    ${colourGroups}
     <p><a href="/horses/${String(h.id)}">Back to ${displayNameFor(h)}</a></p>
   `;
   return pageShell({

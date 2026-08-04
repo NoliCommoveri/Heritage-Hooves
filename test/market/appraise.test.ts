@@ -28,6 +28,8 @@ const CONFIG: AppraiseConfig = {
   market_visible_colour_factors: { palomino: 1.2, cremello: 1.4, buckskin: 1.15 },
   market_carried_allele_premium: 0.1,
   market_carried_allele_cap: 1.5,
+  // Slice 0021 §6.4.
+  market_pattern_factor: 1.15,
 };
 
 const IDEAL: IdealVector = {
@@ -50,6 +52,7 @@ function baseline(overrides: Partial<AppraiseParams> = {}): AppraiseParams {
     topThree: 0,
     visibleColour: 'bay',
     knownHiddenColourAlleleCount: 0,
+    hasPattern: false,
     params: CONFIG,
     ...overrides,
   };
@@ -106,6 +109,13 @@ describe('appraise: monotonic in the things it should be (§14.1)', () => {
     const failing = appraise(baseline({ ageGameDays: 18 * 360, isFailing: true })).value;
     expect(failing).toBeLessThan(sound);
   });
+
+  it('a patterned horse (§6.4) appraises higher than an otherwise-identical plain one, by exactly market_pattern_factor', () => {
+    const plain = appraise(baseline({ hasPattern: false })).value;
+    const patterned = appraise(baseline({ hasPattern: true })).value;
+    expect(patterned).toBeGreaterThan(plain);
+    expect(patterned / plain).toBeCloseTo(CONFIG.market_pattern_factor, 1);
+  });
 });
 
 describe('appraise: never reads the lifespan (§4.2, §14.2)', () => {
@@ -119,6 +129,7 @@ describe('appraise: never reads the lifespan (§4.2, §14.2)', () => {
       'ageGameDays',
       'expressed',
       'falloff',
+      'hasPattern',
       'ideal',
       'isFailing',
       'knownHiddenColourAlleleCount',

@@ -443,6 +443,7 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
     topThree,
     visibleColour: displayColourName(phenotype.visibleColour, creamTested),
     knownHiddenColourAlleleCount: hiddenColourAlleleCount(phenotype, testedLocusCodes),
+    hasPattern: phenotype.patterns.length > 0,
     params: config as AppraiseConfig,
   });
 }
