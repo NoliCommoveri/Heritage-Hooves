@@ -20,7 +20,7 @@ import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { noticeCareDue } from './care';
-import { rollAcuteIncidents, resolveAcuteIncidents } from './acquiredConditions';
+import { rollAcuteIncidents, resolveAcuteIncidents } from './incidents';
 import { deleteOldEvents } from './events';
 import { expireListings } from './listings';
 import { closeDeadStudListings } from './stud';

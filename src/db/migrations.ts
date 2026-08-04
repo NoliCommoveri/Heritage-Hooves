@@ -126,6 +126,13 @@ import m0125 from '../../migrations/0125_seed_acquired_conditions.sql';
 import m0126 from '../../migrations/0126_npc_policy_balance_floor.sql';
 import m0127 from '../../migrations/0127_config_npc_finance.sql';
 import m0128 from '../../migrations/0128_ledger_add_pet_home_kind.sql';
+import m0129 from '../../migrations/0129_incident_types.sql';
+import m0130 from '../../migrations/0130_seed_incident_types.sql';
+import m0131 from '../../migrations/0131_horse_incidents.sql';
+import m0132 from '../../migrations/0132_backfill_horse_incidents.sql';
+import m0133 from '../../migrations/0133_delete_acquired_from_conditions.sql';
+import m0134 from '../../migrations/0134_config_incident_history.sql';
+import m0135 from '../../migrations/0135_config_conformation_labels.sql';
 
 export interface MigrationFile {
   name: string;
@@ -268,6 +275,13 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0126_npc_policy_balance_floor.sql', sql: m0126 },
   { name: '0127_config_npc_finance.sql', sql: m0127 },
   { name: '0128_ledger_add_pet_home_kind.sql', sql: m0128 },
+  { name: '0129_incident_types.sql', sql: m0129 },
+  { name: '0130_seed_incident_types.sql', sql: m0130 },
+  { name: '0131_horse_incidents.sql', sql: m0131 },
+  { name: '0132_backfill_horse_incidents.sql', sql: m0132 },
+  { name: '0133_delete_acquired_from_conditions.sql', sql: m0133 },
+  { name: '0134_config_incident_history.sql', sql: m0134 },
+  { name: '0135_config_conformation_labels.sql', sql: m0135 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

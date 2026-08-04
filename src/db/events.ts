@@ -45,9 +45,12 @@ import { nowUtcSeconds } from '../lib/time';
 //                         "window_game_days":4,"treatment_cost":180}
 //   incident_resolved -> {"v":1,"horse_name":"...","condition_name":"...","condition_code":"COLIC",
 //                         "outcome":"resolved"|"manageable"|"degenerative"|"death","treated":true}
-// A 'death' outcome writes incident_resolved AND horse_died (the latter reused unchanged from slice
-// 0010, condition_code carrying the acquired condition's code) - the same two-event shape a lethal
-// single-gene condition never needed, because horse_conditions never carried an 'acute' row before.
+// A 'death' outcome writes incident_resolved only, never horse_died - that render is worded for a
+// newborn foal and would misrender for an incident death at any age (src/db/incidents.ts's own
+// comment on resolveOneIncident explains why). Slice 0022 Part A moved the twelve acquired
+// incidents' own truth from horse_conditions to horse_incidents; condition_code/condition_name in
+// the two payloads above are kept as field names for backward compatibility with events already
+// written, even though the value they carry is now an incident_types.code, not a conditions.code.
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'

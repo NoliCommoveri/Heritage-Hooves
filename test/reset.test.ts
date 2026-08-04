@@ -23,6 +23,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   horse_ancestors: ['horses'],
   horse_knowledge: ['stables', 'horses'],
   horse_conditions: ['horses', 'conditions'],
+  horse_incidents: ['horses', 'incident_types'],
   horses: ['breeds', 'horses', 'stables'],
   stable_prefix_history: ['stables'],
   ledger: ['stables'],
@@ -33,7 +34,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
 };
 
 /** Tables a reset must never empty - see the header comment in src/db/reset.ts. */
-const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'judges', 'conditions', 'disciplines', 'npc_ceiling_schedule', 'world', 'd1_migrations'];
+const NEVER_CLEARED = ['accounts', 'config', 'config_audit', 'breeds', 'loci', 'quantitative_traits', 'judges', 'conditions', 'incident_types', 'disciplines', 'npc_ceiling_schedule', 'world', 'd1_migrations'];
 
 describe('reset delete order', () => {
   it('empties every table before the tables it points at', () => {

@@ -10,8 +10,8 @@
 //   - config_audit    - append-only (CLAUDE.md §7), and it is a record of admin tuning rather
 //                       than of anything that happened in the world.
 //   - breeds, loci, quantitative_traits, judges, conditions, disciplines, npc_ceiling_schedule,
-//                       d1_migrations - reference data, created by migrations. Clearing these
-//                       would break the game with no way back from the browser.
+//                       incident_types, d1_migrations - reference data, created by migrations.
+//                       Clearing these would break the game with no way back from the browser.
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
@@ -41,6 +41,11 @@ export type ResetScope = 'horses' | 'world';
  * Slice 0010 adds `horse_knowledge` and `horse_conditions`, both before `horses` - both have real
  * foreign keys into it (horse_id), same reasoning as `horse_ancestors` above.
  *
+ * Slice 0022 §A4 adds `horse_incidents`, beside `horse_conditions` for the same reason - a real
+ * foreign key into `horses` (horse_id). `incident_types` (its reference-data counterpart, replacing
+ * the twelve acquired rows `conditions` used to carry) is never cleared, exactly like `conditions`
+ * itself right above this list's own header comment.
+ *
  * Slice 0017 adds `listings`, first in the list - it points at both `horses` and `stables`, and a
  * horses-only reset that left it behind would leave every listing pointing at a deleted horse,
  * which breaks `/market` on the first page view (§9). It is in `HORSE_TABLES` rather than
@@ -67,6 +72,7 @@ const HORSE_TABLES = [
   'horse_ancestors',
   'horse_knowledge',
   'horse_conditions',
+  'horse_incidents',
   'horses',
 ] as const;
 
@@ -112,6 +118,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   horse_ancestors: 'Pedigree links',
   horse_knowledge: 'What stables have paid to learn about horses',
   horse_conditions: 'Recorded health conditions',
+  horse_incidents: 'Recorded incidents (colic, laminitis, and the rest)',
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',
   ledger: 'Money history',

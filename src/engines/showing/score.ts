@@ -72,6 +72,16 @@ export interface ScoreEntryParams {
 }
 
 /**
+ * §4.4's per-trait formula on its own, with no judge weight involved - a trait's own distance from
+ * its breed's target, turned into a 0-100 score. Shared by scoreEntry below (the judge's real score,
+ * weighted) and slice 0022 Part B's conformation-label band (CLAUDE.md §13: no second scoring path -
+ * the label reuses this exact function rather than reimplementing the distance/falloff maths).
+ */
+export function traitScoreFor(expressed: number, target: number, falloff: number): number {
+  return Math.max(0, 100 - Math.abs(expressed - target) * falloff);
+}
+
+/**
  * §4.4/§4.5's formula, exactly. Iterates CONFORMATION_TRAITS' own order, never
  * Object.keys(ideal) - the same discipline LOCI and TRAITS enforce elsewhere (CLAUDE.md §11), so a
  * result's trait breakdown is always in a stable, predictable order regardless of how the ideal
@@ -90,8 +100,7 @@ export function scoreEntry(params: ScoreEntryParams): ScoreResult {
     const ideal = params.ideal[code];
     if (!ideal) continue;
     const expressed = params.expressed[code] ?? 0;
-    const distance = Math.abs(expressed - ideal.target);
-    const traitScore = Math.max(0, 100 - distance * params.falloff);
+    const traitScore = traitScoreFor(expressed, ideal.target, params.falloff);
     const judgeWeight = params.judgeWeights[code] ?? 1.0;
     const weight = ideal.weight * judgeWeight;
 

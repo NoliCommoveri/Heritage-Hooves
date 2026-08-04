@@ -88,8 +88,7 @@ import { parseImageCount } from '../lib/images';
 import { getEnabledConditions, conditionCensus } from '../db/health';
 import { listLivingHorsesForAdmin, listRecentDeaths, bringHorseDeathForward, ageModifierDistribution } from '../db/ageing';
 import { getCareAdminData, makeAllHorsesOverdue } from '../db/care';
-import { incidentAdminCensus, forceIncident, treatmentCostFor } from '../db/acquiredConditions';
-import { parseAcquiredTrigger } from '../engines/health/acquired';
+import { incidentAdminCensus, forceIncident, treatmentCostFor } from '../db/incidents';
 
 export async function adminHomeRoute(ctx: RequestContext): Promise<Response> {
   return htmlResponse(renderAdminHomePage({ world: ctx.world }));
@@ -296,6 +295,11 @@ const NUMERIC_CONFIG_KEYS = [
   'acute_treatment_cost_navicular',
   'acute_treatment_cost_osteoarthritis',
   'acute_treatment_cost_suspensory',
+  'incident_history_game_days',
+  'conformation_label_outstanding_min',
+  'conformation_label_good_min',
+  'conformation_label_acceptable_min',
+  'conformation_label_weak_min',
   'npc_balance_floor_interval_game_days',
   'npc_buy_offer_min_balance',
 ] as const;
@@ -943,7 +947,7 @@ export async function adminIncidentsRoute(ctx: RequestContext, method: string): 
     return htmlResponse(
       renderIncidentsAdminPage({
         world: ctx.world,
-        census: census.map((row) => ({ ...row, cost: treatmentCostFor(parseAcquiredTrigger(row.condition.trigger), ctx.config.values) })),
+        census: census.map((row) => ({ ...row, cost: treatmentCostFor(row.incidentType, ctx.config.values) })),
         horses: livingHorses.map((h) => ({ id: h.id, name: h.name, stableName: h.stableName })),
         error,
         notice,

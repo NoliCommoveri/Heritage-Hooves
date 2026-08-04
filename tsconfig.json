@@ -21,8 +21,8 @@
   // the file is excluded from tsc instead. It still runs under vitest, which type-strips rather than
   // type-checks. See that file's own header for what it is and why it exists.
   "exclude": [
-    "test/health/acquired.test.ts",
-    "test/health/acquired-d1.test.ts",
+    "test/incidents/risk.test.ts",
+    "test/incidents/incidents-d1.test.ts",
     "test/market/sale-d1.test.ts",
     "test/npc/market-d1.test.ts",
     "test/founding/consignment-d1.test.ts",
