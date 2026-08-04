@@ -545,8 +545,18 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
   const enabledDisciplines = (await getEnabledDisciplines(env)).slice(0, config.values.show_discipline_classes_per_show);
   if (eligibleBreeds.length === 0 && enabledDisciplines.length === 0) return;
 
-  const judges = await getJudges(env);
-  if (judges.length === 0) throw new Error('createShowIfMissing: no active judges are seeded');
+  // Slice 0024 §2: conformation and discipline classes draw from separate judge pools now (a
+  // discipline judge's ability_weights would contribute nothing to a breed_conformation score, and
+  // vice versa) - each pool only needs to be non-empty when a class of its type is actually being
+  // created below.
+  const conformationJudges = await getJudges(env, 'conformation');
+  if (eligibleBreeds.length > 0 && conformationJudges.length === 0) {
+    throw new Error('createShowIfMissing: no active conformation judges are seeded');
+  }
+  const disciplineJudges = await getJudges(env, 'discipline');
+  if (enabledDisciplines.length > 0 && disciplineJudges.length === 0) {
+    throw new Error('createShowIfMissing: no active discipline judges are seeded');
+  }
 
   const { venue, name } = calendarEntryFor(scheduledGameDay, config.values.show_interval_game_days);
   const seed = randomSeed();
@@ -567,7 +577,7 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
   eligibleBreeds.forEach((breed, index) => {
     const ordinal = index + 1;
     const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
-    const judge = judges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(judges.length)];
+    const judge = conformationJudges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(conformationJudges.length)];
 
     statements.push(
       env.DB.prepare(
@@ -596,13 +606,15 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
   });
 
   // Slice 0012 §8.1: discipline classes are numbered after breed classes, continuing the same
-  // class_N/judge_N sub-seed labels off the show's own seed - judges are drawn from the same pool
-  // a conformation class uses (a conformation judge's trait_weights simply contributes nothing to
-  // an ability score, §8.1's own note on why that is correct rather than an oversight).
+  // class_N/judge_N sub-seed labels off the show's own seed. Slice 0024 §2 changes which pool
+  // judge_N indexes into - a discipline class now draws from disciplineJudges, not the
+  // conformation pool, so its judge's blurb and ability_weights actually mean something on this
+  // class rather than being along for the ride with zero effect on the score (§15's open question
+  // in slice 0012, resolved here).
   enabledDisciplines.forEach((discipline, index) => {
     const ordinal = eligibleBreeds.length + index + 1;
     const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
-    const judge = judges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(judges.length)];
+    const judge = disciplineJudges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(disciplineJudges.length)];
 
     statements.push(
       env.DB.prepare(
@@ -746,6 +758,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const abilityWeights = isDiscipline ? parseAbilityWeights(cls.ability_weights!) : null;
   const judge = await getJudgeById(env, cls.judge_id);
   const judgeWeights = judge ? parseJudgeWeights(judge.trait_weights) : {};
+  // Slice 0024 §3: the discipline counterpart to judgeWeights above - a judge row's ability_weights
+  // is only ever non-null for a 'discipline'-kind judge (§2), which is the only kind judgeOneClass
+  // ever assigns to a discipline class, so this is never read against a conformation judge's null.
+  const judgeAbilityWeights = judge?.ability_weights ? parseAbilityWeights(judge.ability_weights) : {};
   const judgeCode = judge?.code ?? 'unknown';
 
   interface Scored {
@@ -779,7 +795,14 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const ageBreakdown = { modifier: age.modifier, phase: age.phase, age_years: age.ageYears };
 
     if (isDiscipline) {
-      const result = scoreAbilityEntry({ expressed, weights: abilityWeights!, noise, careModifier: care.modifier, ageModifier: age.modifier });
+      const result = scoreAbilityEntry({
+        expressed,
+        weights: abilityWeights!,
+        judgeWeights: judgeAbilityWeights,
+        noise,
+        careModifier: care.modifier,
+        ageModifier: age.modifier,
+      });
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
