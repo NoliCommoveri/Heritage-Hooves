@@ -26,6 +26,35 @@ export interface ImageOption {
   /** Names the file, never the horse - see slice 0007 §4.2: describing the horse here would be a
    * lie the moment a child puts a mismatched picture on it, told specifically to a screen reader. */
   alt: string;
+  /** The operator's own caption for this picture (e.g. "flashy chestnut, jumping"), from
+   * breed_image_labels - undefined when nobody has labelled it. This describes what's IN the
+   * picture, never the horse it ends up attached to, so it doesn't reopen §2.1's no-colour-matching
+   * decision: it stays true regardless of which horse picks it. */
+  label?: string;
+}
+
+/** Keys a labels lookup by breed code + index, e.g. "QH-3" - shared by the picker route (building
+ * the lookup from breed_image_labels rows) and imageOptionsFor (reading it) so both sides agree on
+ * the key shape without either depending on the other's storage details. */
+export function imageLabelKey(breedCode: string, index: number): string {
+  return `${breedCode}-${String(index)}`;
+}
+
+/** breed_image_labels rows are keyed by breed_id (the foreign key); imageOptionsFor works in breed
+ * codes (the same currency as everything else in this file). This joins the two, skipping a row
+ * whose breed_id no longer matches a known breed rather than throwing. */
+export function buildImageLabelMap(
+  rows: { breedId: number; imageIndex: number; label: string }[],
+  breeds: { id: number; code: string }[]
+): Map<string, string> {
+  const codeById = new Map(breeds.map((b) => [b.id, b.code]));
+  const map = new Map<string, string>();
+  for (const row of rows) {
+    const code = codeById.get(row.breedId);
+    if (!code) continue;
+    map.set(imageLabelKey(code, row.imageIndex), row.label);
+  }
+  return map;
 }
 
 /** "/horses/qh-03.webp". Zero-padded to two digits; breedCode is lowercased regardless of how it's
@@ -41,7 +70,11 @@ export function libraryImagePath(breedCode: string, n: number): string {
  * covers a purebred ({"QH":1}) and a cross with no branch. A composition code with no matching
  * breeds row (or image_count 0) contributes nothing, silently, per §2.3/§8.5 - not a throw.
  */
-export function imageOptionsFor(composition: Record<string, number>, breeds: BreedForImages[]): ImageOption[] {
+export function imageOptionsFor(
+  composition: Record<string, number>,
+  breeds: BreedForImages[],
+  labels?: Map<string, string>
+): ImageOption[] {
   const breedByCode = new Map(breeds.map((b) => [b.code, b]));
   const codes = Object.keys(composition).filter((code) => breedByCode.has(code));
 
@@ -62,6 +95,7 @@ export function imageOptionsFor(composition: Record<string, number>, breeds: Bre
         index: i,
         path: libraryImagePath(code, i),
         alt: `${breed.name} picture ${String(i)}`,
+        label: labels?.get(imageLabelKey(code, i)),
       });
     }
   }

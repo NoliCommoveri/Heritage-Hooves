@@ -43,7 +43,16 @@ import { setPinHash, recordPinAttempt, listRecentPinAttempts, listRecentPinAttem
 import { decidePinAttempt } from '../lib/pin';
 import { nowUtcSeconds } from '../lib/time';
 import { listAllStables, getStableById } from '../db/stables';
-import { getBreeds, getBreedsInPlay, setBreedEnabled, getLoci, updateBreedImageCounts, type BreedRow } from '../db/breeds';
+import {
+  getBreeds,
+  getBreedsInPlay,
+  setBreedEnabled,
+  getLoci,
+  updateBreedImageCounts,
+  getBreedImageLabels,
+  updateBreedImageLabels,
+  type BreedRow,
+} from '../db/breeds';
 import {
   nextConsignmentDueGameDay,
   listStandingConsignmentListings,
@@ -599,8 +608,9 @@ export async function adminBreedsRoute(ctx: RequestContext, method: string): Pro
   const breeds = await getBreeds(ctx.env);
 
   async function page(error?: string, notice?: string): Promise<Response> {
-    const readiness = await breedsAdminReadiness(ctx, breeds);
-    return htmlResponse(renderBreedsAdminPage({ world: ctx.world, breeds, readiness, error, notice }));
+    const [readiness, labelRows] = await Promise.all([breedsAdminReadiness(ctx, breeds), getBreedImageLabels(ctx.env)]);
+    const labels = new Map(labelRows.map((r) => [`${String(r.breed_id)}_${String(r.image_index)}`, r.label]));
+    return htmlResponse(renderBreedsAdminPage({ world: ctx.world, breeds, readiness, labels, error, notice }));
   }
 
   if (method === 'GET') {
@@ -641,7 +651,19 @@ export async function adminBreedsRoute(ctx: RequestContext, method: string): Pro
     counts.push({ breedId: breed.id, imageCount: parsed });
   }
 
-  await updateBreedImageCounts(ctx.env, counts);
+  // One text box per existing numbered picture (image_index 1..breed.image_count, as rendered).
+  // A blank value deletes the label (updateBreedImageLabels' own rule); anything else is stored
+  // as typed - it's the operator's own caption, not game data, so there's nothing to validate.
+  const labels: { breedId: number; imageIndex: number; label: string }[] = [];
+  for (const breed of breeds) {
+    for (let i = 1; i <= breed.image_count; i++) {
+      const rawLabel = form[`label_${String(breed.id)}_${String(i)}`];
+      if (rawLabel === undefined) continue;
+      labels.push({ breedId: breed.id, imageIndex: i, label: rawLabel.trim() });
+    }
+  }
+
+  await Promise.all([updateBreedImageCounts(ctx.env, counts), updateBreedImageLabels(ctx.env, labels)]);
   return redirect('/admin/breeds?saved=1');
 }
 

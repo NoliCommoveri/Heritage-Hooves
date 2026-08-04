@@ -34,7 +34,7 @@ import {
   type HorseRow,
 } from '../db/horses';
 import { getStableById, type StableRow } from '../db/stables';
-import { getBreedById, getBreeds, getLoci, type LocusRow, type BreedRow } from '../db/breeds';
+import { getBreedById, getBreeds, getLoci, getBreedImageLabels, type LocusRow, type BreedRow } from '../db/breeds';
 import { parseGenotype, sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
 import { expressPhenotype, type PatternPenetrance } from '../engines/genetics/expression';
 import { deriveSeed } from '../lib/rng';
@@ -53,7 +53,7 @@ import type { ConceptionBreakdown } from '../engines/breeding/fertility';
 import { hasWaitingFoundingOffer } from '../db/founding';
 import { canTakeOnCost } from '../lib/money';
 import { availabilityForHorse, turnOutToPasture, bringInFromPasture } from '../db/care';
-import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE } from '../lib/images';
+import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE, buildImageLabelMap } from '../lib/images';
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
@@ -1095,9 +1095,17 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
   const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
   if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
 
-  const [breeds, stableHorses] = await Promise.all([getBreeds(ctx.env), listStableHorses(ctx.env, ownerStable.id)]);
+  const [breeds, imageLabelRows, stableHorses] = await Promise.all([
+    getBreeds(ctx.env),
+    getBreedImageLabels(ctx.env),
+    listStableHorses(ctx.env, ownerStable.id),
+  ]);
   const composition = JSON.parse(horse.composition) as Record<string, number>;
-  const options = imageOptionsFor(composition, breeds);
+  const labels = buildImageLabelMap(
+    imageLabelRows.map((r) => ({ breedId: r.breed_id, imageIndex: r.image_index, label: r.label })),
+    breeds
+  );
+  const options = imageOptionsFor(composition, breeds, labels);
 
   const groups: { breedCode: string; breedName: string; options: typeof options }[] = [];
   for (const option of options) {

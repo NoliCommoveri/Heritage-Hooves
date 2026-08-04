@@ -1431,10 +1431,12 @@ interface ImageOptionGroup {
 }
 
 function imageOptionTile(option: ImageOption, checked: boolean, usedByName: string | undefined): SafeHtml {
+  const alt = option.label ? `${option.alt} - ${option.label}` : option.alt;
   return html`
     <label class="image-option">
       <input type="radio" name="image" value="${option.path}" ${checked ? raw('checked') : raw('')}>
-      <img src="${option.path}" width="160" loading="lazy" alt="${option.alt}">
+      <img src="${option.path}" width="160" loading="lazy" alt="${alt}">
+      ${option.label ? html`<span class="image-option-label">${option.label}</span>` : raw('')}
       ${usedByName ? html`<span class="image-option-note">also used by ${usedByName}</span>` : raw('')}
     </label>`;
 }

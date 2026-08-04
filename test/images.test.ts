@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { libraryImagePath, imageOptionsFor, isAllowedImagePath, parseImageCount, type BreedForImages } from '../src/lib/images';
+import {
+  libraryImagePath,
+  imageOptionsFor,
+  isAllowedImagePath,
+  parseImageCount,
+  imageLabelKey,
+  buildImageLabelMap,
+  type BreedForImages,
+} from '../src/lib/images';
 
 describe('libraryImagePath', () => {
   it('builds a lowercase, zero-padded path', () => {
@@ -45,6 +53,31 @@ describe('imageOptionsFor', () => {
   it('skips a composition code with no matching breed row', () => {
     const options = imageOptionsFor({ QH: 0.5, XX: 0.5 }, breeds);
     expect(options.map((o) => o.breedCode)).toEqual(['QH', 'QH', 'QH']);
+  });
+
+  it('attaches a label when one is given, and leaves it undefined otherwise', () => {
+    const labels = new Map([[imageLabelKey('QH', 2), 'flashy chestnut, jumping']]);
+    const options = imageOptionsFor({ QH: 1 }, breeds, labels);
+    expect(options[0].label).toBeUndefined();
+    expect(options[1].label).toBe('flashy chestnut, jumping');
+    expect(options[2].label).toBeUndefined();
+  });
+});
+
+describe('buildImageLabelMap', () => {
+  const breeds = [
+    { id: 1, code: 'QH' },
+    { id: 2, code: 'AR' },
+  ];
+
+  it('joins breed_id-keyed rows onto breed-code keys', () => {
+    const map = buildImageLabelMap([{ breedId: 1, imageIndex: 3, label: 'flashy chestnut' }], breeds);
+    expect(map.get(imageLabelKey('QH', 3))).toBe('flashy chestnut');
+  });
+
+  it('skips a row whose breed_id matches no known breed', () => {
+    const map = buildImageLabelMap([{ breedId: 999, imageIndex: 1, label: 'orphaned' }], breeds);
+    expect(map.size).toBe(0);
   });
 });
 

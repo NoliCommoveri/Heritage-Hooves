@@ -41,6 +41,7 @@ const CACHE_MS = 60_000;
 
 let breedsCache: { rows: BreedRow[]; expiresAtMs: number } | null = null;
 let lociCache: { rows: LocusRow[]; expiresAtMs: number } | null = null;
+let imageLabelsCache: { rows: BreedImageLabelRow[]; expiresAtMs: number } | null = null;
 
 export async function getBreeds(env: Env): Promise<BreedRow[]> {
   const now = Date.now();
@@ -128,4 +129,49 @@ export async function updateBreedImageCounts(env: Env, counts: { breedId: number
   );
   await env.DB.batch(statements);
   breedsCache = null;
+}
+
+export interface BreedImageLabelRow {
+  breed_id: number;
+  image_index: number;
+  label: string;
+}
+
+/**
+ * The operator's own caption per numbered library picture, added alongside image_count so
+ * /admin/breeds can label a picture without touching the filename or the upload workflow. Same
+ * 60-second, per-isolate, no-cross-isolate-invalidation cache as getBreeds/getLoci, for the same
+ * reason (this file's own header comment) - cleared on write below.
+ */
+export async function getBreedImageLabels(env: Env): Promise<BreedImageLabelRow[]> {
+  const now = Date.now();
+  if (imageLabelsCache && imageLabelsCache.expiresAtMs > now) return imageLabelsCache.rows;
+  const result = await env.DB.prepare('SELECT * FROM breed_image_labels').all<BreedImageLabelRow>();
+  const rows = result.results ?? [];
+  imageLabelsCache = { rows, expiresAtMs: now + CACHE_MS };
+  return rows;
+}
+
+/**
+ * A blank label deletes the row rather than storing an empty string, so "no label" stays one state
+ * (no row) instead of two (no row vs. label = ""). Same up-to-a-minute staleness other isolates can
+ * see as getBreedImageCounts' own comment already states on /admin/breeds - not repeated per call site.
+ */
+export async function updateBreedImageLabels(
+  env: Env,
+  labels: { breedId: number; imageIndex: number; label: string }[]
+): Promise<void> {
+  if (labels.length === 0) return;
+  const statements = labels.map((l) =>
+    l.label === ''
+      ? env.DB.prepare('DELETE FROM breed_image_labels WHERE breed_id = ? AND image_index = ?').bind(l.breedId, l.imageIndex)
+      : env.DB
+          .prepare(
+            'INSERT INTO breed_image_labels (breed_id, image_index, label) VALUES (?, ?, ?) ' +
+              'ON CONFLICT (breed_id, image_index) DO UPDATE SET label = excluded.label'
+          )
+          .bind(l.breedId, l.imageIndex, l.label)
+  );
+  await env.DB.batch(statements);
+  imageLabelsCache = null;
 }
