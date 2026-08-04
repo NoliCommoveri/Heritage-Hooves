@@ -9,6 +9,7 @@ import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng, type Rng } from '../lib/rng';
 import { getBreedsInPlay } from './breeds';
 import { getSpecializableAbilityTraits } from './disciplines';
+import { parseAbilityBias } from '../engines/breeds/identity';
 import type { StableRow } from './stables';
 import { getHorse, buildFoundingHorseInsertStatements } from './horses';
 import { getEnabledConditions, getLethalTriggers, buildKnowledgePurchaseStatements, buildLocusKnowledgePurchaseStatements, type ConditionRow } from './health';
@@ -204,7 +205,7 @@ async function mintConsignmentCandidate(
   env: Env,
   batchSeed: number,
   index: number,
-  breed: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null },
+  breed: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null; ability_bias: string | null },
   workingInjections: ConsignmentInjectionRow[],
   appliedThisBatch: Map<number, number>,
   lethalTriggers: LethalTrigger[],
@@ -232,6 +233,9 @@ async function mintConsignmentCandidate(
     breedIdealVector: breed.ideal_vector ? parseIdealVector(breed.ideal_vector) : null,
     eligibleAbilityTraits,
     abilitySpecialistPotential: cfg.founding_ability_specialist_potential,
+    // Migration 0141: the dealer's stock leans the way its breed does, exactly like founding stock
+    // - a consigned Warmblood is no more likely to outrun a Quarter Horse than a bred one is.
+    abilityBias: parseAbilityBias(breed.ability_bias),
   });
 
   let genotype = generated.genotype;

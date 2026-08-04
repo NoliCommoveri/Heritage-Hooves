@@ -14,6 +14,9 @@ import { getBreeds, getBreedsInPlay, type BreedRow } from './breeds';
 import { buildFoundingHorseInsertStatements, countAliveHorses, countAliveHorsesByBreedForStable, type HorseRow } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
+import { parseIdealVector } from '../engines/showing/score';
+import { parseAbilityBias } from '../engines/breeds/identity';
+import { getSpecializableAbilityTraits } from './disciplines';
 import { generateFoundingName } from '../engines/founding/names';
 import { getEnabledConditions, getLethalTriggers } from './health';
 
@@ -99,7 +102,24 @@ async function mintFoundingHorses(
   const polygenicOneChance = params.config.values.quality_bands[params.band];
   if (polygenicOneChance === undefined) throw new Error(`mintFoundingHorses: unknown quality band "${params.band}"`);
 
-  const [conditions, lethalTriggers] = await Promise.all([getEnabledConditions(env), getLethalTriggers(env)]);
+  const [conditions, lethalTriggers, eligibleAbilityTraits] = await Promise.all([
+    getEnabledConditions(env),
+    getLethalTriggers(env),
+    getSpecializableAbilityTraits(env),
+  ]);
+  // 2026-08-04, operator decision: NPC stock is generated exactly the way player stock is. Until
+  // now this call passed neither the ideal vector nor the eligible ability traits, so slice 0019's
+  // founding specialists reached every founding, claimed and consigned horse in the game EXCEPT the
+  // ones NPC stables mint - which meant a player's stock was systematically better than the field
+  // it competed against, in both conformation and ability, for reasons nothing had written down.
+  //
+  // This raises NPC quality, which is the one thing CLAUDE.md §13 singles out as most likely to
+  // kill the project if it drifts unwatched. It is bounded rather than open-ended (a specialist is
+  // one trait at a fixed potential, not a ceiling that climbs), and npc_policy's quality ceiling
+  // still applies to everything these stables BREED. Watch the outcome distribution at /admin/npc.
+  const breedIdealVector = params.breed.ideal_vector ? parseIdealVector(params.breed.ideal_vector) : null;
+  // Migration 0141: and their breed leaning, the same as every other generation path.
+  const abilityBias = parseAbilityBias(params.breed.ability_bias);
 
   const statements = [];
   for (let i = 0; i < params.count; i++) {
@@ -112,6 +132,10 @@ async function mintFoundingHorses(
       ageMaxGameDays: params.config.values.founding_age_max_game_days,
       seed,
       lethalTriggers,
+      breedIdealVector,
+      eligibleAbilityTraits,
+      abilitySpecialistPotential: params.config.values.founding_ability_specialist_potential,
+      abilityBias,
     });
     const sex = makeRng(deriveSeed(seed, 'sex')).pick(['mare', 'stallion'] as const);
     const { registeredName, originPrefix } = await resolveUniqueBarnName(env, seed);

@@ -1,0 +1,20 @@
+-- A breed's heritable leaning across the five ability traits: an offset added to the quality band's
+-- polygenic_one_chance when a founding, consignment or NPC horse of this breed is generated. Until
+-- this landed, ability was completely breed-blind - a German Warmblood's speed alleles were drawn
+-- from exactly the same distribution as a Quarter Horse's, which is why Warmbloods were winning
+-- barrel classes. See docs/breed-ability-and-aptitude.md.
+--
+-- Shape:
+--   { "v": 1, "traits": { "speed": 0.06, "stamina": -0.06, "jump_scope": -0.06,
+--                          "trainability": 0.0, "agility": 0.06 } }
+--
+-- Every row's five offsets sum to zero. That is the load-bearing constraint and it is asserted by
+-- test/genetics/breed-ability-bias.test.ts: an offset raises the expected count of '1' alleles for
+-- one trait, so a row that does not sum to zero does not make a breed *different*, it makes that
+-- breed globally *better*. Null means no leaning at all (every trait drawn at the band chance,
+-- exactly today's behaviour) - the correct reading for a breed nobody has decided about yet.
+--
+-- Conformation has no counterpart here on purpose: breeds already differ in conformation through
+-- ideal_vector, which moves the *target* rather than the draw. Ability traits are unidirectional
+-- and have no target, so the draw itself is the only place a leaning can live.
+ALTER TABLE breeds ADD COLUMN ability_bias TEXT;

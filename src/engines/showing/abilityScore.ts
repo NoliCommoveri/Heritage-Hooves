@@ -61,15 +61,30 @@ export interface ScoreAbilityEntryParams {
   /** Slice 0014 §2.3/§4.3: a horse's age-based decline. Same reasoning as scoreEntry's own
    * ageModifier - a separate parameter, not folded into careModifier, defaulting to 1.0. */
   ageModifier?: number;
+  /** Migration 0143: how suited this horse's BREED is to this discipline, from
+   * breeds.discipline_aptitudes via engines/breeds/identity.ts's aptitudeFor. Its own parameter for
+   * the same reason ageModifier is - it answers a different question from care ("how well kept is
+   * this horse") and folding them together would make a result page unable to say which one cost a
+   * horse the class.
+   *
+   * Deliberately has NO counterpart on scoreEntry. A conformation class is already breed-specific
+   * twice over (it admits one breed, and judges against that breed's own ideal_vector), so a breed
+   * aptitude there would be both meaningless and unreadable - every horse in the class would get
+   * the identical multiplier. A discipline class admits all eight breeds at once, which is exactly
+   * why it needs one. */
+  aptitudeModifier?: number;
 }
 
 /**
  * §7's formula (slice 0014 §4.3 appends ageModifier as a fourth multiplier; slice 0024 §3 folds a
  * discipline judge's own weight into weight_t exactly as scoreEntry folds judgeWeight into
- * ideal.weight, so a discipline class finally has judge variance the way a breed class always has):
+ * ideal.weight, so a discipline class finally has judge variance the way a breed class always has;
+ * migration 0143 appends aptitudeModifier as a fifth multiplier, so breed finally means something
+ * in a discipline class at all):
  *   weight_t   = discipline_weight_t * judge_weight_t
  *   rawScore   = Sum(weight_t * expressed_t) / Sum(weight_t)
- *   finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier + noise
+ *   finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier
+ *                         * aptitudeModifier + noise
  *
  * Iterates ABILITY_TRAITS, never Object.keys(weights) - the same discipline scoreEntry applies to
  * CONFORMATION_TRAITS, so a result's breakdown always reads in a stable order regardless of how
@@ -80,6 +95,7 @@ export function scoreAbilityEntry(params: ScoreAbilityEntryParams): AbilityScore
   const tackModifier = params.tackModifier ?? 1.0;
   const trainingFactor = params.trainingFactor ?? 1.0;
   const ageModifier = params.ageModifier ?? 1.0;
+  const aptitudeModifier = params.aptitudeModifier ?? 1.0;
   const judgeWeights = params.judgeWeights ?? {};
 
   const traits: AbilityTraitBreakdown[] = [];
@@ -99,7 +115,7 @@ export function scoreAbilityEntry(params: ScoreAbilityEntryParams): AbilityScore
   }
 
   const rawScore = weightSum > 0 ? weightedSum / weightSum : 0;
-  const finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier + params.noise;
+  const finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier * aptitudeModifier + params.noise;
 
   return { traits, weightSum, rawScore, noise: params.noise, finalScore };
 }

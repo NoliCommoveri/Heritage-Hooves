@@ -6,6 +6,7 @@ import { LOCI, type Locus } from '../genetics/loci';
 import { sortAllelePair, GENOTYPE_VERSION, type Genotype, type AllelePair } from '../genetics/genotype';
 import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../genetics/polygenic';
 import { ROBUSTNESS_TRAITS, CONFORMATION_TRAITS } from '../conformation/traits';
+import { biasedOneChance, type AbilityBias } from '../breeds/identity';
 import type { IdealVector } from '../showing/score';
 import type { AllelePool } from './pool';
 
@@ -72,6 +73,16 @@ export interface GenerateCandidateInput {
    * missing value there throws rather than silently picking a number, the same reasoning
    * robustnessOneChance's own comment gives for not defaulting a live tunable. */
   abilitySpecialistPotential?: number;
+  /** The breed's own ability leaning (migration 0141), already parsed by the caller from
+   * breeds.ability_bias via parseAbilityBias. Omitted or empty means every trait draws at
+   * polygenicOneChance exactly as it did before this existed - so this is a genuinely optional
+   * addition, unlike robustnessOneChance above where a default would be a silent wrong answer.
+   *
+   * Affects only the base draw below, never the specialist overwrite: a specialist trait's
+   * potential is set outright, so a breed's leaning neither helps nor hinders the one trait a
+   * horse was singled out to be good at. That is what keeps an off-breed specialist competitive
+   * (docs/breed-ability-and-aptitude.md §4). */
+  abilityBias?: AbilityBias;
 }
 
 export interface GeneratedCandidate {
@@ -138,10 +149,18 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
   // the admin form's flat 50/50 draw (polygenic.ts's generateFounderPolygenic); this one is
   // band-weighted, and the two must never share a label or a horse's genetics stop being
   // reconstructible from its seed alone.
+  //
+  // Migration 0141: the breed's ability leaning shifts the CHANCE each allele is a '1', never the
+  // NUMBER of draws - the loop below always consumes exactly TRAIT_STRING_LENGTH values per trait
+  // regardless of the chance. That is what keeps every later stream (age, both specialists) at the
+  // same position it has always been, the same invariant §7's specialist-overwrite rule protects.
   const polygenicRng = makeRng(deriveSeed(input.seed, 'pool_polygenic'));
+  const abilityBias = input.abilityBias ?? {};
   const polygenic: Record<string, string> = {};
   for (const trait of TRAITS) {
-    const chance = ROBUSTNESS_TRAITS.includes(trait) ? input.robustnessOneChance : input.polygenicOneChance;
+    const chance = ROBUSTNESS_TRAITS.includes(trait)
+      ? input.robustnessOneChance
+      : biasedOneChance(input.polygenicOneChance, abilityBias, trait);
     let bits = '';
     for (let i = 0; i < TRAIT_STRING_LENGTH; i++) {
       bits += polygenicRng.next() < chance ? '1' : '0';

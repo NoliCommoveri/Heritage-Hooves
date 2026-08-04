@@ -40,6 +40,11 @@
     "test/router-paths.test.ts",
     // Same again: reads src/routes/market.ts off disk to check the listing page still offers what
     // the buy handler accepts. See its own header.
-    "test/market/same-account-buy.test.ts"
+    "test/market/same-account-buy.test.ts",
+    // Same again, both of them: they read migrations/0142 and migrations/0144 off disk so the
+    // seeded breed numbers are asserted where they actually live rather than hand-copied into a
+    // test that would then have to be kept in step with every retune.
+    "test/genetics/breed-ability-bias.test.ts",
+    "test/showing/breed-aptitude.test.ts"
   ]
 }

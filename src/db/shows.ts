@@ -11,6 +11,7 @@ import { calendarEntryFor } from '../engines/showing/calendar';
 import { checkEligibility, type EligibilityReason } from '../engines/showing/eligibility';
 import { scoreEntry, parseIdealVector, parseJudgeWeights } from '../engines/showing/score';
 import { scoreAbilityEntry, parseAbilityWeights } from '../engines/showing/abilityScore';
+import { parseDisciplineAptitudes, aptitudeFor } from '../engines/breeds/identity';
 import { assignPlacings } from '../engines/showing/placing';
 import { noiseForEntry } from '../engines/showing/noise';
 import { conformationValues, abilityValues, noiseFor, type RealizationConfig } from '../engines/conformation/model';
@@ -18,7 +19,7 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import { getHorse, horseDisplayName, type HorseRow } from './horses';
-import { getBreedsInPlay } from './breeds';
+import { getBreedsInPlay, getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
 import { listNpcStableHorses } from './npc';
@@ -764,6 +765,18 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const judgeAbilityWeights = judge?.ability_weights ? parseAbilityWeights(judge.ability_weights) : {};
   const judgeCode = judge?.code ?? 'unknown';
 
+  // Migration 0143: one parse per BREED for the whole class, not one per horse - getBreeds is a
+  // cached eight-row read and every horse in a discipline class is looked up against it. Built only
+  // for a discipline class; a breed_conformation class admits one breed and judges it against its
+  // own ideal_vector, so an aptitude there would multiply every entry by the same number (see
+  // ScoreAbilityEntryParams.aptitudeModifier's own comment).
+  const aptitudeByBreedId = new Map<number, ReturnType<typeof parseDisciplineAptitudes>>();
+  if (isDiscipline) {
+    for (const breed of await getBreeds(env)) {
+      aptitudeByBreedId.set(breed.id, parseDisciplineAptitudes(breed.discipline_aptitudes));
+    }
+  }
+
   interface Scored {
     horseId: number;
     rawScore: number;
@@ -795,6 +808,11 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const ageBreakdown = { modifier: age.modifier, phase: age.phase, age_years: age.ageYears };
 
     if (isDiscipline) {
+      // A horse whose breed_id is null, or whose breed has no aptitudes decided, or that is a
+      // cross, all land on NEUTRAL_APTITUDE - see aptitudeFor, which owns that rule so this loop
+      // does not have to restate it.
+      const breedAptitudes = horse.breed_id === null ? {} : (aptitudeByBreedId.get(horse.breed_id) ?? {});
+      const aptitude = aptitudeFor(breedAptitudes, cls.discipline_code, horse.is_cross === 1);
       const result = scoreAbilityEntry({
         expressed,
         weights: abilityWeights!,
@@ -802,6 +820,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         noise,
         careModifier: care.modifier,
         ageModifier: age.modifier,
+        aptitudeModifier: aptitude,
       });
       scored.push({
         horseId: horse.id,
@@ -823,6 +842,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           final_score: result.finalScore,
           care: careBreakdown,
           age: ageBreakdown,
+          // Snapshotted into the breakdown because the aptitude itself is NOT snapshotted onto the
+          // class (migration 0143's own comment) - if the operator retunes a breed later, this row
+          // is the only remaining record of what the horse was actually judged with.
+          aptitude: { modifier: aptitude, breed_id: horse.breed_id, is_cross: horse.is_cross === 1 },
         },
       });
     } else {
@@ -849,6 +872,9 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           final_score: result.finalScore,
           care: careBreakdown,
           age: ageBreakdown,
+          // No aptitude key here, deliberately: a breed_conformation class admits one breed and
+          // judges it against that breed's own ideal_vector, so there is no cross-breed comparison
+          // for an aptitude to correct. See ScoreAbilityEntryParams.aptitudeModifier's own comment.
         },
       });
     }
