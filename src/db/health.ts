@@ -244,13 +244,33 @@ export function untestedConditions(conditions: ConditionRow[], known: HorseKnowl
  * genotype even by accident. The one line in this slice most likely to be gotten wrong without that
  * discipline (§14).
  */
-export async function breedingHealthWarningsFor(env: Env, stableId: number, mareId: number, stallionId: number): Promise<string[]> {
+export async function breedingHealthWarningsFor(
+  env: Env,
+  stableId: number,
+  mareId: number,
+  stallionId: number,
+  /**
+   * Whose horse_knowledge rows stand for what is known about the STALLION. Defaults to the booking
+   * stable itself, which is the only right answer for two horses in one barn.
+   *
+   * A cross-stable stud booking is the case that needs the other answer: the mare's owner has never
+   * paid to test somebody else's stallion, so reading their own (empty) knowledge of him would
+   * silently report "untested" about a stallion whose owner has tested him and whose result the
+   * market already discloses on his stud page (slice 0017 §2.3 - health always travels with the
+   * horse). Passing his OWNER's stable here reproduces exactly that disclosure, and nothing wider:
+   * still knowledge rows, never a genotype, so an untested stallion still reads as untested.
+   */
+  stallionKnowledgeStableId: number = stableId
+): Promise<string[]> {
   const conditions = await getEnabledConditions(env);
   const recessive = conditions
     .filter((c) => c.locus_code !== null && parseConditionTrigger(c.trigger).mode === 'recessive')
     .map((c) => ({ code: c.code, name: c.name }));
 
-  const [mareKnowledge, stallionKnowledge] = await Promise.all([getKnowledgeForHorse(env, stableId, mareId), getKnowledgeForHorse(env, stableId, stallionId)]);
+  const [mareKnowledge, stallionKnowledge] = await Promise.all([
+    getKnowledgeForHorse(env, stableId, mareId),
+    getKnowledgeForHorse(env, stallionKnowledgeStableId, stallionId),
+  ]);
   return breedingHealthWarnings(knowledgeMap(mareKnowledge), knowledgeMap(stallionKnowledge), recessive).map((w) => w.sentence);
 }
 

@@ -574,6 +574,29 @@ export interface BreedPreview {
    * ITS OWN breed's ideal - already resolved to display text ('Unknown' included), gated per
    * parent by that horse's own show record. */
   conformationRows: { name: string; mareLabel: string; stallionLabel: string }[];
+  /**
+   * Set only when the stallion is standing at another ranch, in which case the booking is a stud
+   * booking (slice 0017 Part D) rather than an ordinary same-stable covering - a fee, a commission,
+   * and no horse changing hands. Absent for one of this stable's own stallions, which is what every
+   * caller before the third picker existed passed.
+   */
+  outsideStud?: {
+    studListingId: number;
+    stableName: string;
+    fee: number;
+    /** Why this booking cannot be made, from validateStudBooking - the Book button is replaced by
+     * this sentence rather than sitting there ready to fail. */
+    refusal?: string;
+  };
+}
+
+/** One stallion standing at a ranch that is not this account's - what the third picker offers. */
+export interface OutsideStudOption {
+  studListingId: number;
+  stallionName: string;
+  stableName: string;
+  fee: number;
+  description: string;
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -592,9 +615,13 @@ export function renderBreedPage(params: {
   hasFoundingOffer: boolean;
   mares: HorseRow[];
   stallions: HorseRow[];
+  /** Every stallion standing at stud at a ranch this account does not own - NPC ranches included.
+   * Empty when nobody else is standing one. */
+  outsideStuds: OutsideStudOption[];
   describe: (h: HorseRow) => string;
   selectedMareId?: number;
   selectedStallionId?: number;
+  selectedStudListingId?: number;
   preview?: BreedPreview;
   error?: string;
 }): SafeHtml {
@@ -618,6 +645,34 @@ export function renderBreedPage(params: {
       <p class="muted">Judged against each parent's own breed. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>`
     : raw('');
 
+  // The one place the two kinds of booking differ on this page. An own-stallion pairing posts back
+  // here and books an ordinary covering; an outside stud posts to the market's own stud booking
+  // route (slice 0017 Part D) with this mare - the same endpoint /market/stud/:id's own button
+  // uses, so there is exactly one cross-stable breeding path in the game, not a second one grown
+  // here (CLAUDE.md §13's no-parallel-path rule).
+  const bookBlock = (p: BreedPreview): SafeHtml => {
+    if (!p.outsideStud) {
+      return html`
+        <form method="post" action="/stables/${String(params.stable.id)}/breed">
+          <input type="hidden" name="action" value="book">
+          <input type="hidden" name="mare_id" value="${String(p.mareId)}">
+          <input type="hidden" name="stallion_id" value="${String(p.stallionId)}">
+          <button type="submit">Book covering</button>
+        </form>`;
+    }
+    const stud = p.outsideStud;
+    return html`
+      <p><strong>Stud fee:</strong> ${String(stud.fee)}, payable to ${stud.stableName} now. Neither horse changes hands - she is covered next time she comes into season, and there is no refund if it doesn't take.</p>
+      ${stud.refusal
+        ? html`<p class="notice">${stud.refusal}</p>`
+        : html`
+          <form method="post" action="/market/stud/${String(stud.studListingId)}/book">
+            <input type="hidden" name="mare_id" value="${String(p.mareId)}">
+            <button type="submit">Book for ${String(stud.fee)}</button>
+          </form>`}
+      <p class="muted"><a href="/market/stud/${String(stud.studListingId)}">See his full page</a> - his show record and what his owner has had him tested for.</p>`;
+  };
+
   const previewBlock = preview
     ? html`
       <div class="card">
@@ -631,15 +686,27 @@ export function renderBreedPage(params: {
         ${conformationBlock}
         <p><strong>Estimated chance this covering takes:</strong> ${preview.conceptionPercent}</p>
         ${conceptionReasonsBlock}
-        <form method="post" action="/stables/${String(params.stable.id)}/breed">
-          <input type="hidden" name="action" value="book">
-          <input type="hidden" name="mare_id" value="${String(preview.mareId)}">
-          <input type="hidden" name="stallion_id" value="${String(preview.stallionId)}">
-          <button type="submit">Book covering</button>
-        </form>
+        ${bookBlock(preview)}
       </div>
     `
     : raw('');
+
+  // The third picker (and only it) carries a "nobody" default: a pairing needs exactly one
+  // stallion, and leaving this one alone is how a player says "my own stallion above, thanks".
+  // Choosing somebody here overrides the stallion picker, which the label says out loud rather
+  // than leaving a child to find out by pressing the button.
+  const outsideStudPicker = params.outsideStuds.length
+    ? html`
+      <label>...or a stallion standing at another ranch
+        <select name="stud_listing_id">
+          <option value="">— none, use my own stallion above —</option>
+          ${params.outsideStuds.map(
+            (s) => html`<option value="${String(s.studListingId)}" ${s.studListingId === params.selectedStudListingId ? raw('selected') : raw('')}>${s.stallionName} at ${s.stableName} - ${s.description}, fee ${String(s.fee)}</option>`
+          )}
+        </select>
+      </label>
+      <p class="muted">Booking one of these costs the fee shown and a turn, and no horse moves - the foal is born in this barn.</p>`
+    : html`<p class="muted">Nobody else is standing a stallion at stud just now. When somebody does, they'll show up here.</p>`;
 
   const body = html`
     <h1>Breed</h1>
@@ -649,9 +716,10 @@ export function renderBreedPage(params: {
       <label>Mare
         <select name="mare_id" required>${optionsFor(params.mares, params.selectedMareId, params.describe)}</select>
       </label>
-      <label>Stallion
-        <select name="stallion_id" required>${optionsFor(params.stallions, params.selectedStallionId, params.describe)}</select>
+      <label>Your stallion
+        <select name="stallion_id">${optionsFor(params.stallions, params.selectedStallionId, params.describe)}</select>
       </label>
+      ${outsideStudPicker}
       <button type="submit">Check pairing</button>
     </form>
     ${previewBlock}
