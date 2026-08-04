@@ -26,7 +26,7 @@ import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
 import { isBarredFromShowing, getEnabledConditions, conditionDeltaMapForHorses } from './health';
-import { acquiredBarringFlags, acuteCarePenaltyMapForHorses } from './acquiredConditions';
+import { acquiredBarringFlags, acuteCarePenaltyMapForHorses } from './incidents';
 import { careModifierForHorse, availabilityForHorse } from './care';
 import { ageModifierForHorse } from './ageing';
 

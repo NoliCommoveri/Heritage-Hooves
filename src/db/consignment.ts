@@ -468,10 +468,10 @@ export async function runConsignments(env: Env, gameDay: number, tickSeq: number
   if (gameDay < dueDay) return;
 
   await sweepExpiredConsignmentListings(env, dealerId, gameDay);
-  // Slice 0020: only genotype-testable (locus-based) conditions belong in the dealer's disease
-  // panel - the twelve acquired conditions have no allele to test, and getEnabledConditions now
-  // returns those too.
-  const conditions = (await getEnabledConditions(env)).filter((c) => c.locus_code !== null);
+  // Slice 0022 Part A: getEnabledConditions already returns only genotype-testable (locus-based)
+  // conditions now that the twelve acquired incidents live in their own table - nothing to filter
+  // here.
+  const conditions = await getEnabledConditions(env);
   await mintConsignmentBatch(env, gameDay, tickSeq, config, dealerId, conditions, true);
 }
 

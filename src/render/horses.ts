@@ -20,7 +20,9 @@ import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
-import type { OpenIncidentView, IncidentHistoryView } from '../db/acquiredConditions';
+import type { OpenIncidentView, IncidentHistoryView } from '../db/incidents';
+import { CONFORMATION_LABEL_TEXT, type ConformationLabel } from '../engines/conformation/labels';
+import type { TraitCode } from '../engines/genetics/polygenic';
 
 export const displayNameFor = horseDisplayName;
 
@@ -568,6 +570,10 @@ export interface BreedPreview {
    * certain split first, then one sentence per untested locus explaining what testing it could
    * unlock. Never computed from either horse's genotype directly - same boundary as healthWarnings. */
   colourNotes: string[];
+  /** Slice 0022 §B5: one row per conformation trait, each parent's own plain-word verdict against
+   * ITS OWN breed's ideal - already resolved to display text ('Unknown' included), gated per
+   * parent by that horse's own show record. */
+  conformationRows: { name: string; mareLabel: string; stallionLabel: string }[];
 }
 
 function optionsFor(horses: HorseRow[], selectedId: number | undefined, describe: (h: HorseRow) => string): SafeHtml {
@@ -598,6 +604,20 @@ export function renderBreedPage(params: {
     ? html`<p class="muted">${preview.conceptionReasons.join(', ')}</p>`
     : raw('');
 
+  // Slice 0022 §B5: words only, no bars - five traits x two horses is ten bars on a card that
+  // already carries four other blocks, and the same phone-width argument that shortens the bars on
+  // the horse page (§B4) says not to put bars here at all. A plain sentence guards against the
+  // labels quietly teaching the wrong rule: two Outstanding parents can still throw a poor foal.
+  const conformationBlock = preview && preview.conformationRows.length
+    ? html`
+      <h3>Conformation</h3>
+      <table>
+        <thead><tr><th>Trait</th><th>Mare</th><th>Stallion</th></tr></thead>
+        <tbody>${preview.conformationRows.map((r) => html`<tr><td>${r.name}</td><td>${r.mareLabel}</td><td>${r.stallionLabel}</td></tr>`)}</tbody>
+      </table>
+      <p class="muted">Judged against each parent's own breed. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>`
+    : raw('');
+
   const previewBlock = preview
     ? html`
       <div class="card">
@@ -608,6 +628,7 @@ export function renderBreedPage(params: {
         ${preview.warning ? html`<p class="notice">${preview.warning}</p>` : raw('')}
         ${preview.healthWarnings.map((w) => html`<p class="notice">${w}</p>`)}
         ${preview.colourNotes.map((w) => html`<p class="muted">${w}</p>`)}
+        ${conformationBlock}
         <p><strong>Estimated chance this covering takes:</strong> ${preview.conceptionPercent}</p>
         ${conceptionReasonsBlock}
         <form method="post" action="/stables/${String(params.stable.id)}/breed">
@@ -660,28 +681,56 @@ function pedigreeCell(slot: PedigreeSlot): SafeHtml {
 
 /** One bar per trait - two nested <div>s with an inline width percentage, no JavaScript anywhere in
  * this codebase (CLAUDE.md §11). "Mature to" reads the extreme the horse's own genetics lean
- * towards - slice 0006 §2.2/§4.4, never a judgement of which end is wanted. */
-function conformationRow(row: ConformationDisplayRow): SafeHtml {
+ * towards - slice 0006 §2.2/§4.4, never a judgement of which end is wanted.
+ *
+ * Slice 0022 §B4: the bar and its word share one flex row, the bar taking what's left
+ * (`.meter-line`/`.meter-verdict` in public/style.css) - `.meter` needs `min-width: 0` there or the
+ * word pushes off the right edge of a phone screen, since a flex item defaults to refusing to
+ * shrink below its own content.
+ */
+function conformationRow(row: ConformationDisplayRow, label: ConformationLabel): SafeHtml {
   const matureSideLabel = row.matureExpressed >= 50 ? row.highLabel : row.lowLabel;
   return html`
     <div class="conformation-row">
       <div class="meter-labels"><span>${row.lowLabel}</span><strong>${row.name}</strong><span>${row.highLabel}</span></div>
-      <div class="meter"><div class="meter-fill" style="width: ${String(row.expressed)}%"></div></div>
+      <div class="meter-line">
+        <div class="meter"><div class="meter-fill" style="width: ${String(row.expressed)}%"></div></div>
+        <span class="meter-verdict conformation-label-${label}">${CONFORMATION_LABEL_TEXT[label]}</span>
+      </div>
       <p class="muted">Now ${String(row.expressed)}, will mature to ${String(row.matureExpressed)} - ${matureSideLabel}.</p>
     </div>`;
 }
 
-/** Slice 0006 §6.1: the horse page's Conformation card. §2.3 is the discipline this function must
- * never break - no score, no average, no word implying quality. */
-function conformationCard(params: { conformation: ConformationDisplayRow[]; ageYears: number; maturityYears: number; name: string; possessive: string }): SafeHtml {
+/**
+ * Slice 0006 §6.1: the horse page's Conformation card. §2.3 is the discipline this function must
+ * never break - no score, no average, no word implying quality on its OWN numbers.
+ *
+ * Slice 0022 Part B keeps that discipline while finally keeping the card's own long-standing
+ * promise: `labels` is one word per trait, read off the judge's own per-trait formula against this
+ * horse's own breed (§B2) - `unknown` (rendered "Unknown", never blank - §B3) until `hasShown` is
+ * true and the breed has an ideal_vector to judge against.
+ */
+function conformationCard(params: {
+  conformation: ConformationDisplayRow[];
+  labels: Map<TraitCode, ConformationLabel>;
+  ageYears: number;
+  maturityYears: number;
+  name: string;
+  possessive: string;
+  hasShown: boolean;
+  breedName: string | null;
+}): SafeHtml {
+  const closingLine = params.hasShown
+    ? html`<p class="muted">These words are measured against ${params.breedName ?? "this horse's own breed"}'s own standard - a different breed would score the same horse differently.</p>`
+    : html`<p class="muted">These are measurements, not marks - which end a breed wants arrives with the first show class.</p>`;
   return html`
     <div class="card">
       <h2>Conformation</h2>
       ${params.ageYears < params.maturityYears
         ? html`<p class="muted">${params.name} hasn't grown into ${params.possessive} frame yet - these numbers will keep settling until around age ${String(params.maturityYears)}.</p>`
         : raw('')}
-      ${params.conformation.map((row) => conformationRow(row))}
-      <p class="muted">These are measurements, not marks - which end a breed wants arrives with the first show class.</p>
+      ${params.conformation.map((row) => conformationRow(row, params.labels.get(row.code) ?? 'unknown'))}
+      ${closingLine}
     </div>`;
 }
 
@@ -752,18 +801,23 @@ const OUTCOME_LABEL: Record<IncidentHistoryView['outcome'], string> = {
 /**
  * Slice 0020 §8.2: the Incidents card, between Health and Care - the same discipline §2.3
  * establishes elsewhere applies here too, this card never touches the Health card's own rows.
- * Nothing about an acquired condition is hidden (§2.7), so this renders for owner and admin alike,
+ * Nothing about an acquired incident is hidden (§2.7), so this renders for owner and admin alike,
  * omitting itself entirely for anyone else and when there is nothing to show at all.
+ *
+ * Slice 0022 §A6: `history` has already been trimmed to the last `incident_history_game_days` by
+ * the caller (an open incident and a 'degenerative' outcome are never trimmed) - `hiddenCount`
+ * says how many were left out, so the card ends on a plain count rather than silently dropping
+ * them.
  */
 function incidentsCard(params: {
-  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[] };
+  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[]; hiddenCount: number };
   horseId: number;
   canManage: boolean;
   incidentError?: string;
   incidentNotice?: string;
 }): SafeHtml {
-  const { open, history } = params.incidents;
-  if (open.length === 0 && history.length === 0) return raw('');
+  const { open, history, hiddenCount } = params.incidents;
+  if (open.length === 0 && history.length === 0 && hiddenCount === 0) return raw('');
 
   const openRows = open.map(
     (o) => html`
@@ -788,6 +842,8 @@ function incidentsCard(params: {
       <ul>${history.map((h) => html`<li>${h.conditionName} (game day ${String(h.onsetGameDay)}) - ${OUTCOME_LABEL[h.outcome]}</li>`)}</ul>`
     : raw('');
 
+  const hiddenLine = hiddenCount > 0 ? html`<p class="muted">${String(hiddenCount)} earlier incident${hiddenCount === 1 ? '' : 's'}, all resolved.</p>` : raw('');
+
   return html`
     <div class="card">
       <h2>Incidents</h2>
@@ -795,6 +851,7 @@ function incidentsCard(params: {
       ${noticeBox(params.incidentNotice)}
       ${openRows}
       ${historyRows}
+      ${hiddenLine}
     </div>`;
 }
 
@@ -944,6 +1001,7 @@ export function renderHorsePage(params: {
   loci?: LocusRow[];
   mareStatus?: string;
   conformation: ConformationDisplayRow[];
+  conformationLabels: Map<TraitCode, ConformationLabel>;
   conformationMaturityYears: number;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
@@ -999,7 +1057,7 @@ export function renderHorsePage(params: {
   studNotice?: string;
   /** Slice 0020 §8.2: open acute incidents and past outcomes - empty for a non-owner, non-admin
    * viewer, the same way health's does. */
-  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[] };
+  incidents: { open: OpenIncidentView[]; history: IncidentHistoryView[]; hiddenCount: number };
   incidentError?: string;
   incidentNotice?: string;
 }): SafeHtml {
@@ -1148,7 +1206,16 @@ export function renderHorsePage(params: {
         : raw('')}
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
-    ${conformationCard({ conformation: params.conformation, ageYears: params.ageYears, maturityYears: params.conformationMaturityYears, name: displayNameFor(h), possessive })}
+    ${conformationCard({
+      conformation: params.conformation,
+      labels: params.conformationLabels,
+      ageYears: params.ageYears,
+      maturityYears: params.conformationMaturityYears,
+      name: displayNameFor(h),
+      possessive,
+      hasShown: (params.showSummary?.starts ?? 0) >= 1,
+      breedName: params.breed?.name ?? null,
+    })}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${params.owner || params.isAdmin
       ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })

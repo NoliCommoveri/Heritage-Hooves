@@ -23,10 +23,11 @@ import { buildEndHorseParticipationStatements } from './ageing';
  *
  * Every clause here is doing two jobs at once, and that is why the list is longer than the phrase
  * suggests. It is the operator's rule, *and* it is the proof that deleting the row cannot break a
- * foreign key: every one of the fourteen tables with a `REFERENCES horses (id)` column is either
+ * foreign key: every one of the fifteen tables with a `REFERENCES horses (id)` column is either
  * named below (so the horse is kept) or cleaned up by buildDeleteHorseStatements (so the reference
- * goes with it). If a future migration adds a fifteenth, it belongs in one list or the other, and
- * the delete will start failing inside a batch if it is in neither.
+ * goes with it) - horse_incidents (slice 0022 §A4) is the fifteenth, and it is in the second list.
+ * If a future migration adds a sixteenth, it belongs in one list or the other, and the delete will
+ * start failing inside a batch if it is in neither.
  *
  * The two stud clauses are deliberately stricter than the operator's rule. A stud booking is a
  * cross-stable transaction with a player's money in it, and deleting a horse that appears in one
@@ -90,6 +91,9 @@ export function buildDeleteHorseStatements(env: Env, horseId: number): D1Prepare
     env.DB.prepare('DELETE FROM coverings WHERE mare_id = ? OR stallion_id = ?').bind(horseId, horseId),
     env.DB.prepare('DELETE FROM horse_ancestors WHERE descendant_id = ?').bind(horseId),
     env.DB.prepare('DELETE FROM horse_conditions WHERE horse_id = ?').bind(horseId),
+    // Slice 0022 §A4: horse_incidents references horses (horse_id) - a fact about one horse, goes
+    // with it, same reasoning as horse_conditions right above.
+    env.DB.prepare('DELETE FROM horse_incidents WHERE horse_id = ?').bind(horseId),
     env.DB.prepare('DELETE FROM horse_knowledge WHERE horse_id = ?').bind(horseId),
     // Every listing this horse ever had, not just an open one - an earlier withdrawn or expired
     // listing points at it just as hard. None can be a 'sold' row: a sold horse belongs to whoever

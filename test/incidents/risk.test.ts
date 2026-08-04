@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { onsetProbability, rollOutcome, parseAcquiredTrigger, type AcquiredTrigger, type OnsetInputs } from '../../src/engines/health/acquired';
+import { onsetProbability, rollOutcome, parseIncidentRiskModel, type IncidentRiskModel, type OnsetInputs } from '../../src/engines/incidents/risk';
 import { makeRng } from '../../src/lib/rng';
 
 const CEILING = 0.02;
 
-const BASE_TRIGGER: AcquiredTrigger = {
+const BASE_TRIGGER: IncidentRiskModel = {
   v: 1,
   kind: 'acquired',
   tissue: 'gut',
@@ -16,8 +16,6 @@ const BASE_TRIGGER: AcquiredTrigger = {
   workloadWeight: 0.6,
   feedWeight: 0,
   pastureMultiplier: 0.7,
-  treatmentWindowGameDays: 4,
-  treatmentCostKey: 'acute_treatment_cost_colic',
   outcomesUntreated: { resolved: 0.55, manageable: 0.05, degenerative: 0, death: 0.4 },
   outcomesTreated: { resolved: 0.9, manageable: 0.05, degenerative: 0, death: 0.05 },
 };
@@ -45,26 +43,26 @@ describe('onsetProbability - monotonicity', () => {
   });
 
   it('higher feed risk never lowers risk, when feedWeight is set (laminitis)', () => {
-    const trigger: AcquiredTrigger = { ...BASE_TRIGGER, feedWeight: 1.0 };
+    const trigger: IncidentRiskModel = { ...BASE_TRIGGER, feedWeight: 1.0 };
     const low = onsetProbability(trigger, { ...BASE_INPUT, feedRiskFactor: 0 }, CEILING);
     const high = onsetProbability(trigger, { ...BASE_INPUT, feedRiskFactor: 1 }, CEILING);
     expect(high).toBeGreaterThanOrEqual(low);
   });
 
   it('lower robustness potential never lowers risk, for a condition that reads one', () => {
-    const trigger: AcquiredTrigger = { ...BASE_TRIGGER, robustnessTrait: 'foot_robustness', robustnessWeight: 1.0 };
+    const trigger: IncidentRiskModel = { ...BASE_TRIGGER, robustnessTrait: 'foot_robustness', robustnessWeight: 1.0 };
     const strong = onsetProbability(trigger, { ...BASE_INPUT, robustnessPotential: 20 }, CEILING);
     const weak = onsetProbability(trigger, { ...BASE_INPUT, robustnessPotential: 0 }, CEILING);
     expect(weak).toBeGreaterThanOrEqual(strong);
   });
 
   it('pasture multiplier below 1.0 lowers risk; above 1.0 raises it', () => {
-    const stressTrigger: AcquiredTrigger = { ...BASE_TRIGGER, pastureMultiplier: 0.7 };
+    const stressTrigger: IncidentRiskModel = { ...BASE_TRIGGER, pastureMultiplier: 0.7 };
     const barnP = onsetProbability(stressTrigger, { ...BASE_INPUT, location: 'barn' }, CEILING);
     const pastureP = onsetProbability(stressTrigger, { ...BASE_INPUT, location: 'pasture' }, CEILING);
     expect(pastureP).toBeLessThan(barnP);
 
-    const envTrigger: AcquiredTrigger = { ...BASE_TRIGGER, pastureMultiplier: 1.8 };
+    const envTrigger: IncidentRiskModel = { ...BASE_TRIGGER, pastureMultiplier: 1.8 };
     const barnP2 = onsetProbability(envTrigger, { ...BASE_INPUT, location: 'barn' }, CEILING);
     const pastureP2 = onsetProbability(envTrigger, { ...BASE_INPUT, location: 'pasture' }, CEILING);
     expect(pastureP2).toBeGreaterThan(barnP2);
@@ -73,7 +71,7 @@ describe('onsetProbability - monotonicity', () => {
 
 describe('onsetProbability - the ceiling', () => {
   it('never exceeds incident_probability_ceiling_per_game_day, with every input at its worst', () => {
-    const trigger: AcquiredTrigger = { ...BASE_TRIGGER, robustnessTrait: 'foot_robustness', robustnessWeight: 5, careWeight: 10, workloadWeight: 10, feedWeight: 5, pastureMultiplier: 100 };
+    const trigger: IncidentRiskModel = { ...BASE_TRIGGER, robustnessTrait: 'foot_robustness', robustnessWeight: 5, careWeight: 10, workloadWeight: 10, feedWeight: 5, pastureMultiplier: 100 };
     const worst: OnsetInputs = { daysSinceLastCheck: 1, carePenaltyFactor: 1, workloadFactor: 1, feedRiskFactor: 1, location: 'pasture', robustnessPotential: 0 };
     const p = onsetProbability(trigger, worst, CEILING);
     // A tiny epsilon absorbs floating-point drift from 1 - (1-p)^1 - the ceiling clamp inside
@@ -82,7 +80,7 @@ describe('onsetProbability - the ceiling', () => {
   });
 
   it('never exceeds the ceiling even accumulated over many days', () => {
-    const trigger: AcquiredTrigger = { ...BASE_TRIGGER, careWeight: 10, workloadWeight: 10 };
+    const trigger: IncidentRiskModel = { ...BASE_TRIGGER, careWeight: 10, workloadWeight: 10 };
     const worst: OnsetInputs = { ...BASE_INPUT, daysSinceLastCheck: 30, carePenaltyFactor: 1, workloadFactor: 1 };
     const p = onsetProbability(trigger, worst, CEILING);
     expect(p).toBeLessThanOrEqual(1);
@@ -141,17 +139,17 @@ describe('rollOutcome - the cumulative distribution', () => {
   });
 });
 
-describe('the seed migration (0125) - every trigger blob', () => {
-  const sql = readFileSync(new URL('../../migrations/0125_seed_acquired_conditions.sql', import.meta.url), 'utf8');
-  const triggerJsonBlobs = [...sql.matchAll(/'(\{"v":1,"kind":"acquired"[^']*)'/g)].map((m) => m[1]);
+describe('the seed migration (0130) - every risk_model blob', () => {
+  const sql = readFileSync(new URL('../../migrations/0130_seed_incident_types.sql', import.meta.url), 'utf8');
+  const riskModelBlobs = [...sql.matchAll(/'(\{"v":1,"kind":"acquired"[^']*)'/g)].map((m) => m[1]);
 
-  it('seeds exactly twelve conditions', () => {
-    expect(triggerJsonBlobs).toHaveLength(12);
+  it('seeds exactly twelve incident types', () => {
+    expect(riskModelBlobs).toHaveLength(12);
   });
 
-  it('both outcome tables sum to 1.0 for every condition - a table that does not is a bug in the document, not just the code', () => {
-    for (const blob of triggerJsonBlobs) {
-      const trigger = parseAcquiredTrigger(blob);
+  it('both outcome tables sum to 1.0 for every incident type - a table that does not is a bug in the document, not just the code', () => {
+    for (const blob of riskModelBlobs) {
+      const trigger = parseIncidentRiskModel(blob);
       const untreatedSum = trigger.outcomesUntreated.resolved + trigger.outcomesUntreated.manageable + trigger.outcomesUntreated.degenerative + trigger.outcomesUntreated.death;
       const treatedSum = trigger.outcomesTreated.resolved + trigger.outcomesTreated.manageable + trigger.outcomesTreated.degenerative + trigger.outcomesTreated.death;
       expect(untreatedSum).toBeCloseTo(1.0, 9);
@@ -159,14 +157,13 @@ describe('the seed migration (0125) - every trigger blob', () => {
     }
   });
 
-  it('parses as a valid AcquiredTrigger with the fields onsetProbability/rollOutcome depend on', () => {
-    for (const blob of triggerJsonBlobs) {
-      const trigger = parseAcquiredTrigger(blob);
+  it('parses as a valid IncidentRiskModel with the fields onsetProbability/rollOutcome depend on', () => {
+    for (const blob of riskModelBlobs) {
+      const trigger = parseIncidentRiskModel(blob);
       expect(trigger.v).toBe(1);
       expect(trigger.kind).toBe('acquired');
       expect(typeof trigger.baseRatePerGameDay).toBe('number');
-      expect(typeof trigger.treatmentWindowGameDays).toBe('number');
-      expect(typeof trigger.treatmentCostKey).toBe('string');
     }
   });
+
 });
