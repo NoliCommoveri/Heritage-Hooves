@@ -75,4 +75,56 @@ describe('scoreAbilityEntry', () => {
     expect(result.weightSum).toBe(0);
     expect(result.rawScore).toBe(0);
   });
+
+  // Slice 0024 §3: a discipline judge's own opinion, layered onto the discipline's own weight -
+  // the discipline judge counterpart to test/showing/score.test.ts's judge-weight coverage.
+  describe('judgeWeights (slice 0024)', () => {
+    it('omitting judgeWeights produces the same result as passing {} explicitly', () => {
+      const omitted = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, noise: 0 });
+      const explicit = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, judgeWeights: {}, noise: 0 });
+      expect(omitted).toEqual(explicit);
+    });
+
+    it('a missing trait key in judgeWeights reads as 1.0 (the opposite of `weights`, the opposite convention)', () => {
+      const withDefault = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, judgeWeights: {}, noise: 0 });
+      const withExplicit1 = scoreAbilityEntry({
+        expressed: EXPRESSED,
+        weights: BARRELS,
+        judgeWeights: { speed: 1.0, stamina: 1.0, jump_scope: 1.0, trainability: 1.0, agility: 1.0 },
+        noise: 0,
+      });
+      expect(withDefault.rawScore).toBeCloseTo(withExplicit1.rawScore, 6);
+    });
+
+    // Ferris (need_for_speed) from migration 0140: speed 1.5, stamina 1.3, jump_scope 0.9,
+    // trainability 0.6, agility 0.8 - checked by hand against §7's formula with weight_t now
+    // discipline_weight_t * judge_weight_t.
+    it('a worked example, checked by hand', () => {
+      const ferris: AbilityWeights = { speed: 1.5, stamina: 1.3, jump_scope: 0.9, trainability: 0.6, agility: 0.8 };
+      const result = scoreAbilityEntry({ expressed: EXPRESSED, weights: BARRELS, judgeWeights: ferris, noise: 0 });
+      // combined weight_t = 1.4*1.5, 0.2*1.3, 0*0.9, 0.8*0.6, 1.5*0.8 = 2.1, 0.26, 0, 0.48, 1.2
+      expect(result.weightSum).toBeCloseTo(2.1 + 0.26 + 0 + 0.48 + 1.2, 6);
+      // weighted sum = 2.1*60 + 0.26*40 + 0*70 + 0.48*55 + 1.2*80 = 258.8
+      expect(result.rawScore).toBeCloseTo(258.8 / 4.04, 6);
+    });
+
+    it('judge weights change the winner - the same two horses, two judges, two different winners', () => {
+      // Show Jumping (migration 0108): speed 0.3, stamina 0.5, jump_scope 1.6, trainability 1.0, agility 1.0
+      const jumping: AbilityWeights = { speed: 0.3, stamina: 0.5, jump_scope: 1.6, trainability: 1.0, agility: 1.0 };
+      const ferris: AbilityWeights = { speed: 1.5, stamina: 1.3, jump_scope: 0.9, trainability: 0.6, agility: 0.8 };
+      const winslow: AbilityWeights = { speed: 0.7, stamina: 0.8, jump_scope: 1.3, trainability: 1.5, agility: 1.3 };
+      // Scopey but green: real jump, modest trainability.
+      const horseA = { speed: 50, stamina: 55, jump_scope: 85, trainability: 45, agility: 60 };
+      // Obedient but modest jump: real trainability, ordinary scope.
+      const horseB = { speed: 55, stamina: 50, jump_scope: 60, trainability: 85, agility: 65 };
+
+      const aUnderFerris = scoreAbilityEntry({ expressed: horseA, weights: jumping, judgeWeights: ferris, noise: 0 }).rawScore;
+      const bUnderFerris = scoreAbilityEntry({ expressed: horseB, weights: jumping, judgeWeights: ferris, noise: 0 }).rawScore;
+      const aUnderWinslow = scoreAbilityEntry({ expressed: horseA, weights: jumping, judgeWeights: winslow, noise: 0 }).rawScore;
+      const bUnderWinslow = scoreAbilityEntry({ expressed: horseB, weights: jumping, judgeWeights: winslow, noise: 0 }).rawScore;
+
+      expect(aUnderFerris).toBeGreaterThan(bUnderFerris);
+      expect(bUnderWinslow).toBeGreaterThan(aUnderWinslow);
+    });
+  });
 });

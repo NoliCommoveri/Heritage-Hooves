@@ -45,6 +45,12 @@ export interface ScoreAbilityEntryParams {
    * re-implemented here (mirrors scoreEntry's own rule, §4.1). */
   expressed: Partial<Record<TraitCode, number>>;
   weights: AbilityWeights;
+  /** Slice 0024 §3: a discipline judge's own opinion, layered onto the discipline's weight exactly
+   * the way scoreEntry's judgeWeights layers onto ideal.weight - a missing key here reads as 1.0
+   * ("no opinion"), the opposite of `weights` above where a missing key means "does not care about
+   * this ability at all". Defaults to {} so every caller that predates this slice (NPC valuation,
+   * existing tests) keeps producing exactly today's number. */
+  judgeWeights?: AbilityWeights;
   noise: number;
   /** Not built yet (§2.4/§3.1/§3.6) - pinned at 1.0 until care, tack and training exist, the same
    * way scoreEntry's careModifier/tackModifier and realization()'s trainingFactor/careFactor are
@@ -58,7 +64,10 @@ export interface ScoreAbilityEntryParams {
 }
 
 /**
- * §7's formula (slice 0014 §4.3 appends ageModifier as a fourth multiplier):
+ * §7's formula (slice 0014 §4.3 appends ageModifier as a fourth multiplier; slice 0024 §3 folds a
+ * discipline judge's own weight into weight_t exactly as scoreEntry folds judgeWeight into
+ * ideal.weight, so a discipline class finally has judge variance the way a breed class always has):
+ *   weight_t   = discipline_weight_t * judge_weight_t
  *   rawScore   = Sum(weight_t * expressed_t) / Sum(weight_t)
  *   finalScore = rawScore * careModifier * tackModifier * trainingFactor * ageModifier + noise
  *
@@ -71,13 +80,16 @@ export function scoreAbilityEntry(params: ScoreAbilityEntryParams): AbilityScore
   const tackModifier = params.tackModifier ?? 1.0;
   const trainingFactor = params.trainingFactor ?? 1.0;
   const ageModifier = params.ageModifier ?? 1.0;
+  const judgeWeights = params.judgeWeights ?? {};
 
   const traits: AbilityTraitBreakdown[] = [];
   let weightedSum = 0;
   let weightSum = 0;
 
   for (const code of ABILITY_TRAITS) {
-    const weight = params.weights[code] ?? 0;
+    const disciplineWeight = params.weights[code] ?? 0;
+    const judgeWeight = judgeWeights[code] ?? 1.0;
+    const weight = disciplineWeight * judgeWeight;
     const expressed = params.expressed[code] ?? 0;
     const contribution = weight * expressed;
 

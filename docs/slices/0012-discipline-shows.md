@@ -741,6 +741,8 @@ problem.
   and overview §9 calls judge variance one of the two parameters carrying most of the feel. A
   `judges.ability_weights` column is the obvious answer and is deliberately not built here. Raise it
   after watching a few discipline classes, when there is something to look at.
+  **Answered in `docs/slices/0024-discipline-judges.md` (2026-08-04):** yes — a `judges.kind`
+  column and a discipline-only judge pool, built once all six disciplines had run.
 - **Should a discipline result feed a separate show record?** §3.5 defers
   `horse_discipline_summary`. It matters most for registries, which do not exist.
 - **Should ability values ever be visible without showing?** §2.3 says no. If it turns out children
