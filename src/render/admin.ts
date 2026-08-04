@@ -1,5 +1,5 @@
 import { html, raw, SafeHtml } from '../lib/html';
-import { pageShell, errorBox, noticeBox, type NavLink } from './layout';
+import { pageShell, errorBox, noticeBox, type SubnavItem } from './layout';
 import type { WorldRow } from '../db/world';
 import type { AccountRow } from '../db/accounts';
 import type { StableRow } from '../db/stables';
@@ -45,27 +45,63 @@ type AdminSubnavPage =
   | 'migrations'
   | 'reset';
 
-function adminSubnav(active: AdminSubnavPage): NavLink[] {
+/**
+ * The admin top nav used to be one flat row of eighteen links, which stopped fitting on a screen
+ * as slices kept adding their own admin page. Grouped into hubs (a `<details>` dropdown per hub,
+ * see layout.ts's `NavHub` - no JavaScript) with Admin home and World clock left standalone, per
+ * the operator's own grouping. Health and Incidents went to Game horses rather than Settings -
+ * they're about what's happening to horses, not the game's tuning knobs.
+ */
+function adminSubnav(active: AdminSubnavPage): SubnavItem[] {
+  const gameHorsesPages: AdminSubnavPage[] = ['horses', 'founding', 'ageing', 'care', 'health', 'incidents'];
+  const playersAndNpcsPages: AdminSubnavPage[] = ['accounts', 'money', 'npc', 'consignment'];
+  const behindTheScenesPages: AdminSubnavPage[] = ['breeds', 'breeding', 'shows'];
+  const settingsPages: AdminSubnavPage[] = ['config', 'security', 'migrations', 'reset'];
+
   return [
     { label: 'Admin home', href: '/admin', active: active === 'home' },
-    { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
-    { label: 'Search horses', href: '/admin/horses', active: active === 'horses' },
-    { label: 'Config', href: '/admin/config', active: active === 'config' },
     { label: 'World clock', href: '/admin/world', active: active === 'world' },
-    { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
-    { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
-    { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
-    { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
-    { label: 'Money', href: '/admin/money', active: active === 'money' },
-    { label: 'Health', href: '/admin/health', active: active === 'health' },
-    { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
-    { label: 'Care', href: '/admin/care', active: active === 'care' },
-    { label: 'Incidents', href: '/admin/incidents', active: active === 'incidents' },
-    { label: 'NPC stables', href: '/admin/npc', active: active === 'npc' },
-    { label: 'Consignment dealer', href: '/admin/consignment', active: active === 'consignment' },
-    { label: 'Security', href: '/admin/security', active: active === 'security' },
-    { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
-    { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
+    {
+      label: 'Game horses',
+      active: gameHorsesPages.includes(active),
+      children: [
+        { label: 'Search horses', href: '/admin/horses', active: active === 'horses' },
+        { label: 'Founding stock', href: '/admin/founding', active: active === 'founding' },
+        { label: 'Ageing', href: '/admin/ageing', active: active === 'ageing' },
+        { label: 'Care', href: '/admin/care', active: active === 'care' },
+        { label: 'Health', href: '/admin/health', active: active === 'health' },
+        { label: 'Incidents', href: '/admin/incidents', active: active === 'incidents' },
+      ],
+    },
+    {
+      label: 'Players and NPCs',
+      active: playersAndNpcsPages.includes(active),
+      children: [
+        { label: 'Accounts', href: '/admin/accounts', active: active === 'accounts' },
+        { label: 'Money', href: '/admin/money', active: active === 'money' },
+        { label: 'NPC stables', href: '/admin/npc', active: active === 'npc' },
+        { label: 'Consignment dealer', href: '/admin/consignment', active: active === 'consignment' },
+      ],
+    },
+    {
+      label: 'Behind the scenes',
+      active: behindTheScenesPages.includes(active),
+      children: [
+        { label: 'Breeds', href: '/admin/breeds', active: active === 'breeds' },
+        { label: 'Breeding', href: '/admin/breeding', active: active === 'breeding' },
+        { label: 'Shows', href: '/admin/shows', active: active === 'shows' },
+      ],
+    },
+    {
+      label: 'Settings',
+      active: settingsPages.includes(active),
+      children: [
+        { label: 'Config', href: '/admin/config', active: active === 'config' },
+        { label: 'Security', href: '/admin/security', active: active === 'security' },
+        { label: 'Migrations', href: '/admin/migrations', active: active === 'migrations' },
+        { label: 'Start over', href: '/admin/reset', active: active === 'reset' },
+      ],
+    },
   ];
 }
 
@@ -239,35 +275,47 @@ export function renderAccountsPage(params: {
   return shell(params.world, body, 'Accounts', 'accounts');
 }
 
-export function renderConfigPage(params: { world: WorldRow; config: Config; error?: string; notice?: string }): SafeHtml {
-  const v = params.config.values;
-  const body = html`
-    <h1>Config</h1>
-    ${errorBox(params.error)}
-    ${noticeBox(params.notice)}
-    <form method="post" action="/admin/config">
-      <label>Display time zone
-        <input type="text" name="display_timezone" value="${v.display_timezone}">
-      </label>
-      <label>Game days per tick
-        <input type="text" inputmode="numeric" name="game_days_per_tick" value="${String(v.game_days_per_tick)}">
-      </label>
-      <label>Game days per year
-        <input type="text" inputmode="numeric" name="game_days_per_year" value="${String(v.game_days_per_year)}">
-      </label>
-      <label>Max stables per account
-        <input type="text" inputmode="numeric" name="max_stables_per_account" value="${String(v.max_stables_per_account)}">
-      </label>
-      <label>Starting stable capacity
-        <input type="text" inputmode="numeric" name="starting_stable_capacity" value="${String(v.starting_stable_capacity)}">
-      </label>
-      <label>Starting balance
-        <input type="text" inputmode="numeric" name="starting_balance" value="${String(v.starting_balance)}">
-      </label>
-      <label>Minimum password length
-        <input type="text" inputmode="numeric" name="min_password_length" value="${String(v.min_password_length)}">
-      </label>
-      <h2>Conformation</h2>
+/**
+ * The config page used to be one long form - every tunable in the game, in authoring order,
+ * on one screen. That got unmanageable as slices kept adding their own numbers to the bottom.
+ * Now the fields are grouped exactly as the old <h2>/<h3> headers already grouped them (nothing
+ * about the fields or their validation changed, only how they're displayed), a handful of
+ * originally-header-less fields at the top became their own "Miscellaneous" group, and a plain
+ * GET picker (same no-JavaScript pattern as market.ts's breedPicker) shows one group at a time.
+ * Each group is its own POST form carrying only its own fields, which is safe because
+ * adminConfigRoute already skips any config key missing from the submitted form body.
+ */
+function configSections(v: Config['values']): { name: string; body: SafeHtml }[] {
+  return [
+    {
+      name: 'Miscellaneous',
+      body: html`
+        <label>Display time zone
+          <input type="text" name="display_timezone" value="${v.display_timezone}">
+        </label>
+        <label>Game days per tick
+          <input type="text" inputmode="numeric" name="game_days_per_tick" value="${String(v.game_days_per_tick)}">
+        </label>
+        <label>Game days per year
+          <input type="text" inputmode="numeric" name="game_days_per_year" value="${String(v.game_days_per_year)}">
+        </label>
+        <label>Max stables per account
+          <input type="text" inputmode="numeric" name="max_stables_per_account" value="${String(v.max_stables_per_account)}">
+        </label>
+        <label>Starting stable capacity
+          <input type="text" inputmode="numeric" name="starting_stable_capacity" value="${String(v.starting_stable_capacity)}">
+        </label>
+        <label>Starting balance
+          <input type="text" inputmode="numeric" name="starting_balance" value="${String(v.starting_balance)}">
+        </label>
+        <label>Minimum password length
+          <input type="text" inputmode="numeric" name="min_password_length" value="${String(v.min_password_length)}">
+        </label>
+      `,
+    },
+    {
+      name: 'Conformation',
+      body: html`
       <label>Environmental noise (standard deviation)
         <input type="text" inputmode="numeric" name="conformation_noise_sd" value="${String(v.conformation_noise_sd)}">
       </label>
@@ -282,7 +330,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="inbreeding_depression_factor" value="${String(v.inbreeding_depression_factor)}">
       </label>
       <p class="notice">Changing this one re-scores every already-inbred horse in the game immediately, because conformation is computed fresh on every page view. Best tuned in the first weeks of play, then left alone.</p>
-      <h2>Conformation labels</h2>
+      `,
+    },
+    {
+      name: 'Conformation labels',
+      body: html`
       <p class="muted">Slice 0022 §B2: band edges for the plain-word verdict (Poor / Weak / Acceptable / Good / Outstanding) shown once a horse has started at least one show. Each is the minimum traitScore (0-100, the judge's own per-trait formula) that word applies at. Live - the words on an already-shown horse can move if these are retuned.</p>
       <label>Outstanding, minimum traitScore
         <input type="text" inputmode="numeric" name="conformation_label_outstanding_min" value="${String(v.conformation_label_outstanding_min)}">
@@ -296,7 +348,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
       <label>Weak, minimum traitScore
         <input type="text" inputmode="numeric" name="conformation_label_weak_min" value="${String(v.conformation_label_weak_min)}">
       </label>
-      <h2>Shows</h2>
+      `,
+    },
+    {
+      name: 'Shows',
+      body: html`
       <label>Show interval (game days)
         <input type="text" inputmode="numeric" name="show_interval_game_days" value="${String(v.show_interval_game_days)}">
       </label>
@@ -322,12 +378,20 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="npc_show_barn_size" value="${String(v.npc_show_barn_size)}">
       </label>
       <p class="muted">The five class-shaping numbers above (noise, falloff, field size, entry cap, minimum age) are copied onto each class the moment it's created - changing them here only affects shows created afterwards, never one already scheduled or judged.</p>
-      <h2>Money</h2>
+      `,
+    },
+    {
+      name: 'Money',
+      body: html`
       <label>Upkeep per horse, per game day
         <input type="text" inputmode="numeric" name="upkeep_per_horse_per_game_day" value="${String(v.upkeep_per_horse_per_game_day)}">
       </label>
       <p class="muted">Kept deliberately gentle - prize money from one show a real day is the only income in the game until the market stage lands. Worth revisiting once selling a horse becomes a second way to earn.</p>
-      <h2>Turns and events</h2>
+      `,
+    },
+    {
+      name: 'Turns and events',
+      body: html`
       <label>Turns per tick
         <input type="text" inputmode="numeric" name="actions_per_tick" value="${String(v.actions_per_tick)}">
       </label>
@@ -336,7 +400,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="events_retention_game_days" value="${String(v.events_retention_game_days)}">
       </label>
       <p class="muted">The "While you were away" feed is a notice board, not an archive - every event older than this, read or not, is deleted on the tick. The horse, its pedigree, its show results and the ledger all survive regardless.</p>
-      <h2>Health</h2>
+      `,
+    },
+    {
+      name: 'Health',
+      body: html`
       <label>Genotype test cost, one condition
         <input type="text" inputmode="numeric" name="genotype_test_cost" value="${String(v.genotype_test_cost)}">
       </label>
@@ -344,7 +412,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="genotype_panel_cost" value="${String(v.genotype_panel_cost)}">
       </label>
       <p class="muted">Both read live, at the moment a test is bought - a price change affects the next purchase, never re-prices a receipt already written. Too cheap and everyone tests everything; too expensive and children breed blind. Tune by watching /admin/health.</p>
-      <h2>Market</h2>
+      `,
+    },
+    {
+      name: 'Market',
+      body: html`
       <label>Commission on a completed sale (%)
         <input type="text" inputmode="numeric" name="market_commission_percent" value="${String(v.market_commission_percent)}">
       </label>
@@ -449,7 +521,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="lethal_foal_death_game_days" value="${String(v.lethal_foal_death_game_days)}">
       </label>
       <p class="muted">Only affects foals born after this changes - a foal already carrying a lethal condition has its death day snapshotted at birth, so retuning this never moves it.</p>
-      <h2>Ageing</h2>
+      `,
+    },
+    {
+      name: 'Ageing',
+      body: html`
       <label>Lifespan mean (game days)
         <input type="text" inputmode="numeric" name="lifespan_mean_game_days" value="${String(v.lifespan_mean_game_days)}">
       </label>
@@ -474,7 +550,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="barn_shows_ended_game_days" value="${String(v.barn_shows_ended_game_days)}">
       </label>
       <p class="muted">A dead or retired-away horse drops out of the barn list after this many game days, but stays reachable forever from a stable's Past horses page.</p>
-      <h2>Care</h2>
+      `,
+    },
+    {
+      name: 'Care',
+      body: html`
       <label>Care starts at age (game days)
         <input type="text" inputmode="numeric" name="care_start_age_game_days" value="${String(v.care_start_age_game_days)}">
       </label>
@@ -515,7 +595,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="care_modifier_max" value="${String(v.care_modifier_max)}">
       </label>
       <p class="muted">All ten are live - retuning any of them only changes the modifier computed on the next read, never a horse's own stored dates (last_farrier_game_day, last_vet_game_day). Watch /admin/care after a change.</p>
-      <h2>Consignment dealer</h2>
+      `,
+    },
+    {
+      name: 'Consignment dealer',
+      body: html`
       <label>Cadence between batches (game days)
         <input type="text" inputmode="numeric" name="consignment_cadence_game_days" value="${String(v.consignment_cadence_game_days)}">
       </label>
@@ -523,7 +607,11 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="numeric" name="consignment_horses_per_breed" value="${String(v.consignment_horses_per_breed)}">
       </label>
       <p class="muted">Both live: the cadence change takes effect from whichever batch is most recent right now (see /admin/consignment for the actual next-due day), and the per-breed count applies to the next batch minted, of every breed then in play. Doesn't retroactively change a batch already minted.</p>
-      <h2>Incidents</h2>
+      `,
+    },
+    {
+      name: 'Incidents',
+      body: html`
       <p class="muted">Colic, laminitis, and the rest - see /admin/incidents for open counts and the real outcome split. Everything here is live, per-day risk (the base rate and weighting live in each incident type's own risk_model row, not here).</p>
       <label>History window shown on a horse's page (game days)
         <input type="text" inputmode="numeric" name="incident_history_game_days" value="${String(v.incident_history_game_days)}">
@@ -577,6 +665,35 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
       <label>Treat suspensory injury
         <input type="text" inputmode="numeric" name="acute_treatment_cost_suspensory" value="${String(v.acute_treatment_cost_suspensory)}">
       </label>
+      `,
+    },
+  ];
+}
+
+export function renderConfigPage(params: { world: WorldRow; config: Config; error?: string; notice?: string; section?: string }): SafeHtml {
+  const v = params.config.values;
+  const sections = configSections(v).sort((a, b) => a.name.localeCompare(b.name));
+  const active = sections.find((s) => s.name === params.section) ?? sections[0];
+
+  const picker = html`
+    <form method="get" action="/admin/config">
+      <label>Section
+        <select name="section">
+          ${sections.map((s) => html`<option value="${s.name}" ${s.name === active.name ? raw('selected') : raw('')}>${s.name}</option>`)}
+        </select>
+      </label>
+      <button type="submit">Show</button>
+    </form>`;
+
+  const body = html`
+    <h1>Config</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    ${picker}
+    <form method="post" action="/admin/config">
+      <input type="hidden" name="section" value="${active.name}">
+      <h2>${active.name}</h2>
+      ${active.body}
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
