@@ -277,6 +277,8 @@ const NUMERIC_CONFIG_KEYS = [
   'stud_max_fee',
   'stud_default_season_cap',
   'npc_stud_season_cap',
+  'consignment_cadence_game_days',
+  'consignment_horses_per_breed',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
