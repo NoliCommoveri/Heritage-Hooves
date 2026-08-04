@@ -947,10 +947,22 @@ function enterShowBlock(horseId: number, infos: EnterShowInfo[]): SafeHtml {
   )}`;
 }
 
-/** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings. */
+/** A Show record card group: one class type (Conformation, or a discipline's own name) the horse
+ * has actually placed in, with its own most-recent-first placings. Groups themselves are ordered
+ * most-recent-first too - both fall out of the order recentShowResultGroups is built in
+ * (routes/horses.ts), not sorted again here. */
+export interface ShowResultGroup {
+  label: string;
+  items: string[];
+}
+
+/** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings grouped by
+ * class type. The made-up show name isn't shown - what a player wants to know is what kind of
+ * class a result came from (Conformation, Dressage, ...), not which of several near-identical
+ * fictional show names it happened at. */
 function showRecordCard(params: {
   summary: HorseShowSummaryRow | null;
-  recentResults: string[];
+  resultGroups: ShowResultGroup[];
   enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
@@ -965,7 +977,9 @@ function showRecordCard(params: {
       ${s
         ? html`<p><strong>Starts:</strong> ${String(s.starts)} &middot; <strong>Wins:</strong> ${String(s.wins)} &middot; <strong>Best:</strong> ${s.best_placing !== null ? placingText(s.best_placing) : 'none yet'}</p>`
         : html`<p class="muted">No shows entered yet.</p>`}
-      ${params.recentResults.length ? html`<ul>${params.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+      ${params.resultGroups.map(
+        (g) => html`<h3>${g.label}</h3><ul>${g.items.map((r) => html`<li>${r}</li>`)}</ul>`
+      )}
       ${enterShowBlock(params.horseId, params.enterShow)}
     </div>`;
 }
@@ -1006,10 +1020,10 @@ export function renderHorsePage(params: {
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
   /** Slice 0008 §8.1/slice 0012 §9: the Show record card - starts, wins, best result, a few recent
-   * placings already formatted as sentences, and every open class this horse can (or can't yet)
-   * enter. */
+   * placings already formatted as sentences and grouped by class type, and every open class this
+   * horse can (or can't yet) enter. */
   showSummary: HorseShowSummaryRow | null;
-  recentShowResults: string[];
+  recentShowResultGroups: ShowResultGroup[];
   enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
@@ -1234,7 +1248,7 @@ export function renderHorsePage(params: {
     ${locationCard({ horse: h, availability: params.availability, canManage: params.canManage, blockedReason: params.locationBlockedReason, error: params.locationError })}
     ${showRecordCard({
       summary: params.showSummary,
-      recentResults: params.recentShowResults,
+      resultGroups: params.recentShowResultGroups,
       enterShow: params.enterShow,
       enterShowError: params.enterShowError,
       enterShowNotice: params.enterShowNotice,

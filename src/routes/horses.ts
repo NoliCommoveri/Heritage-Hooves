@@ -15,6 +15,7 @@ import {
   displayNameFor,
   type BreedPreview,
   type EnterShowInfo,
+  type ShowResultGroup,
   type HealthConditionDisplay,
   type TestConditionOption,
   type ColourLocusOption,
@@ -775,8 +776,27 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // Slice 0022 §B3: gated on real show starts, not on the horse's status - a retired or dead horse
   // that showed in its life keeps its labels (the show record outlives the horse on purpose).
   const conformationLabels = conformationLabelsForHorse(conformation, breed, (showSummary?.starts ?? 0) >= 1, ctx.config.values);
-  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 5);
-  const recentShowResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+  // Grouped by class type (Conformation vs. each discipline) rather than a single flat list: a
+  // made-up show name tells a player nothing, but which kind of class a result came from does. A
+  // group's own position (most recent activity first) and each group's own items (most recent
+  // first) fall out of one pass, since listRecentResultsForHorse already returns rows newest-first -
+  // the first row seen for a not-yet-seen label is by definition that group's most recent result.
+  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, 200);
+  const resultGroupsByLabel = new Map<string, ShowResultGroup>();
+  const recentShowResultGroups: ShowResultGroup[] = [];
+  const SHOW_RESULT_GROUP_CAP = 5;
+  for (const r of recentResultsRaw) {
+    const label = r.class_type === 'breed_conformation' ? 'Conformation' : (r.discipline_name ?? 'Discipline');
+    let group = resultGroupsByLabel.get(label);
+    if (!group) {
+      group = { label, items: [] };
+      resultGroupsByLabel.set(label, group);
+      recentShowResultGroups.push(group);
+    }
+    if (group.items.length < SHOW_RESULT_GROUP_CAP) {
+      group.items.push(`${placingText(r.placing)} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+    }
+  }
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
   const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
@@ -853,7 +873,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
       showSummary,
-      recentShowResults,
+      recentShowResultGroups,
       enterShow,
       enterShowError,
       enterShowNotice,
