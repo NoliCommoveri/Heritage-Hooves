@@ -7,11 +7,13 @@ import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { getBreedById } from './breeds';
+import { getSpecializableAbilityTraits } from './disciplines';
 import { buildFoundingHorseInsertStatements, countAliveHorses } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
 import { parseGenotype, serializeGenotype } from '../engines/genetics/genotype';
+import { parseIdealVector } from '../engines/showing/score';
 import { getEnabledConditions, getLethalTriggers } from './health';
 import type { LifespanRollConfig } from '../engines/ageing/lifespan';
 
@@ -168,6 +170,11 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
   // Slice 0010 §4.3: no candidate offered here can ever be homozygous-affected for a lethal
   // condition - such a horse would have died as a foal and cannot exist as an adult in a batch.
   const lethalTriggers = await getLethalTriggers(env);
+  // Slice 0019 Parts A/B: null for seven of the eight breeds today (§10's common path, not an edge
+  // case) skips Part A; an empty eligible list (no enabled discipline weights any ability trait)
+  // skips Part B. Both are computed once per offer, not per candidate - identical for every slot.
+  const breedIdealVector = breed.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  const eligibleAbilityTraits = await getSpecializableAbilityTraits(env);
 
   const slots: ('mare' | 'stallion')[] = [
     ...Array<'mare'>(offer.mare_candidates).fill('mare'),
@@ -194,6 +201,9 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
       ageMaxGameDays: offer.age_max_game_days,
       seed: candidateSeed,
       lethalTriggers,
+      breedIdealVector,
+      eligibleAbilityTraits,
+      abilitySpecialistPotential: config.values.founding_ability_specialist_potential,
     });
     const { originPrefix, namePart } = generateFoundingName(candidateSeed);
 

@@ -6,6 +6,36 @@ This file used to be CLAUDE.md §11. It moved out because it had grown too large
 
 ---
 
+**2026-08-04 — Slice 0019, founding specialists: built, Parts A/B/C only, other seven breeds' ideal vectors left for a follow-up.** Every founding candidate (`generateCandidate`, `src/engines/founding/generate.ts`) now gets one conformation specialist trait (near its breed's `ideal_vector` target, ±1 allele) and one ability specialist trait (potential 15/20 ±1), each overwritten *after* the existing Mendelian/polygenic loops finish, from two brand-new RNG stream labels (`specialist_choice_conformation`/`specialist_alleles_conformation` and the `_ability` pair) — never resampled, so no existing draw sequence moves (CLAUDE.md §5.2, slice §7). `specialistTraits: { conformation, ability }` is returned alongside the genotype so the choice is directly testable rather than inferred.
+
+Operator decisions (asked via the four open questions in §9 that mattered — Q1/Q2 tuning, Q3 one-per-side vs two-conformation, Q5 batch coverage, Q6 seed the other breeds now):
+- **±1 allele slack, ability specialist at 15/20** — the slice's own measured defaults, used as-is.
+- **One conformation + one ability specialist per horse** (§5's default), not two conformation specialists.
+- **Batch coverage across a batch's 6 candidates left to chance** — not built, §9 Q5's "not modelled" guess left undecided rather than picked for the operator.
+- **The other seven breeds' `ideal_vector`s (Q6, `docs/breed-ideal-vectors.md`) left for a separate follow-up** — Part A is a no-op for any breed without one (still seven of eight), by design (slice §3's "if the breed has no ideal_vector, skip Part A entirely").
+
+**Part B's eligible-trait set caught a real inconsistency in the slice document.** §4.2 defines the rule as "nonzero weight in at least one enabled discipline," then two sentences later says "today that is agility, speed and trainability" — but Barrel Racing's own seeded weights (migration 0063) give `stamina` a weight of 0.2, which *is* nonzero. The prose undercounts by one trait. `docs/analysis/stable-timeline.mjs` — named in the slice itself as the acceptance test — settles it: its `AT_LIVE` filter is `ABIL[t] > 0`, which includes stamina. Built to the literal rule and the measured script, not the prose: `getSpecializableAbilityTraits` (`src/db/disciplines.ts`, new) returns `[stamina, speed, trainability, agility]` today, not just the three the prose names. `jump_scope` (weight 0.0) is the only one actually excluded.
+
+**New pieces:**
+- `src/db/disciplines.ts`'s `getSpecializableAbilityTraits(env)` — `ABILITY_TRAITS` filtered to a nonzero weight in ≥1 *enabled* discipline's `ability_weights`, following `getBreedsInPlay`'s own shape (one helper, every call site reads it, widens by itself the day a second discipline is seeded).
+- `config.founding_ability_specialist_potential` (15) and `consignment_cadence_game_days` dropped 90 → 60 (Part C, §6) — `migrations/0101_config_founding_specialists.sql`. Both stay live tunables (CLAUDE.md §5.5), editable at `/admin/config` afterwards.
+- `src/db/founding.ts`'s `chooseBreedForOffer` and `src/db/consignment.ts`'s `mintConsignmentBatch`/`mintConsignmentCandidate` both now parse the breed's `ideal_vector` (`parseIdealVector`, `src/engines/showing/score.ts`) and call `getSpecializableAbilityTraits` once per offer/batch, threading both into every `generateCandidate` call. The consignment dealer needed no new specialist logic at all — it inherits Parts A/B for free, exactly as §6 says, only a widened inline type on `eligibleBreeds` to carry `ideal_vector` through.
+
+**Re-ran `docs/analysis/stable-timeline.mjs` with the chosen numbers** (its defaults — `SPEC_SLACK=1`, `ABIL_TARGET=15` — already matched the operator's choices, so no constants changed):
+
+| milestone | as built | +1 conformation specialist | + Part C (cadence 60) |
+|---|---|---|---|
+| 6 good horses (conformation, ≥90) | 1.2y, 133/200 | 353d, 137/200 | **199d, 194/200** |
+| 6 good horses (barrels, dominate ≥70) | 1.8y, 124/200 | — | **221d, 200/200** |
+| 6 good horses (barrels, elite ≥78 — long game) | — | — | 1.7y, 139/200 |
+
+Matches §2's table exactly — both lines land at 6½–7½ months, inside the operator's 6–8 month brief, and the elite bar stays a long way off on purpose.
+
+New tests: `test/founding/generate.test.ts` gained a regression test that both specialists active leaves every *other* trait's bits identical to the slice-0014 golden values at seed 777777 (the direct test for §7's failure mode), determinism tests for each Part, the "no ideal vector skips Part A" / "empty eligible list skips Part B" identity checks, a jump_scope-never-chosen sweep, and a throw test for a missing `abilitySpecialistPotential`. New `test/db/disciplines.test.ts` covers `getSpecializableAbilityTraits` itself with a minimal fake `Env` — note its cache in `disciplines.ts` is module-scoped, so each test there calls `vi.resetModules()` and re-imports fresh rather than relying on a shared instance across `it()` blocks.
+- Verified: `npm test` (65 files, 531 tests) and `npx tsc --noEmit` both clean. **Not** verified against a live `wrangler dev` or real D1 — no Cloudflare account/login in this sandbox, the same standing constraint every entry in this log has noted. The operator confirmed via a screenshot mid-session that `/admin/migrations` had `0100_config_npc_buying.sql` as its last applied migration, confirming `0101` was the correct next number.
+
+---
+
 **2026-08-03 — Bug fix: a full world reset deleted the Consignment Yard and never brought it back.** `migrations/0097_consignment_dealer_stable.sql` inserts the dealer's `stables` row once, on deploy, the same way `0040`/`0085` insert Fair Meadow/Cedar Hollow/Willow Creek Barrels — but unlike those three, `src/db/reset.ts`'s full-world-reset branch never re-inserted it after its own blanket `DELETE FROM stables`. `runConsignments` treats a missing dealer as "migration not yet applied" and quietly returns, so after any `/admin/reset` (world scope) the dealer was gone for good and no batch ever minted again, with no error anywhere to notice by. Fixed by adding the same two-statement pattern (`stables` + `stable_prefix_history`, prefix from `CONSIGNMENT_DEALER_PREFIX` in `src/db/consignment.ts`) the other three NPC stables already get, **deliberately with no `npc_policy` row**, matching `0097`'s own comment that the absence is what keeps the dealer out of `runNpcBreedingDecisions`/`runNpcMarketListings`. New test file `test/reset-d1.test.ts` (fourth use of the `node:sqlite` real-database harness — see `test/market/sale-d1.test.ts`'s header — added to `tsconfig.json`'s exclude list for the same reason the other three are there) asserts the dealer stable exists after a reset, has no policy row, and that `runConsignments` successfully mints a batch on the very next call.
 - Verified: `npm test` (61 files, 495 tests — 2 new in `test/reset-d1.test.ts`) and `npx tsc --noEmit` both clean. **Not** verified against a live `wrangler dev` or real D1 — no Cloudflare account/login in this sandbox, the same standing constraint every session in this log has noted.
 

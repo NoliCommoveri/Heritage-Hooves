@@ -8,6 +8,7 @@ import type { Config } from '../lib/config-cache';
 import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng, type Rng } from '../lib/rng';
 import { getBreedsInPlay } from './breeds';
+import { getSpecializableAbilityTraits } from './disciplines';
 import type { StableRow } from './stables';
 import { getHorse, buildFoundingHorseInsertStatements } from './horses';
 import { getEnabledConditions, getLethalTriggers, buildKnowledgePurchaseStatements, buildLocusKnowledgePurchaseStatements, type ConditionRow } from './health';
@@ -20,6 +21,8 @@ import { generateFoundingName } from '../engines/founding/names';
 import { applyConsignmentInjection } from '../engines/founding/injection';
 import type { Genotype } from '../engines/genetics/genotype';
 import { LOCI } from '../engines/genetics/loci';
+import { parseIdealVector } from '../engines/showing/score';
+import type { TraitCode } from '../engines/genetics/polygenic';
 
 /** The dealer's own stables.prefix (migrations/0097) - a magic string kept to one place. Consigned
  * horses never carry this prefix themselves; see buildFoundingHorseInsertStatements' breederPrefix
@@ -176,10 +179,11 @@ async function mintConsignmentCandidate(
   env: Env,
   batchSeed: number,
   index: number,
-  eligibleBreeds: { id: number; code: string; founding_allele_pool: string }[],
+  eligibleBreeds: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null }[],
   workingInjections: ConsignmentInjectionRow[],
   appliedThisBatch: Map<number, number>,
   lethalTriggers: LethalTrigger[],
+  eligibleAbilityTraits: TraitCode[],
   cfg: Config['values']
 ): Promise<MintedCandidate> {
   const candidateSeed = deriveSeed(batchSeed, `candidate_${String(index)}`);
@@ -187,6 +191,9 @@ async function mintConsignmentCandidate(
   const pool = parseAllelePool(breed.founding_allele_pool);
   const sex: 'mare' | 'stallion' = makeRng(deriveSeed(candidateSeed, 'sex')).next() < 0.5 ? 'mare' : 'stallion';
 
+  // Slice 0019 Parts A/B: the dealer runs every candidate through generateCandidate exactly like
+  // founding.ts's chooseBreedForOffer, so it inherits the specialist for free (§6) - no separate
+  // logic here, just the same two inputs threaded through.
   const generated = generateCandidate({
     pool,
     // §3.2: mid quality band, exactly like founding stock - the slant is colour/gait only, never
@@ -198,6 +205,9 @@ async function mintConsignmentCandidate(
     ageMaxGameDays: cfg.founding_age_max_game_days,
     seed: candidateSeed,
     lethalTriggers,
+    breedIdealVector: breed.ideal_vector ? parseIdealVector(breed.ideal_vector) : null,
+    eligibleAbilityTraits,
+    abilitySpecialistPotential: cfg.founding_ability_specialist_potential,
   });
 
   let genotype = generated.genotype;
@@ -242,6 +252,7 @@ async function mintConsignmentBatch(
   const lethalTriggers = await getLethalTriggers(env);
   const workingInjections = await listQueuedInjections(env);
   const appliedThisBatch = new Map<number, number>(); // injection id -> last horse id it touched
+  const eligibleAbilityTraits = await getSpecializableAbilityTraits(env);
 
   const batchSeed = randomSeed();
   const min = cfg.consignment_batch_min;
@@ -249,7 +260,17 @@ async function mintConsignmentBatch(
   const batchSize = Math.max(1, min + (max > min ? makeRng(deriveSeed(batchSeed, 'batch_size')).int(max - min + 1) : 0));
 
   for (let i = 0; i < batchSize; i++) {
-    const candidate = await mintConsignmentCandidate(env, batchSeed, i, eligibleBreeds, workingInjections, appliedThisBatch, lethalTriggers, cfg);
+    const candidate = await mintConsignmentCandidate(
+      env,
+      batchSeed,
+      i,
+      eligibleBreeds,
+      workingInjections,
+      appliedThisBatch,
+      lethalTriggers,
+      eligibleAbilityTraits,
+      cfg
+    );
 
     const insertResult = await env.DB.batch(
       buildFoundingHorseInsertStatements(env, {

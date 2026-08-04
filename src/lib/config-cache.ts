@@ -163,6 +163,10 @@ export interface ConfigValues {
   /** Slice 0014 §2.8: the fixed draw chance for ROBUSTNESS_TRAITS in founding generation,
    * regardless of quality band - see src/engines/founding/generate.ts. */
   robustness_one_chance: number;
+  /** Slice 0019 §4.1. Live - read at candidate-generation time. The ability specialist's potential
+   * (out of 20) before its own +/-1 offset - high but not maxed, so the headroom stays the point
+   * rather than the trait already sitting at the ceiling. */
+  founding_ability_specialist_potential: number;
   /** Slice 0016 §4.2. Display only - the barn list's Foals tab. Nothing in breeding, showing, care
    * or ageing may read this; each of those already has its own age threshold. */
   foal_max_age_game_days: number;
