@@ -1085,6 +1085,10 @@ export function renderHorsePage(params: {
   nameError?: string;
   barnNameNotice?: string;
   genotype?: Genotype;
+  /** Admin-only, and only for a horse that has already ended - null for everyone and everything
+   * else, which is what keeps the delete card off a living horse's page entirely. */
+  adminDelete?: { deletable: boolean; reason: string } | null;
+  adminError?: string;
   loci?: LocusRow[];
   mareStatus?: string;
   conformation: ConformationDisplayRow[];
@@ -1273,8 +1277,37 @@ export function renderHorsePage(params: {
         </details>`
       : raw('');
 
+  // The operator's broom (POST /horses/:id/admin-delete). Only ever drawn for an admin looking at a
+  // horse that has already ended, and only when the row is genuinely free of anything pointing at
+  // it - the same rule the pet home uses, asked and answered by the route again on submit. When the
+  // horse is ended but not deletable the card still appears, saying why not, because "why is there
+  // no button here" is the question the operator would otherwise be left with.
+  const adminDeleteBlock =
+    params.isAdmin && params.adminDelete
+      ? html`
+        <div class="card">
+          <h2>Delete this horse's row (admin only)</h2>
+          ${
+            params.adminDelete.deletable
+              ? html`
+                <p>${displayNameFor(h)} has already gone, never showed and never had a foal, so nothing in the game refers to ${h.sex === 'mare' ? 'her' : 'him'} anymore. The row can be cleared away for good.</p>
+                <p class="muted">This pays nothing and writes no receipt - the horse already left and was already paid for. Any notices about ${h.sex === 'mare' ? 'her' : 'him'} in a stable's feed keep their words and stop being links.</p>
+                <p><strong>This cannot be undone.</strong></p>
+                <form method="post" action="/horses/${String(h.id)}/admin-delete">
+                  <label class="confirm-checkbox">
+                    <input type="checkbox" name="confirm" value="yes" required>
+                    Yes, delete this row for good.
+                  </label>
+                  <button type="submit" class="secondary">Delete ${displayNameFor(h)}'s row</button>
+                </form>`
+              : html`<p class="notice">${displayNameFor(h)}'s row has to stay: ${params.adminDelete.reason}</p>`
+          }
+        </div>`
+      : raw('');
+
   const body = html`
     <h1>${displayNameFor(h)}</h1>
+    ${errorBox(params.adminError)}
     <div class="card">
       ${portraitBlock}
       ${pictureLink}
@@ -1352,6 +1385,7 @@ export function renderHorsePage(params: {
     ${params.owner ? barnNameForm : raw('')}
     ${retireLink}
     ${genotypeBlock}
+    ${adminDeleteBlock}
     <p><a href="/stables/${String(params.ownerStable.id)}/horses">Back to horses</a></p>
   `;
   return pageShell({

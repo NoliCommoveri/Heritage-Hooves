@@ -35,6 +35,7 @@ import {
   horseLocationRoute,
   horseListRoute,
   horseStudRoute,
+  horseAdminDeleteRoute,
 } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
@@ -84,7 +85,7 @@ const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/fou
 // the player as a bare "Not found" page with no explanation. Slice 0020's "Call the vet" button
 // (POST /horses/:id/treat) shipped with a handler and no entry here, and did exactly that. The
 // regression test in test/router-paths.test.ts now asserts the two lists match.
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud|\/admin-delete)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;
@@ -183,6 +184,8 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
     if (sub === '/list' && method === 'POST') return withReissuedCookie(ctx, await horseListRoute(ctx, horseId));
     if (sub === '/stud' && method === 'POST') return withReissuedCookie(ctx, await horseStudRoute(ctx, horseId));
+    // Admin-only, and the route checks that itself rather than relying on being listed here.
+    if (sub === '/admin-delete' && method === 'POST') return withReissuedCookie(ctx, await horseAdminDeleteRoute(ctx, horseId));
     return notFound();
   }
 
