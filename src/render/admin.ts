@@ -621,6 +621,11 @@ export function renderConfigHistoryPage(params: { world: WorldRow; rows: ConfigA
 
 export function renderWorldPage(params: { world: WorldRow; tickRuns: TickRunRow[]; notice?: string }): SafeHtml {
   const w = params.world;
+  // executeTick has always stored the thrown message in tick_run.error_text and nothing has ever
+  // shown it, so a failed tick read as the bare word "error" with no way to find out why. A failed
+  // run is the one case where the operator needs more than the six columns above, so the message
+  // gets its own full-width row directly underneath rather than an extra column that would be
+  // empty on every healthy run and push the table wider on a phone.
   const rows = params.tickRuns.map(
     (t) => html`
     <tr>
@@ -631,7 +636,10 @@ export function renderWorldPage(params: { world: WorldRow; tickRuns: TickRunRow[
       <td>${t.local_date}</td>
       <td>${t.status}</td>
       <td>${String(t.game_day_before)} → ${t.game_day_after === null ? '?' : String(t.game_day_after)}</td>
-    </tr>`
+    </tr>
+    ${t.status === 'error'
+      ? html`<tr><td colspan="7" class="tick-error">${t.error_text ?? 'No message was recorded - the run stopped before it could write one.'}</td></tr>`
+      : raw('')}`
   );
 
   const body = html`

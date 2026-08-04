@@ -17,7 +17,14 @@ export interface TickRunRow {
   error_text: string | null;
 }
 
+/**
+ * Newest first, ordered by id rather than tick_seq. A failed run does not advance world.tick_seq
+ * (executeTick only writes it on success), so every retry of the same tick shares one tick_seq -
+ * and `ORDER BY tick_seq DESC` left those ties in whatever order SQLite felt like, which in
+ * practice printed a run of failures oldest-first inside a newest-first list. id is monotonic per
+ * insert, so it is the only column here that reliably means "when did this run happen".
+ */
 export async function listRecentTickRuns(env: Env, limit = 20): Promise<TickRunRow[]> {
-  const result = await env.DB.prepare('SELECT * FROM tick_run ORDER BY tick_seq DESC LIMIT ?').bind(limit).all<TickRunRow>();
+  const result = await env.DB.prepare('SELECT * FROM tick_run ORDER BY id DESC LIMIT ?').bind(limit).all<TickRunRow>();
   return result.results ?? [];
 }
