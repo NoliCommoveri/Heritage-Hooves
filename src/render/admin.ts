@@ -486,6 +486,14 @@ export function renderConfigPage(params: { world: WorldRow; config: Config; erro
         <input type="text" inputmode="decimal" name="care_modifier_max" value="${String(v.care_modifier_max)}">
       </label>
       <p class="muted">All ten are live - retuning any of them only changes the modifier computed on the next read, never a horse's own stored dates (last_farrier_game_day, last_vet_game_day). Watch /admin/care after a change.</p>
+      <h2>Consignment dealer</h2>
+      <label>Cadence between batches (game days)
+        <input type="text" inputmode="numeric" name="consignment_cadence_game_days" value="${String(v.consignment_cadence_game_days)}">
+      </label>
+      <label>Horses minted per breed, each batch
+        <input type="text" inputmode="numeric" name="consignment_horses_per_breed" value="${String(v.consignment_horses_per_breed)}">
+      </label>
+      <p class="muted">Both live: the cadence change takes effect from whichever batch is most recent right now (see /admin/consignment for the actual next-due day), and the per-breed count applies to the next batch minted, of every breed then in play. Doesn't retroactively change a batch already minted.</p>
       <button type="submit">Save changes</button>
     </form>
     <p class="muted">The show purse (show_prize_schedule) is JSON, not a whole number, so it's edited from D1's console rather than this form - the same way quality_bands already is. It's snapshotted onto each show class at creation, so a change here only affects shows scheduled afterwards.</p>
