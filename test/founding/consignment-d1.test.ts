@@ -10,6 +10,7 @@ import path from 'node:path';
 import { splitSqlStatements } from '../../src/lib/sql';
 import { runConsignments, queueInjection, listInjectionHistory, getConsignmentDealerStable, forceConsignmentBatchNow } from '../../src/db/consignment';
 import { expireListings } from '../../src/db/listings';
+import { setBreedEnabled } from '../../src/db/breeds';
 import type { Env } from '../../src/types';
 import type { Config } from '../../src/lib/config-cache';
 
@@ -345,5 +346,47 @@ describeWithSqlite('queued injections defer past an already-due batch (amendment
     const row = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
     expect(row?.status).toBe('applied');
     expect(row?.applied_game_day).toBe(queueDay);
+  });
+});
+
+// The dealer used to be hard-limited to Quarter Horses by a second, independent
+// consignment_breed_codes allowlist that drifted out of sync with breeds.enabled once every other
+// breed got an ideal_vector (2026-08-04 build-log entry). Now it mints from getBreedsInPlay(env)
+// directly - these tests are the regression guard for that drift never coming back.
+describeWithSqlite('consignment dealer breed selection follows breeds in play', () => {
+  it('mints more than one breed across enough batches, with no breed outside the eight seeded ones', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+    const dealer = await getConsignmentDealerStable(env);
+
+    for (let i = 0; i < 30; i++) {
+      const result = await forceConsignmentBatchNow(env, 1000 + i, 100 + i, config);
+      expect(result.ok).toBe(true);
+    }
+
+    const rows = db.prepare('SELECT DISTINCT breed_id FROM horses WHERE owner_stable_id = ?').all(dealer!.id) as { breed_id: number }[];
+    const allBreedIds = (db.prepare('SELECT id FROM breeds').all() as { id: number }[]).map((b) => b.id);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const row of rows) expect(allBreedIds).toContain(row.breed_id);
+  });
+
+  it('never mints a breed that has been taken out of play', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+    const dealer = await getConsignmentDealerStable(env);
+
+    const qh = db.prepare(`SELECT id FROM breeds WHERE code = 'QH'`).get() as { id: number };
+    const disabled = await setBreedEnabled(env, qh.id, false, null, 1000);
+    expect(disabled.ok).toBe(true);
+
+    for (let i = 0; i < 20; i++) {
+      const result = await forceConsignmentBatchNow(env, 1000 + i, 100 + i, config);
+      expect(result.ok).toBe(true);
+    }
+
+    const qhCount = (db.prepare('SELECT COUNT(*) AS n FROM horses WHERE owner_stable_id = ? AND breed_id = ?').get(dealer!.id, qh.id) as { n: number }).n;
+    expect(qhCount).toBe(0);
   });
 });

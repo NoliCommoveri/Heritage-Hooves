@@ -115,24 +115,31 @@ describe('TRAITS vs migrations/0029 + 0061 + 0081 (quantitative_traits seeds)', 
 // Slice 0012 §11.4: 0035's ideal-vector test from the other side - every seeded discipline's
 // ability_weights must name only codes ABILITY_TRAITS iterates, with weights >= 0 and at least one
 // strictly positive (a discipline that weights nothing would be a data-entry mistake, not a
-// legitimate discipline).
+// legitimate discipline). Scans 0063 (Barrel Racing) and 0108 (the other five, seeded once the
+// breeds stage landed) in sequence, the same two-migration-scan pattern the LOCI and TRAITS blocks
+// above use.
 describe('seeded disciplines vs ABILITY_TRAITS (slice 0012 §11.4)', () => {
-  const migration = MIGRATIONS.find((m) => m.name === '0063_seed_disciplines.sql');
-  it('migration 0063 exists', () => {
-    expect(migration).toBeDefined();
+  const migrationNames = ['0063_seed_disciplines.sql', '0108_seed_disciplines_remaining.sql'];
+  it('both discipline seed migrations exist', () => {
+    for (const name of migrationNames) {
+      expect(MIGRATIONS.find((m) => m.name === name), name).toBeDefined();
+    }
   });
 
   const rowPattern = /\('([a-z]+)',\s*'[^']*',\s*'(\{[^']*\})'/g;
   const seeded: { code: string; weights: Record<string, number> }[] = [];
-  let match: RegExpExecArray | null;
-  const pattern = new RegExp(rowPattern.source, rowPattern.flags);
-  while (migration && (match = pattern.exec(migration.sql)) !== null) {
-    const parsed = JSON.parse(match[2]) as { v: number; traits: Record<string, number> };
-    seeded.push({ code: match[1], weights: parsed.traits });
+  for (const name of migrationNames) {
+    const migration = MIGRATIONS.find((m) => m.name === name);
+    let match: RegExpExecArray | null;
+    const pattern = new RegExp(rowPattern.source, rowPattern.flags);
+    while (migration && (match = pattern.exec(migration.sql)) !== null) {
+      const parsed = JSON.parse(match[2]) as { v: number; traits: Record<string, number> };
+      seeded.push({ code: match[1], weights: parsed.traits });
+    }
   }
 
-  it('found at least one seeded discipline', () => {
-    expect(seeded.length).toBeGreaterThanOrEqual(1);
+  it('found all six seeded disciplines', () => {
+    expect(seeded.length).toBe(6);
   });
 
   it.each(seeded.map((s) => [s.code, s.weights] as const))('%s names only ABILITY_TRAITS codes, weights >= 0, at least one > 0', (code, weights) => {
@@ -146,10 +153,6 @@ describe('seeded disciplines vs ABILITY_TRAITS (slice 0012 §11.4)', () => {
     expect(anyPositive, `${code} weights nothing at all`).toBe(true);
   });
 
-  // §5.2's full "every ability is dominant in exactly one discipline" property is a property of
-  // the complete six-discipline design and does not hold for a one-discipline subset - it belongs
-  // with the other five, not here (CLAUDE.md §9's "do not build ahead"). What holds today: agility
-  // is Barrel Racing's dominant weight, which is the whole reason agility exists (§2.2/§5.2).
   it('agility is the strict maximum weight in Barrel Racing', () => {
     const barrels = seeded.find((s) => s.code === 'barrels');
     expect(barrels).toBeDefined();
@@ -158,25 +161,59 @@ describe('seeded disciplines vs ABILITY_TRAITS (slice 0012 §11.4)', () => {
     const others = Object.entries(barrels!.weights).filter(([t]) => t !== 'agility');
     for (const [, w] of others) expect(w).toBeLessThan(barrels!.weights.agility);
   });
+
+  // §5.2: the property that makes the six-discipline set worth having, now that all six exist -
+  // every ability trait is the strict maximum weight in at least one enabled discipline, so no
+  // trait is dead weight and no two disciplines select for the same horse.
+  it('every ability trait is the strict maximum weight in at least one discipline', () => {
+    for (const trait of ABILITY_TRAITS) {
+      const isDominantSomewhere = seeded.some((s) => {
+        const maxWeight = Math.max(...Object.values(s.weights));
+        return s.weights[trait] === maxWeight && Object.entries(s.weights).filter(([t]) => t !== trait).every(([, w]) => w < maxWeight);
+      });
+      expect(isDominantSomewhere, `${trait} is never the strict maximum in any seeded discipline`).toBe(true);
+    }
+  });
 });
 
-// Slice 0008 §4.2: the Quarter Horse's ideal vector must name exactly the four conformation trait
-// codes CONFORMATION_TRAITS iterates - no more, no fewer - or scoreEntry (which iterates that same
-// list) would silently ignore an extra trait or score a missing one as 0.
-describe('QH ideal_vector vs CONFORMATION_TRAITS (slice 0008 §4.2)', () => {
-  it('names exactly the four conformation trait codes', () => {
-    const migration = MIGRATIONS.find((m) => m.name === '0035_seed_qh_ideal_vector.sql');
-    expect(migration).toBeDefined();
+// Slice 0008 §4.2 / docs/breed-ideal-vectors.md §3: every breed's ideal vector must name exactly
+// the four conformation trait codes CONFORMATION_TRAITS iterates - no more, no fewer - or
+// scoreEntry (which iterates that same list) would silently ignore an extra trait or score a
+// missing one as 0. Scans 0035 (Quarter Horse) and 0107 (the other seven) in sequence.
+describe('breed ideal_vectors vs CONFORMATION_TRAITS (slice 0008 §4.2)', () => {
+  const migrationNames = ['0035_seed_qh_ideal_vector.sql', '0107_seed_breed_ideal_vectors.sql'];
+  const rowPattern = /ideal_vector = '(\{[^']*\})'\s*WHERE code = '([A-Z]+)'/g;
 
-    const match = migration!.sql.match(/ideal_vector = '(\{.*\})'/);
-    expect(match).not.toBeNull();
-    const parsed = JSON.parse(match![1]) as { v: number; traits: Record<string, { target: number; weight: number }> };
-
-    expect(Object.keys(parsed.traits).sort()).toEqual([...CONFORMATION_TRAITS].sort());
-    for (const trait of Object.values(parsed.traits)) {
-      expect(trait.target).toBeGreaterThanOrEqual(1);
-      expect(trait.target).toBeLessThanOrEqual(99);
-      expect(trait.weight).toBeGreaterThan(0);
+  const vectors: { code: string; traits: Record<string, { target: number; weight: number }> }[] = [];
+  for (const name of migrationNames) {
+    const migration = MIGRATIONS.find((m) => m.name === name);
+    expect(migration, `migration ${name} not found`).toBeDefined();
+    let match: RegExpExecArray | null;
+    const pattern = new RegExp(rowPattern.source, rowPattern.flags);
+    while (migration && (match = pattern.exec(migration.sql)) !== null) {
+      const parsed = JSON.parse(match[1]) as { v: number; traits: Record<string, { target: number; weight: number }> };
+      vectors.push({ code: match[2], traits: parsed.traits });
     }
+  }
+
+  it('found all eight breed vectors', () => {
+    expect(vectors.map((v) => v.code).sort()).toEqual(['AR', 'FR', 'GW', 'IC', 'NOK', 'PF', 'QH', 'TB']);
+  });
+
+  it.each(vectors.map((v) => [v.code, v.traits] as const))('%s names exactly the four conformation trait codes', (code, traits) => {
+    expect(Object.keys(traits).sort()).toEqual([...CONFORMATION_TRAITS].sort());
+    for (const trait of Object.values(traits)) {
+      expect(trait.target, `${code} target`).toBeGreaterThanOrEqual(1);
+      expect(trait.target, `${code} target`).toBeLessThanOrEqual(99);
+      expect(trait.weight, `${code} weight`).toBeGreaterThan(0);
+    }
+  });
+
+  // docs/breed-ideal-vectors.md §5: a target sitting on the population centre of 50 would reward
+  // inbreeding on that breed's own standard - checked here so a future retune can't reintroduce it
+  // silently. (Only checks for an exact 50; §5's exposure-index table is a judgement call, not a
+  // hard rule, and stays a document rather than a test.)
+  it.each(vectors.map((v) => [v.code, v.traits] as const))('%s has at least one target off the population centre of 50', (code, traits) => {
+    expect(Object.values(traits).some((t) => t.target !== 50), `${code} has every target on 50`).toBe(true);
   });
 });

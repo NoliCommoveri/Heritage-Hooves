@@ -76,11 +76,15 @@ Settled with the operator in conversation. Treat as standing.
    injection set from admin. This is strictly better and the resampling machinery is **not built** —
    see §5.4 for why.
 4. **When the operator injects an allele, the dealer pre-tests that locus.** Not optional. §5.4.
-5. **The dealer stocks Quarter Horses only, for now.** `consignment_breed_codes = ["QH"]`. It is the
-   only breed with a seeded `ideal_vector`, and under 0017 §4.4 anything else would be priced off
+5. **The dealer stocks Quarter Horses only, for now.** ~~`consignment_breed_codes = ["QH"]`. It is
+   the only breed with a seeded `ideal_vector`, and under 0017 §4.4 anything else would be priced off
    age and health alone — systematically wrong, in a direction a child could learn to exploit. This
    is a config key, not a constant: the day the drafted vectors in `docs/breed-ideal-vectors.md` are
-   seeded, widening it is one edit at `/admin/config` with no deploy.
+   seeded, widening it is one edit at `/admin/config` with no deploy.~~ **Superseded 2026-08-04**:
+   all eight breeds now have a seeded `ideal_vector` (migration `0107`), so the pricing objection no
+   longer applies to any of them. Rather than editing the allowlist, it was removed — the dealer now
+   mints from `getBreedsInPlay` directly, the same `breeds.enabled` switch §6 below wires everywhere
+   else, so there is one control instead of two that can drift apart (as this one did).
 6. **A breed can be taken in and out of play from admin, and that gates supply only.** §6.
 7. **Colour carries value in `appraise()`, game-wide.** Not a dealer-only premium. A cremello is
    worth more whoever is selling it, including a child. §4.7 splits this into what anyone can see
@@ -477,7 +481,7 @@ feed scopes events — per account or per stable — before writing it.
 | `consignment_batch_min` / `_max` | `1` / `2` | Live. |
 | `consignment_test_count_weights` | `{"0":55,"2":25,"3":13,"5":7}` | Live. Disease panel size, per horse. |
 | `consignment_price_multiplier` | `1.15` | Live. The dealer's whole markup — an injected allele is priced by `appraise()` (§4.7), not here. |
-| `consignment_breed_codes` | `["QH"]` | Live. §3.5. Intersected with the breeds in play (§6) — a breed must be both listed here and enabled for the dealer to stock it. |
+| ~~`consignment_breed_codes`~~ | ~~`["QH"]`~~ | **Removed 2026-08-04** (migration `0109`). The dealer reads `getBreedsInPlay` (§6) directly now instead of intersecting with a second allowlist — see point 5 in §3 above. |
 | `consignment_age_min/max_game_days` | reuse founding | Live. |
 
 Every number is a guess, for the same reason 0017 §5.4 says so about its own table.
@@ -521,7 +525,7 @@ column. A breed code is written permanently into every horse's `composition` blo
 **Gated by `enabled = 0` (no new horses of this breed enter the world):**
 
 - Founding-stock offers — `chooseBreedForOffer` must not offer it, and `mintOffer` must not pick it.
-- The consignment dealer (§5), intersected with `consignment_breed_codes`.
+- The consignment dealer (§5) — reads `getBreedsInPlay` directly since 2026-08-04; ~~intersected with `consignment_breed_codes`~~ (that allowlist is gone, see §5.8's table).
 - The admin "create a horse" form at `/admin/horses/new`.
 - New breed show classes. Existing classes stand — see below.
 - New `npc_policy.target_breed_id` assignments.
@@ -587,7 +591,7 @@ somebody will ask.
 ### 6.5 Tests
 
 - A disabled breed does not appear in a founding offer's breed choice, and `mintOffer` never picks it.
-- A disabled breed is never stocked by the dealer, even when listed in `consignment_breed_codes`.
+- A disabled breed is never stocked by the dealer (checked directly against `breeds.enabled` since 2026-08-04, when the separate `consignment_breed_codes` allowlist was removed).
 - **A foal bred from two existing horses of a disabled breed is born normally and is that breed.**
 - An existing horse of a disabled breed still renders its breed name, still shows, still sells.
 - Disabling the last enabled breed is refused.

@@ -10,8 +10,8 @@ import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import type { StableRow } from './stables';
 import { getStableById } from './stables';
-import { getBreeds, type BreedRow } from './breeds';
-import { buildFoundingHorseInsertStatements, countAliveHorses, type HorseRow } from './horses';
+import { getBreeds, getBreedsInPlay, type BreedRow } from './breeds';
+import { buildFoundingHorseInsertStatements, countAliveHorses, countAliveHorsesByBreedForStable, type HorseRow } from './horses';
 import { parseAllelePool } from '../engines/founding/pool';
 import { generateCandidate } from '../engines/founding/generate';
 import { generateFoundingName } from '../engines/founding/names';
@@ -153,13 +153,33 @@ export async function stockShowBarn(
   if (!stable) {
     throw new Error('stockShowBarn: the NPC show barn stable is missing - has migrations/0040_npc_show_barn.sql been applied?');
   }
-  const breeds = await getBreeds(env);
-  const qh = breeds.find((b) => b.code === 'QH');
-  if (!qh) throw new Error('stockShowBarn: the Quarter Horse breed is missing');
+  // Breed-aware (docs/breed-ideal-vectors.md §6.2 step 1): createShowIfMissing already creates one
+  // class per breed in play with an ideal vector, so a barn that only ever minted Quarter Horses
+  // left every other breed's class with no NPC padding at all - a class with one player entry is a
+  // class of one, and a player wins a national-sounding ribbon by being the only owner of a breed.
+  // Tops each breed up to targetSize independently, same idempotent top-up-the-shortfall shape as
+  // before, just once per breed instead of once overall.
+  const breeds = (await getBreedsInPlay(env)).filter((b) => b.ideal_vector !== null);
+  if (breeds.length === 0) throw new Error('stockShowBarn: no breed has an ideal_vector yet');
 
-  const alreadyHad = await countAliveHorses(env, stable.id);
-  const shortfall = Math.max(0, params.targetSize - alreadyHad);
-  const minted = await mintFoundingHorses(env, { stable, breed: qh, config: params.config, gameDay: params.gameDay, worldTickSeq: params.worldTickSeq, count: shortfall, band: params.band });
+  const countsByBreed = await countAliveHorsesByBreedForStable(env, stable.id);
+
+  let minted = 0;
+  let alreadyHad = 0;
+  for (const breed of breeds) {
+    const breedAlreadyHad = countsByBreed.get(breed.id) ?? 0;
+    alreadyHad += breedAlreadyHad;
+    const shortfall = Math.max(0, params.targetSize - breedAlreadyHad);
+    minted += await mintFoundingHorses(env, {
+      stable,
+      breed,
+      config: params.config,
+      gameDay: params.gameDay,
+      worldTickSeq: params.worldTickSeq,
+      count: shortfall,
+      band: params.band,
+    });
+  }
   return { minted, alreadyHad };
 }
 

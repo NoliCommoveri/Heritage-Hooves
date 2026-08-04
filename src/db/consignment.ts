@@ -269,10 +269,14 @@ async function mintConsignmentBatch(
   respectInjectionEligibility: boolean
 ): Promise<void> {
   const cfg = config.values;
-  const allBreeds = await getBreedsInPlay(env);
-  // §5.8: intersected with the breeds in play (§6) - a breed must be both listed in
-  // consignment_breed_codes and enabled for the dealer to stock it.
-  const eligibleBreeds = allBreeds.filter((b) => cfg.consignment_breed_codes.includes(b.code));
+  // Whatever breeds are in play (src/db/breeds.ts's getBreedsInPlay, the same `breeds.enabled`
+  // toggle /admin/breeds drives) - no second, independent allowlist. §5.8 originally intersected
+  // this with a separate consignment_breed_codes config key, which is how the dealer stayed
+  // Quarter-Horse-only after every other breed got an ideal_vector and became judge-able (2026-08-04
+  // build-log entry names this drift by name). Removed rather than widened, so there is exactly one
+  // control for "which breeds does the game admit right now" - the same reasoning stockShowBarn's
+  // own breed-awareness fix just applied to the NPC show barn.
+  const eligibleBreeds = await getBreedsInPlay(env);
   if (eligibleBreeds.length === 0) return;
 
   const lethalTriggers = await getLethalTriggers(env);

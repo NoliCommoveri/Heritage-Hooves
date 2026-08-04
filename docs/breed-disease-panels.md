@@ -1,7 +1,9 @@
 # Breed disease panels — the seven non-Quarter-Horse breeds
 
-*Written 2026-08-04. This is a **data record**, not a built feature — the same status
-`docs/breed-ideal-vectors.md` carries for conformation. Nothing in this document is in the
+*Written 2026-08-04. This is a **data record**, not a built feature — the status
+`docs/breed-ideal-vectors.md` carried for conformation until the same day it and this document were
+both written, when its seven remaining vectors were seeded (migration `0107`) and the NPC show barn
+made breed-aware. This document has not had that follow-through yet: nothing in it is in the
 database. `conditions`, `loci` and every `breeds.founding_allele_pool` are unchanged by writing
 this file.*
 
@@ -415,12 +417,15 @@ whatever is next free in `migrations/` at build time (currently past `0106`, but
 already exists and is breed-agnostic. This really is closer to `breed-ideal-vectors.md`'s "step 3
 is fifteen minutes" than to a new slice.
 
-**Unlike the ideal-vector document, there is no show-barn blocker here.** `breed-ideal-vectors.md`
-§6.1 could not be seeded because `createShowIfMissing` turns a non-null `ideal_vector` straight into
-a new show class with no NPC padding. Disease panels create no classes and touch no NPC stocking
-logic — they change what a horse's genotype can express and what a Health card shows, nothing about
-where a horse can compete. **This document's contents are safe to seed the day someone chooses to,
-independent of the ideal-vector blocker.**
+**Unlike the ideal-vector document, there was never a show-barn blocker here** — and as of the same
+day this document was written, that blocker closed anyway: migration `0107` seeded all seven
+remaining `ideal_vector`s and `stockShowBarn` (`src/db/npc.ts`) stopped hardcoding Quarter Horses,
+so `breed-ideal-vectors.md` §6.1's own blocker no longer applies to *that* document either (see
+`CLAUDE.md` §10's "the other seven breeds" row). Disease panels were never blocked by it in the
+first place — they create no classes and touch no NPC stocking logic, they change what a horse's
+genotype can express and what a Health card shows, nothing about where a horse can compete. **This
+document's contents are safe to seed the day someone chooses to, and now so are the ideal
+vectors.**
 
 Same warning slice 0010 §5 gave and lost an afternoon to: **no semicolons, no double hyphens,
 anywhere inside a string literal** in the `teaching_text`/`event_text` values, or `/admin/migrations`
@@ -455,13 +460,16 @@ of whoever is building the slice, not silently resolve here.
 
 ## 10. What this does not close
 
-Same list `breed-ideal-vectors.md` §6.3 already keeps, restated with this document's one line struck:
+Same list `breed-ideal-vectors.md` §6.3 already keeps, restated with two lines now struck — one by
+that document's own seeding, one by this one:
 
 - `eligible_class_types` and `discipline_aptitudes` — still unwritten.
 - `height_range` and `weight_range` — still unwritten.
 - ~~Disease panels for the seven non-Quarter-Horse breeds~~ — **specified here**, not yet seeded.
-- Ideal vectors for seven of eight breeds — drafted in `breed-ideal-vectors.md`, still blocked on a
-  breed-aware NPC show barn per that document's §6.
+- ~~Ideal vectors for seven of eight breeds~~ — **seeded 2026-08-04** (migration `0107`), alongside a
+  breed-aware NPC show barn that closed `breed-ideal-vectors.md` §6.1's blocker the same day. See
+  `CLAUDE.md` §10.
 
-Writing this document does not seed it, and seeding it does not close the breeds stage — three of
-the five things overview §4a calls breed identity are still open after both documents exist.
+Writing this document does not seed it — two of the five things overview §4a calls breed identity
+are still open (`eligible_class_types`/`discipline_aptitudes` and `height_range`/`weight_range`),
+and this document's own six loci are drafted but not yet in the database either.

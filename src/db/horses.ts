@@ -141,6 +141,19 @@ export async function countAliveHorsesByBreed(env: Env): Promise<Map<number, num
   return map;
 }
 
+/** The same grouping as countAliveHorsesByBreed, scoped to one stable - what stockShowBarn needs
+ * to top a multi-breed NPC barn up per breed rather than as one blended total. */
+export async function countAliveHorsesByBreedForStable(env: Env, stableId: number): Promise<Map<number, number>> {
+  const result = await env.DB.prepare(
+    `SELECT breed_id, COUNT(*) AS n FROM horses WHERE owner_stable_id = ? AND status = 'alive' AND breed_id IS NOT NULL GROUP BY breed_id`
+  )
+    .bind(stableId)
+    .all<{ breed_id: number; n: number }>();
+  const map = new Map<number, number>();
+  for (const row of result.results ?? []) map.set(row.breed_id, row.n);
+  return map;
+}
+
 export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }
