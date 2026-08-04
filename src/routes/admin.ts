@@ -1035,16 +1035,20 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
 /** Amendment 0017a §5.5: /admin/consignment - a form and a table, not a polished UI (CLAUDE.md §13). */
 export async function adminConsignmentRoute(ctx: RequestContext, method: string): Promise<Response> {
   async function page(error?: string, notice?: string): Promise<Response> {
-    const [nextCycleGameDay, standingListings, queued, history] = await Promise.all([
+    const [nextCycleGameDay, standingListings, queued, history, breedsInPlay] = await Promise.all([
       nextConsignmentDueGameDay(ctx.env, ctx.config),
       listStandingConsignmentListings(ctx.env),
       listQueuedInjections(ctx.env),
       listInjectionHistory(ctx.env),
+      getBreedsInPlay(ctx.env),
     ]);
     return htmlResponse(
       renderConsignmentAdminPage({
         world: ctx.world,
         nextCycleGameDay: nextCycleGameDay ?? ctx.world.game_day,
+        cadenceGameDays: ctx.config.values.consignment_cadence_game_days,
+        horsesPerBreed: ctx.config.values.consignment_horses_per_breed,
+        breedsInPlayCount: breedsInPlay.length,
         standingListings,
         queued,
         history,
