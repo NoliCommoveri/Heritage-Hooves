@@ -1070,6 +1070,7 @@ export async function adminConsignmentRoute(ctx: RequestContext, method: string)
       sexPreference,
       note,
       gameDay: ctx.world.game_day,
+      config: ctx.config,
     });
     if (!result.ok) return page("That locus/allele combination isn't recognised.");
     return redirect('/admin/consignment?saved=1');

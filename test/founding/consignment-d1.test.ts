@@ -127,6 +127,7 @@ describeWithSqlite('runConsignments (amendment 0017a §5.9)', () => {
       sexPreference: 'any',
       note: 'test',
       gameDay: 900,
+      config,
     });
     expect(queued.ok).toBe(true);
 
@@ -237,6 +238,7 @@ describeWithSqlite('forceConsignmentBatchNow (admin "mint a batch now" button)',
       sexPreference: 'any',
       note: 'test',
       gameDay: 1000,
+      config,
     });
     expect(queued.ok).toBe(true);
 
@@ -247,5 +249,101 @@ describeWithSqlite('forceConsignmentBatchNow (admin "mint a batch now" button)',
     const applied = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
     expect(applied?.status).toBe('applied');
     expect(applied?.applied_game_day).toBe(1000);
+  });
+});
+
+describeWithSqlite('queued injections defer past an already-due batch (amendment 0017a §5.4 follow-up)', () => {
+  it('a batch already due when the injection is queued does not consume it - only the batch after does', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+    const cadence = config.values.consignment_cadence_game_days;
+
+    await runConsignments(env, 1000, 100, config); // dealer's first-ever batch, last listed = 1000
+    const dueDay = 1000 + cadence;
+    const queueDay = dueDay + 5; // queued after the next batch is already overdue
+
+    const queued = await queueInjection(env, {
+      locusCode: 'CR',
+      allele: 'Cr',
+      zygosity: 'het',
+      appliesTo: 'one',
+      sexPreference: 'any',
+      note: 'test',
+      gameDay: queueDay,
+      config,
+    });
+    expect(queued.ok).toBe(true);
+
+    // This mint is the one that was already due before the injection was queued - it must not
+    // pick it up, or the operator's "next batch" intent silently gets swept into "current".
+    await runConsignments(env, queueDay, 101, config);
+    let history = await listInjectionHistory(env);
+    let row = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
+    expect(row?.status).toBe('queued');
+
+    // The batch after that one picks it up.
+    await runConsignments(env, queueDay + cadence, 102, config);
+    history = await listInjectionHistory(env);
+    row = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
+    expect(row?.status).toBe('applied');
+  });
+
+  it('queuing before a batch is due still targets that same, genuinely-next batch', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+    const cadence = config.values.consignment_cadence_game_days;
+
+    await runConsignments(env, 1000, 100, config);
+    const dueDay = 1000 + cadence;
+
+    const queued = await queueInjection(env, {
+      locusCode: 'CR',
+      allele: 'Cr',
+      zygosity: 'het',
+      appliesTo: 'one',
+      sexPreference: 'any',
+      note: 'test',
+      gameDay: 1010, // well before dueDay, nothing overdue yet
+      config,
+    });
+    expect(queued.ok).toBe(true);
+
+    await runConsignments(env, dueDay, 101, config);
+    const history = await listInjectionHistory(env);
+    const row = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
+    expect(row?.status).toBe('applied');
+    expect(row?.applied_game_day).toBe(dueDay);
+  });
+
+  it('"mint a batch now" ignores the deferral and applies a just-queued injection immediately', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = readConfig(db);
+    const cadence = config.values.consignment_cadence_game_days;
+
+    await runConsignments(env, 1000, 100, config);
+    const dueDay = 1000 + cadence;
+    const queueDay = dueDay + 5;
+
+    const queued = await queueInjection(env, {
+      locusCode: 'CR',
+      allele: 'Cr',
+      zygosity: 'het',
+      appliesTo: 'one',
+      sexPreference: 'any',
+      note: 'test',
+      gameDay: queueDay,
+      config,
+    });
+    expect(queued.ok).toBe(true);
+
+    const result = await forceConsignmentBatchNow(env, queueDay, 101, config);
+    expect(result.ok).toBe(true);
+    const history = await listInjectionHistory(env);
+    const row = history.find((h) => h.locus_code === 'CR' && h.allele === 'Cr');
+    expect(row?.status).toBe('applied');
+    expect(row?.applied_game_day).toBe(queueDay);
   });
 });
