@@ -61,6 +61,11 @@ export type ResetScope = 'horses' | 'world';
  * which breaks `/market` on the first page view (§9). It is in `HORSE_TABLES` rather than
  * `WORLD_ONLY_TABLES` for exactly that reason: the scope that deletes horses must delete these.
  *
+ * **This list is not the whole answer to "what references horses".** `consignment_injections` also
+ * has a `REFERENCES horses (id)` column and is deliberately absent here, because the two scopes
+ * treat it differently - see the comment at the top of resetWorld(). If you are checking this file
+ * against src/db/horseRemoval.ts's fifteen-table rule, that is the sixteenth place to look.
+ *
  * Slice 0017 Part D adds `stud_bookings` and `stud_listings`, before `listings` - `stud_bookings`
  * has real foreign keys into `stud_listings`, `coverings`, `horses` and `stables`, so it must go
  * before all four; `stud_listings` points at `horses` and `stables`, same reasoning as `listings`
@@ -279,7 +284,35 @@ const DISCIPLINE_BARN_NUMBERS = { noiseSd: 4.0, retentionBias: 0.1, intervalDays
 const VOLUME_BREEDER_NUMBERS = { noiseSd: 12.0, retentionBias: 0.05, intervalDays: 60, maxPairs: 4, priceMultiplier: 0.85, priceSpread: 0.15, balanceFloor: 3000, capacity: 200 };
 
 export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResult> {
-  const statements = tablesForScope(scope).map((table) => env.DB.prepare(`DELETE FROM ${table}`));
+  // `consignment_injections.applied_horse_id` is a real foreign key into `horses` (migration 0096),
+  // so something has to deal with it *before* `DELETE FROM horses` runs. Nothing did until this was
+  // fixed, and the moment the operator's first queued allele was actually consumed by a batch the
+  // whole reset batch started rolling back on a FOREIGN KEY constraint - which reaches the operator
+  // as a bare "Something went wrong." 500 (src/index.ts), i.e. a button that does nothing and says
+  // nothing. src/db/horseRemoval.ts's `deletableHorseSql` header states the rule this file had to
+  // obey and didn't: every table with a `REFERENCES horses (id)` column belongs in one list or
+  // another, or the delete fails inside the batch.
+  //
+  // It is handled here rather than added to HORSE_TABLES because the two scopes want different
+  // things from it, which a whole-table DELETE cannot express:
+  //
+  //  - A horses-only reset leaves the clock running, so a still-`queued` injection is a pending
+  //    instruction that is just as valid tomorrow as it was today - silently cancelling it would be
+  //    a surprise the operator never asked for. Only the `applied` rows go, and they go because the
+  //    horse each one names has just been deleted: with no horse to point at, nothing is left of
+  //    that record worth reading. (`queued` and `cancelled` rows always have a NULL
+  //    `applied_horse_id`, so this clause is exactly the set that breaks the foreign key.)
+  //  - A full world reset puts `game_day` back to 0, which makes every `eligible_from_game_day` in
+  //    the table describe a world that no longer exists - a queue deferred to day 420 of the old
+  //    world would sit dormant for 420 days of the new one (computeInjectionEligibleFromGameDay,
+  //    src/db/consignment.ts). The whole table goes.
+  const injectionStatements =
+    scope === 'world'
+      ? [env.DB.prepare('DELETE FROM consignment_injections')]
+      : [env.DB.prepare('DELETE FROM consignment_injections WHERE applied_horse_id IS NOT NULL')];
+
+  const tables = tablesForScope(scope);
+  const statements = [...injectionStatements, ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`))];
 
   if (scope === 'world') {
     statements.push(env.DB.prepare('UPDATE accounts SET last_active_stable_id = NULL'));
@@ -390,7 +423,7 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
 
   const results = await env.DB.batch(statements);
   const rowsDeleted = results
-    .slice(0, tablesForScope(scope).length)
+    .slice(0, injectionStatements.length + tables.length)
     .reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
 
   return { scope, rowsDeleted };
