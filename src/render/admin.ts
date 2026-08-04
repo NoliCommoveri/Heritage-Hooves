@@ -729,7 +729,7 @@ export function renderBreedsAdminPage(params: {
       <td>${r?.poolOk ? 'Yes' : html`<span class="notice">No - missing a locus</span>`}</td>
       <td>${String(b.image_count)}</td>
       <td>${String(r?.aliveCount ?? 0)}</td>
-      <td><input type="text" inputmode="numeric" name="count_${String(b.id)}" value="${String(b.image_count)}" style="width:4rem"></td>
+      <td><input type="text" inputmode="numeric" name="count_${String(b.id)}" value="${String(b.image_count)}" style="width:4rem" form="breed-counts"></td>
       <td class="muted">${libraryImagePath(b.code, b.image_count + 1)}</td>
     </tr>`;
   });
@@ -746,13 +746,12 @@ export function renderBreedsAdminPage(params: {
       <p><strong>Files are never renumbered and never deleted - only replaced in place.</strong> Skipping or removing a number shows a broken picture rather than being quietly left out, because the site has no way to know a file is missing without a child finding it. Replacing a picture at its existing number is fine and is how you fix a bad upload.</p>
       <p class="muted">New pictures can take up to a minute to appear everywhere.</p>
     </div>
-    <form method="post" action="/admin/breeds">
-      <table>
-        <thead><tr><th>Code</th><th>Breed</th><th>In play</th><th>Ideal vector?</th><th>Allele pool?</th><th>Images</th><th>Horses alive</th><th>New count</th><th>Next filename</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <button type="submit">Save counts</button>
-    </form>
+    <form id="breed-counts" method="post" action="/admin/breeds"></form>
+    <table>
+      <thead><tr><th>Code</th><th>Breed</th><th>In play</th><th>Ideal vector?</th><th>Allele pool?</th><th>Images</th><th>Horses alive</th><th>New count</th><th>Next filename</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <button type="submit" form="breed-counts">Save counts</button>
   `;
   return shell(params.world, body, 'Breeds', 'breeds');
 }
