@@ -41,6 +41,11 @@ export interface AppraiseParams {
    * looking already gave away for free. Computed by the caller from horse_knowledge and
    * inferFromPhenotype; this engine never reads horses.genotype for it. */
   knownHiddenColourAlleleCount: number;
+  /** Slice 0021 §6.4: true when the horse's phenotype.patterns is non-empty - tobiano, frame,
+   * splash, sabino or any appaloosa variant. One flat factor regardless of how many patterns stack,
+   * on purpose (§6.4): a maximally-marked horse must not out-earn a well-bred one by stacking
+   * multipliers, the same restraint market_visible_colour_factors was already written with. */
+  hasPattern: boolean;
   /** Null (or empty) for a breed with no seeded ideal vector - see §4.4 and qualityUnknown below. */
   ideal: IdealVector | null;
   /** show_ideal_falloff, live from config. No judge is involved in an appraisal, so scoreEntry is
@@ -78,6 +83,9 @@ export interface AppraiseConfig extends AgeModifierConfig {
   market_visible_colour_factors: Record<string, number>;
   market_carried_allele_premium: number;
   market_carried_allele_cap: number;
+  /** Slice 0021 §6.4: one flat multiplier applied once when the horse shows any pattern at all,
+   * never per-pattern. */
+  market_pattern_factor: number;
 }
 
 export interface AppraisalFactor {
@@ -141,7 +149,10 @@ export function appraise(input: AppraiseParams): Appraisal {
   const colour = colourFactor(input.visibleColour, input.knownHiddenColourAlleleCount, c);
   factors.push({ label: 'Colour', detail: colourDetail(input.visibleColour, input.knownHiddenColourAlleleCount) });
 
-  const raw = base * youth * age.modifier * failing * health * record * colour * c.market_price_multiplier;
+  const pattern = input.hasPattern ? c.market_pattern_factor : 1;
+  if (input.hasPattern) factors.push({ label: 'Markings', detail: 'a marked pattern - tobiano, frame, splash, sabino or appaloosa' });
+
+  const raw = base * youth * age.modifier * failing * health * record * colour * pattern * c.market_price_multiplier;
   const value = Math.max(c.market_min_value, Math.round(raw / 10) * 10);
 
   return { value, factors, qualityUnknown: !hasIdeal };

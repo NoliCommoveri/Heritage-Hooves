@@ -30,6 +30,66 @@ const G_NOT_GREY: AllelePair[] = [sortAllelePair('G', 'g', 'g')];
 const DMRT3_GAITED: AllelePair[] = [sortAllelePair('DMRT3', 'A', 'A')];
 const DMRT3_NOT_GAITED: AllelePair[] = [sortAllelePair('DMRT3', 'C', 'C'), sortAllelePair('DMRT3', 'C', 'A')];
 
+// Slice 0021 Part D (§6.1): the ten colour/pattern loci added in Part B/C. D, Z (silver) and CH all
+// follow the same "visible -> dominant present, zygosity unknown; not visible -> homozygous wild
+// type" shape as dun/champagne/roan below, fully penetrant (§5.3) - so, like E/A/CR above, they are
+// simply masked to the fully-open set when grey has taken the base colour past reading.
+const D_ALL: AllelePair[] = [sortAllelePair('D', 'D', 'D'), sortAllelePair('D', 'D', 'nd'), sortAllelePair('D', 'nd', 'nd')];
+const D_HAS_DOMINANT: AllelePair[] = [sortAllelePair('D', 'D', 'D'), sortAllelePair('D', 'D', 'nd')];
+const D_CLEAR: AllelePair[] = [sortAllelePair('D', 'nd', 'nd')];
+
+const CH_ALL: AllelePair[] = [sortAllelePair('CH', 'Ch', 'Ch'), sortAllelePair('CH', 'Ch', 'ch'), sortAllelePair('CH', 'ch', 'ch')];
+const CH_HAS_DOMINANT: AllelePair[] = [sortAllelePair('CH', 'Ch', 'Ch'), sortAllelePair('CH', 'Ch', 'ch')];
+const CH_CLEAR: AllelePair[] = [sortAllelePair('CH', 'ch', 'ch')];
+
+// Silver only touches black pigment (§6.1) - fully open on any chestnut regardless of zygosity, the
+// same epistasis blindness E_ALL's own chestnut branch already models for Agouti.
+const Z_ALL: AllelePair[] = [sortAllelePair('Z', 'Z', 'Z'), sortAllelePair('Z', 'Z', 'z'), sortAllelePair('Z', 'z', 'z')];
+const Z_HAS_DOMINANT: AllelePair[] = [sortAllelePair('Z', 'Z', 'Z'), sortAllelePair('Z', 'Z', 'z')];
+const Z_CLEAR: AllelePair[] = [sortAllelePair('Z', 'z', 'z')];
+
+const RN_ALL: AllelePair[] = [sortAllelePair('RN', 'Rn', 'Rn'), sortAllelePair('RN', 'Rn', 'rn'), sortAllelePair('RN', 'rn', 'rn')];
+const RN_HAS_DOMINANT: AllelePair[] = [sortAllelePair('RN', 'Rn', 'Rn'), sortAllelePair('RN', 'Rn', 'rn')];
+const RN_CLEAR: AllelePair[] = [sortAllelePair('RN', 'rn', 'rn')];
+
+// Tobiano is read straight from phenotype.patterns (fully penetrant, never masked by grey - patterns
+// are computed independently of greyStage in expression.ts) - no "ALL" variant needed, looking always
+// resolves presence, only zygosity stays open.
+const TO_HAS_DOMINANT: AllelePair[] = [sortAllelePair('TO', 'TO', 'TO'), sortAllelePair('TO', 'TO', 'n')];
+const TO_CLEAR: AllelePair[] = [sortAllelePair('TO', 'n', 'n')];
+
+// Frame overo: O/O never draws breath (slice 0021 §1/§7), so a horse alive to be looked at that
+// visibly shows frame is O/n with certainty - the one locus where "visible" collapses to a single
+// pair rather than "present, zygosity unknown". Not visible stays open because of §5.5's cryptic
+// carriers: a solid horse could be n/n, or an O/n that simply didn't roll penetrant.
+const O_CERTAIN_CARRIER: AllelePair[] = [sortAllelePair('O', 'O', 'n')];
+const O_OPEN: AllelePair[] = [sortAllelePair('O', 'O', 'n'), sortAllelePair('O', 'n', 'n')];
+
+// Splashed white has no lethal double-copy, so - unlike frame - a visibly splashed horse could be
+// SW1/SW1 or SW1/n (zygosity genuinely unknown). §5.5's penetrance still applies, so "not visible"
+// stays open too, exactly the same shape as frame's cryptic-carrier case.
+const SW1_HAS_DOMINANT: AllelePair[] = [sortAllelePair('SW1', 'SW1', 'SW1'), sortAllelePair('SW1', 'SW1', 'n')];
+const SW1_OPEN: AllelePair[] = [sortAllelePair('SW1', 'SW1', 'n'), sortAllelePair('SW1', 'n', 'n')];
+
+// Sabino1's three doses are each visibly distinct (§6.1) - looking always resolves to a single pair,
+// making a genotype test on this locus worthless, exactly as inference.ts's own header comment says
+// a one-element array means.
+const SB1_CLEAR: AllelePair[] = [sortAllelePair('SB1', 'n', 'n')];
+const SB1_SINGLE: AllelePair[] = [sortAllelePair('SB1', 'SB1', 'n')];
+const SB1_DOUBLE: AllelePair[] = [sortAllelePair('SB1', 'SB1', 'SB1')];
+
+// Leopard complex: no spotting visible at all means lp/lp with certainty, regardless of PATN1 (PATN1
+// has no effect without at least one Lp). Spotting visible means Lp present but Lp/Lp vs Lp/lp is not
+// reliably distinguishable by eye (§6.1) - zygosity open. PATN1 itself is only ever readable when
+// spotting is visible in the first place: no spotting leaves PATN1 fully open (it could be anything,
+// unexpressed), a blanket/leopard pattern proves PATN1 present (zygosity unknown), and plain
+// appaloosa/few-spot proves PATN1 absent.
+const LP_HAS_LP: AllelePair[] = [sortAllelePair('LP', 'Lp', 'Lp'), sortAllelePair('LP', 'Lp', 'lp')];
+const LP_CLEAR: AllelePair[] = [sortAllelePair('LP', 'lp', 'lp')];
+const PATN1_ALL: AllelePair[] = [sortAllelePair('PATN1', 'PATN1', 'PATN1'), sortAllelePair('PATN1', 'PATN1', 'n'), sortAllelePair('PATN1', 'n', 'n')];
+const PATN1_HAS_DOMINANT: AllelePair[] = [sortAllelePair('PATN1', 'PATN1', 'PATN1'), sortAllelePair('PATN1', 'PATN1', 'n')];
+const PATN1_CLEAR: AllelePair[] = [sortAllelePair('PATN1', 'n', 'n')];
+
 /**
  * What the visible horse constrains its genotype to, before anyone has paid for anything. Takes a
  * Phenotype, returns the set of allele pairs still possible at each locus - a single-element array
@@ -71,7 +131,29 @@ export function inferFromPhenotype(phenotype: Phenotype): Record<string, AlleleP
   const g = phenotype.greyStage !== 'none' ? G_GREY : G_NOT_GREY;
   const dmrt3 = phenotype.gaited ? DMRT3_GAITED : DMRT3_NOT_GAITED;
 
-  return { E: e, A: a, CR: cr, G: g, DMRT3: dmrt3 };
+  // Slice 0021 Part D (§6.1): D, CH, Z and RN are all masked to fully-open by the same grey stage
+  // that masks E/A/CR above - grey takes the whole base+dilution picture with it, not just the base.
+  const d = baseHidden ? D_ALL : phenotype.dunPresent ? D_HAS_DOMINANT : D_CLEAR;
+  const ch = baseHidden ? CH_ALL : phenotype.champagnePresent ? CH_HAS_DOMINANT : CH_CLEAR;
+  const z = baseHidden || phenotype.baseColour === 'chestnut' ? Z_ALL : phenotype.silverPresent ? Z_HAS_DOMINANT : Z_CLEAR;
+  const rn = baseHidden ? RN_ALL : phenotype.roanPresent ? RN_HAS_DOMINANT : RN_CLEAR;
+
+  // Patterns are read straight off phenotype.patterns, never masked by baseHidden - expression.ts
+  // computes them independently of greyStage (this file's own header explains why for the five
+  // existing loci; patterns work the same way, and real pinto/appaloosa markings are not erased by
+  // greying the way a solid base colour is).
+  const to = phenotype.patterns.includes('tobiano') ? TO_HAS_DOMINANT : TO_CLEAR;
+  const o = phenotype.patterns.includes('frame') ? O_CERTAIN_CARRIER : O_OPEN;
+  const sw1 = phenotype.patterns.includes('splash') ? SW1_HAS_DOMINANT : SW1_OPEN;
+
+  const sb1 = phenotype.patterns.includes('sabino_max') ? SB1_DOUBLE : phenotype.patterns.includes('sabino') ? SB1_SINGLE : SB1_CLEAR;
+
+  const hasSpotting = phenotype.patterns.some((p) => p.startsWith('appaloosa'));
+  const hasBlanketOrLeopard = phenotype.patterns.includes('appaloosa_blanket') || phenotype.patterns.includes('appaloosa_leopard');
+  const lp = hasSpotting ? LP_HAS_LP : LP_CLEAR;
+  const patn1 = !hasSpotting ? PATN1_ALL : hasBlanketOrLeopard ? PATN1_HAS_DOMINANT : PATN1_CLEAR;
+
+  return { E: e, A: a, CR: cr, G: g, DMRT3: dmrt3, D: d, CH: ch, Z: z, RN: rn, TO: to, O: o, SW1: sw1, SB1: sb1, LP: lp, PATN1: patn1 };
 }
 
 /**

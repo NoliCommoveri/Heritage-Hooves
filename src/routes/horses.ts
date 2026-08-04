@@ -37,7 +37,7 @@ import { getBreedById, getBreeds, getLoci, type LocusRow, type BreedRow } from '
 import { parseGenotype, sortAllelePair, type AllelePair } from '../engines/genetics/genotype';
 import { expressPhenotype, type PatternPenetrance } from '../engines/genetics/expression';
 import { deriveSeed } from '../lib/rng';
-import { describeHorse } from '../engines/genetics/describe';
+import { describeHorse, PATTERN_LABELS } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
 import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
@@ -139,7 +139,23 @@ async function narrowedColourInference(
   return inferred;
 }
 
-const COLOUR_LOCUS_LABEL: Record<string, string> = { E: 'red/black (Extension)', A: 'Agouti', CR: 'cream', G: 'grey', DMRT3: 'gait' };
+const COLOUR_LOCUS_LABEL: Record<string, string> = {
+  E: 'red/black (Extension)',
+  A: 'Agouti',
+  CR: 'cream',
+  G: 'grey',
+  DMRT3: 'gait',
+  D: 'dun',
+  Z: 'silver',
+  CH: 'champagne',
+  RN: 'roan',
+  TO: 'tobiano',
+  O: 'frame overo',
+  SW1: 'splashed white',
+  SB1: 'Sabino1',
+  LP: 'leopard complex',
+  PATN1: 'appaloosa pattern (PATN1)',
+};
 
 /** Amendment 0017a §4.4/§4.5 point 1: foalColourPossibilities turned into the sentences the
  * breeding preview shows - the worked example from the amendment's own §4.4. */
@@ -465,7 +481,7 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       narrowedColourInference(ctx, stableId, mare),
     ]);
     const colourNotes = foalColourSentences(
-      foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear })
+      foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear, patternPenetrance: ctx.config.values.pattern_penetrance })
     );
     const preview: BreedPreview = {
       mareId: mare.id,
@@ -769,6 +785,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       locationError: params.get('location_error') ?? undefined,
       health,
       colour,
+      patternWords: displayPhenotype.patterns.map((p) => PATTERN_LABELS[p]),
       care,
       managementPlans,
       careError,

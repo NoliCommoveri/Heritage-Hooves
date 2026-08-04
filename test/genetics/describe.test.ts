@@ -12,6 +12,10 @@ function phenotype(overrides: Partial<Phenotype> = {}): Phenotype {
     bornColour: 'bay',
     gaited: false,
     patterns: [],
+    dunPresent: false,
+    champagnePresent: false,
+    silverPresent: false,
+    roanPresent: false,
     ...overrides,
   };
 }

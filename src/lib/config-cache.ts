@@ -222,6 +222,10 @@ export interface ConfigValues {
   market_visible_colour_factors: Record<string, number>;
   market_carried_allele_premium: number;
   market_carried_allele_cap: number;
+  /** Slice 0021 §6.4. One flat multiplier applied once when a horse shows any pattern at all
+   * (tobiano, frame, splash, sabino, appaloosa) - never stacked per pattern, so a maximally-marked
+   * horse can't out-earn a well-bred one just by carrying more patterns. */
+  market_pattern_factor: number;
   /** Amendment 0017a §5.8. The consignment dealer's own tunables - all live, all guesses. No
    * consignment_age_min/max_game_days key: runConsignments reuses founding_age_min/max_game_days
    * directly rather than a second, easy-to-drift copy of the same two numbers (§5.3). */

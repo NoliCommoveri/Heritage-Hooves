@@ -58,6 +58,14 @@ export interface Phenotype {
   /** Ordered, e.g. ['tobiano', 'sabino']. Never folded into visibleColour - see this file's own
    * top comment and slice 0021 §5.1. */
   patterns: PatternCode[];
+  /** Slice 0021 Part D (§6.1): the raw presence flags behind dilutedColour/visibleColour's composed
+   * name - unconditional truth, exactly like baseColour above, not masked by grey. inference.ts
+   * needs these directly because the named-combination table (grullo, silver bay, ...) makes the
+   * individual modifier unrecoverable by parsing the string back apart. */
+  dunPresent: boolean;
+  champagnePresent: boolean;
+  silverPresent: boolean;
+  roanPresent: boolean;
 }
 
 // Grey stage thresholds, in game years - not config (CLAUDE.md §5.5: they only affect display and
@@ -246,5 +254,18 @@ export function expressPhenotype(
   const gaited = gaitedOf(genotype);
   const patterns = patternsOf(genotype, patternSeed, penetrance);
 
-  return { baseColour, dilution, dilutedColour, greyStage, visibleColour, bornColour, gaited, patterns };
+  return {
+    baseColour,
+    dilution,
+    dilutedColour,
+    greyStage,
+    visibleColour,
+    bornColour,
+    gaited,
+    patterns,
+    dunPresent,
+    champagnePresent,
+    silverPresent,
+    roanPresent,
+  };
 }
