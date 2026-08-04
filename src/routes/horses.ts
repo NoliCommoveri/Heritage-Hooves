@@ -14,6 +14,7 @@ import {
   renderPastHorsesPage,
   displayNameFor,
   type BreedPreview,
+  type OutsideStudOption,
   type EnterShowInfo,
   type HealthConditionDisplay,
   type TestConditionOption,
@@ -96,7 +97,15 @@ import {
   openListingsBySellerStable,
   buildWithdrawListingsForHorseStatement,
 } from '../db/listings';
-import { createStudListing, getActiveStudListingForHorse, bookingsThisSeasonCount, buildWithdrawStudListingsForHorseStatement } from '../db/stud';
+import {
+  createStudListing,
+  getActiveStudListingForHorse,
+  bookingsThisSeasonCount,
+  buildWithdrawStudListingsForHorseStatement,
+  listActiveStudListings,
+  getStudListing,
+  validateStudBooking,
+} from '../db/stud';
 import { incidentsForHorse, treatOneIncident, openIncidentHorseIds, acuteCarePenaltyMapForHorses } from '../db/incidents';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
@@ -458,6 +467,96 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
   return undefined;
 }
 
+/**
+ * The pairing preview both stallion pickers produce, built once so the outside-stud path can never
+ * drift from the same-stable one - the numbers a child compares two stallions on have to be the
+ * same numbers, whichever picker the stallion came from.
+ *
+ * Two things differ for a stallion at another ranch, and they are the two parameters:
+ *
+ *  - `stallionKnowledgeStableId` - whose horse_knowledge stands for what is known about him. His
+ *    own owner's, for a stud listing: that is the disclosure the market already makes on his stud
+ *    page (slice 0017 §2.3), not a widening of it.
+ *  - `stallionConformationKnown` - false for somebody else's stallion. His conformation is shown
+ *    nowhere else in the game to anyone but his owner (not on /world/horses/:id, not on his stud
+ *    page), so his column reads Unknown rather than quietly becoming the one screen that tells you.
+ *    His show record, which IS public, is one link away on his stud page.
+ */
+async function buildBreedPreview(
+  ctx: RequestContext,
+  stableId: number,
+  mare: HorseRow,
+  stallion: HorseRow,
+  describe: (h: HorseRow) => string,
+  options: { stallionKnowledgeStableId?: number; stallionConformationKnown?: boolean } = {}
+): Promise<BreedPreview> {
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const stallionKnowledgeStableId = options.stallionKnowledgeStableId ?? stableId;
+  const stallionConformationKnown = options.stallionConformationKnown ?? true;
+
+  const coi = await previewCoi(ctx.env, stallion.id, mare.id);
+  const mareAgeYears = (ctx.world.game_day - mare.born_game_day) / gameDaysPerYear;
+  const stallionAgeYears = (ctx.world.game_day - stallion.born_game_day) / gameDaysPerYear;
+  const breakdown = estimateConceptionChance(mareAgeYears, stallionAgeYears, coi, ctx.config);
+  // Slice 0010 §7.3: computed from horse_knowledge rows only, never from either horse's genotype
+  // (both already loaded above for the COI calculation, which is exactly why this is delegated to a
+  // function that never has them in scope - see its comment).
+  const healthWarnings = await breedingHealthWarningsFor(ctx.env, stableId, mare.id, stallion.id, stallionKnowledgeStableId);
+  // Amendment 0017a §4.4/§4.5 point 1: computed only from this booking stable's own knowledge of
+  // each parent (narrowedColourInference), never from either horse's genotype directly. Deliberately
+  // NOT widened to the stallion's owner the way the health line is: colour test results are not part
+  // of what a listing discloses anywhere in the market, so an outside stallion's colour reads off
+  // his coat, the same as it does for anyone standing at the rail.
+  const [stallionColour, mareColour] = await Promise.all([
+    narrowedColourInference(ctx, stableId, stallion),
+    narrowedColourInference(ctx, stableId, mare),
+  ]);
+  const colourNotes = foalColourSentences(
+    foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear, patternPenetrance: ctx.config.values.pattern_penetrance })
+  );
+  // Slice 0022 §B5: the conformation block, one row per trait, each parent judged against ITS OWN
+  // breed's ideal - never a shared vector, and never the foal's, which doesn't exist yet and has
+  // no breed to have an opinion (§B5's own warning). The gate is per parent (§B5): an unshown mare
+  // booked to a proven stallion reads Unknown down her column and real words down his.
+  const [traitRows, mareBreed, stallionBreed, mareShowSummary, stallionShowSummary] = await Promise.all([
+    getConformationTraits(ctx.env),
+    mare.breed_id ? getBreedById(ctx.env, mare.breed_id) : Promise.resolve(undefined),
+    stallion.breed_id ? getBreedById(ctx.env, stallion.breed_id) : Promise.resolve(undefined),
+    getShowSummary(ctx.env, mare.id),
+    getShowSummary(ctx.env, stallion.id),
+  ]);
+  const mareConformation = conformationForHorse(mare, mareAgeYears, ctx.config.values, traitRows);
+  const stallionConformation = conformationForHorse(stallion, stallionAgeYears, ctx.config.values, traitRows);
+  const mareLabels = conformationLabelsForHorse(mareConformation, mareBreed, (mareShowSummary?.starts ?? 0) >= 1, ctx.config.values);
+  const stallionLabels = conformationLabelsForHorse(
+    stallionConformation,
+    stallionBreed,
+    stallionConformationKnown && (stallionShowSummary?.starts ?? 0) >= 1,
+    ctx.config.values
+  );
+  const conformationRows = mareConformation.map((row) => ({
+    name: row.name,
+    mareLabel: CONFORMATION_LABEL_TEXT[mareLabels.get(row.code) ?? 'unknown'],
+    stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabels.get(row.code) ?? 'unknown'],
+  }));
+
+  return {
+    mareId: mare.id,
+    stallionId: stallion.id,
+    mareDescription: describe(mare),
+    mareAgeYears,
+    stallionDescription: describe(stallion),
+    stallionAgeYears,
+    coiPercent: `${(coi * 100).toFixed(1)}%`,
+    warning: coiWarning(coi, ctx.config.values.coi_warn_threshold),
+    conceptionPercent: `${String(Math.round(breakdown.p * 100))}%`,
+    conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
+    healthWarnings,
+    colourNotes,
+    conformationRows,
+  };
+}
+
 export async function stableBreedRoute(ctx: RequestContext, method: string, stableId: number): Promise<Response> {
   const stable = await loadOwnedStable(ctx, stableId);
   if (stable instanceof Response) return stable;
@@ -474,147 +573,98 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
   const stallions = allHorses.filter((h) => h.sex === 'stallion');
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, stableId);
 
-  if (method === 'GET') {
-    return htmlResponse(renderBreedPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, hasFoundingOffer, mares, stallions, describe }));
-  }
+  // The third picker: every stallion standing at stud somewhere this account does not own, NPC
+  // ranches included (their stable_account_id is null, which is never this account's id). Cross-
+  // stable breeding already exists at /market/stud - this only puts the same stallions in front of
+  // a child who came to the Breed page to breed, rather than expecting them to know the market has
+  // a stud section.
+  const outsideStudListings = (await listActiveStudListings(ctx.env, null)).filter((l) => l.stable_account_id !== ctx.account!.id);
+  const outsideStuds: OutsideStudOption[] = outsideStudListings.map((l) => {
+    const asHorse = { ...l, sex: 'stallion' as const };
+    return {
+      studListingId: l.id,
+      stallionName: displayNameFor(asHorse),
+      stableName: l.stable_name,
+      fee: l.fee,
+      description: describeHorseRow(asHorse, ctx.world.game_day, gameDaysPerYear, ctx.config.values.pattern_penetrance),
+    };
+  });
+
+  const page = (extra: Partial<Parameters<typeof renderBreedPage>[0]> = {}) =>
+    htmlResponse(
+      renderBreedPage({
+        world: ctx.world,
+        isAdmin,
+        actionsLeft,
+        gameDaysPerYear,
+        stable,
+        hasFoundingOffer,
+        mares,
+        stallions,
+        outsideStuds,
+        describe,
+        ...extra,
+      })
+    );
+
+  if (method === 'GET') return page();
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
   const mareId = Number(form.mare_id);
-  const stallionId = Number(form.stallion_id);
   const mare = allHorses.find((h) => h.id === mareId);
-  const stallion = allHorses.find((h) => h.id === stallionId);
+  if (!mare) return page({ error: 'Choose a mare from this stable.' });
 
-  if (!mare || !stallion) {
-    return htmlResponse(
-      renderBreedPage({
-        world: ctx.world,
-        isAdmin,
-        actionsLeft,
-        gameDaysPerYear,
-        stable,
-        hasFoundingOffer,
-        mares,
-        stallions,
-        describe,
-        error: 'Choose a mare and a stallion from this stable.',
-      })
-    );
+  // The outside-stud picker wins when something is chosen in it - the label on the form says so,
+  // and leaving it on its "none" default is how a player asks for their own stallion instead.
+  const studListingId = typeof form.stud_listing_id === 'string' && form.stud_listing_id !== '' ? Number(form.stud_listing_id) : null;
+  if (studListingId !== null) {
+    if (form.action !== 'check') return notFound();
+    const listing = Number.isInteger(studListingId) ? await getStudListing(ctx.env, studListingId) : null;
+    // Rechecked here rather than trusted from the form (the same discipline slice 0010 §7.1 step 1
+    // uses for a test purchase): the option list was built a page view ago and he may have been
+    // withdrawn, sold or died since.
+    if (!listing || listing.active !== 1 || listing.stable_account_id === ctx.account!.id) {
+      return page({ selectedMareId: mare.id, error: 'That stallion is not standing at stud anymore.' });
+    }
+    const outsideStallion = await getHorse(ctx.env, listing.stallion_id);
+    if (!outsideStallion || outsideStallion.status !== 'alive') {
+      return page({ selectedMareId: mare.id, error: 'That stallion is not standing at stud anymore.' });
+    }
+
+    const preview = await buildBreedPreview(ctx, stableId, mare, outsideStallion, describe, {
+      stallionKnowledgeStableId: listing.stable_id,
+      stallionConformationKnown: false,
+    });
+    // Shown in place of the Book button rather than after pressing it - the refusal is about this
+    // mare, and a player with four of them needs to be able to try another without being bounced to
+    // a different page first (the same lesson /market/stud/:id's own picker just had to learn).
+    let refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, stable, outsideStallion);
+    if (!refusal && actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) refusal = turnsRefusalMessage(ctx);
+    preview.outsideStud = { studListingId: listing.id, stableName: listing.stable_name, fee: listing.fee, refusal };
+
+    return page({ selectedMareId: mare.id, selectedStudListingId: listing.id, preview });
   }
 
+  const stallionId = Number(form.stallion_id);
+  const stallion = allHorses.find((h) => h.id === stallionId);
+  if (!stallion) return page({ selectedMareId: mare.id, error: 'Choose a stallion - one of your own, or one standing at another ranch.' });
+
   if (form.action === 'check') {
-    const coi = await previewCoi(ctx.env, stallion.id, mare.id);
-    const mareAgeYears = (ctx.world.game_day - mare.born_game_day) / gameDaysPerYear;
-    const stallionAgeYears = (ctx.world.game_day - stallion.born_game_day) / gameDaysPerYear;
-    const breakdown = estimateConceptionChance(mareAgeYears, stallionAgeYears, coi, ctx.config);
-    // Slice 0010 §7.3: computed from this booking stable's own horse_knowledge rows only, never
-    // from either horse's genotype (both already loaded above for the COI calculation, which is
-    // exactly why this is delegated to a function that never has them in scope - see its comment).
-    const healthWarnings = await breedingHealthWarningsFor(ctx.env, stableId, mare.id, stallion.id);
-    // Amendment 0017a §4.4/§4.5 point 1: computed only from this booking stable's own knowledge of
-    // each parent (narrowedColourInference), never from either horse's genotype directly.
-    const [stallionColour, mareColour] = await Promise.all([
-      narrowedColourInference(ctx, stableId, stallion),
-      narrowedColourInference(ctx, stableId, mare),
-    ]);
-    const colourNotes = foalColourSentences(
-      foalColourPossibilities({ sire: stallionColour, dam: mareColour, gameDaysPerYear, patternPenetrance: ctx.config.values.pattern_penetrance })
-    );
-    // Slice 0022 §B5: the conformation block, one row per trait, each parent judged against ITS OWN
-    // breed's ideal - never a shared vector, and never the foal's, which doesn't exist yet and has
-    // no breed to have an opinion (§B5's own warning). The gate is per parent (§B5): an unshown mare
-    // booked to a proven stallion reads Unknown down her column and real words down his.
-    const [traitRows, mareBreed, stallionBreed, mareShowSummary, stallionShowSummary] = await Promise.all([
-      getConformationTraits(ctx.env),
-      mare.breed_id ? getBreedById(ctx.env, mare.breed_id) : Promise.resolve(undefined),
-      stallion.breed_id ? getBreedById(ctx.env, stallion.breed_id) : Promise.resolve(undefined),
-      getShowSummary(ctx.env, mare.id),
-      getShowSummary(ctx.env, stallion.id),
-    ]);
-    const mareConformation = conformationForHorse(mare, mareAgeYears, ctx.config.values, traitRows);
-    const stallionConformation = conformationForHorse(stallion, stallionAgeYears, ctx.config.values, traitRows);
-    const mareLabels = conformationLabelsForHorse(mareConformation, mareBreed, (mareShowSummary?.starts ?? 0) >= 1, ctx.config.values);
-    const stallionLabels = conformationLabelsForHorse(stallionConformation, stallionBreed, (stallionShowSummary?.starts ?? 0) >= 1, ctx.config.values);
-    const conformationRows = mareConformation.map((row) => ({
-      name: row.name,
-      mareLabel: CONFORMATION_LABEL_TEXT[mareLabels.get(row.code) ?? 'unknown'],
-      stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabels.get(row.code) ?? 'unknown'],
-    }));
-    const preview: BreedPreview = {
-      mareId: mare.id,
-      stallionId: stallion.id,
-      mareDescription: describe(mare),
-      mareAgeYears,
-      stallionDescription: describe(stallion),
-      stallionAgeYears,
-      coiPercent: `${(coi * 100).toFixed(1)}%`,
-      warning: coiWarning(coi, ctx.config.values.coi_warn_threshold),
-      conceptionPercent: `${String(Math.round(breakdown.p * 100))}%`,
-      conceptionReasons: conceptionReasons(breakdown, mareAgeYears, stallionAgeYears),
-      healthWarnings,
-      colourNotes,
-      conformationRows,
-    };
-    return htmlResponse(
-      renderBreedPage({
-        world: ctx.world,
-        isAdmin,
-        actionsLeft,
-        gameDaysPerYear,
-        stable,
-        hasFoundingOffer,
-        mares,
-        stallions,
-        describe,
-        selectedMareId: mare.id,
-        selectedStallionId: stallion.id,
-        preview,
-      })
-    );
+    const preview = await buildBreedPreview(ctx, stableId, mare, stallion, describe);
+    return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, preview });
   }
 
   if (form.action === 'book') {
     const refusal = await validateBooking(ctx, stable, mare, stallion);
-    if (refusal) {
-      return htmlResponse(
-        renderBreedPage({
-          world: ctx.world,
-          isAdmin,
-          actionsLeft,
-          gameDaysPerYear,
-          stable,
-          hasFoundingOffer,
-          mares,
-          stallions,
-          describe,
-          selectedMareId: mare.id,
-          selectedStallionId: stallion.id,
-          error: refusal,
-        })
-      );
-    }
+    if (refusal) return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, error: refusal });
 
     // Slice 0009 Part B §5.3: check, act, then spend - read the budget and refuse up front if it
     // looks empty, do the game action, then spend. If the spend below loses a race (two forms
     // submitted at the same instant), it's let through free rather than charged for nothing - a
     // child charged for something that did not happen has no way to find out why or get it back.
     if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_covering) {
-      return htmlResponse(
-        renderBreedPage({
-          world: ctx.world,
-          isAdmin,
-          actionsLeft,
-          gameDaysPerYear,
-          stable,
-          hasFoundingOffer,
-          mares,
-          stallions,
-          describe,
-          selectedMareId: mare.id,
-          selectedStallionId: stallion.id,
-          error: turnsRefusalMessage(ctx),
-        })
-      );
+      return page({ selectedMareId: mare.id, selectedStallionId: stallion.id, error: turnsRefusalMessage(ctx) });
     }
 
     await bookCovering(ctx.env, {

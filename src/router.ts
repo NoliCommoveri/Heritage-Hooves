@@ -79,7 +79,12 @@ import { readAdminUnlockPayload, expireAdminUnlockCookie } from './lib/session';
 import { nowUtcSeconds } from './lib/time';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/location|\/list|\/stud)?$/;
+// Every sub-path handled below must appear in the alternation here, or the request never reaches
+// the handler at all - it falls past this block to the router's closing notFound(), which reaches
+// the player as a bare "Not found" page with no explanation. Slice 0020's "Call the vet" button
+// (POST /horses/:id/treat) shipped with a handler and no entry here, and did exactly that. The
+// regression test in test/router-paths.test.ts now asserts the two lists match.
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;

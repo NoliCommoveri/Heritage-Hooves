@@ -683,17 +683,29 @@ export function renderStudDetailPage(params: {
 
   const selected = params.mareOptions.find((o) => o.id === params.selectedMareId) ?? params.mareOptions[0];
 
-  const mareField =
+  /**
+   * The picker itself, as its own GET form back to this same page (`?mare=<id>`) - a refusal is
+   * about ONE mare, so it must never be the end of the road for a player who owns four. It used to
+   * be: the select only appeared inside the booking form, and the booking form only appeared when
+   * nothing was wrong, so "she is already in foal" about the first mare in the list hid every other
+   * mare behind it with no way to say "not that one, this one".
+   *
+   * A GET form rather than JavaScript (there is none anywhere in this codebase) and a visible
+   * Choose button rather than an auto-submitting select, exactly like the barn page's feed
+   * selector. Shown whenever there is more than one mare to choose between, refusal or not.
+   */
+  const marePicker =
     params.mareOptions.length > 1
       ? html`
-        <label>Which mare
-          <select name="mare_id">
-            ${params.mareOptions.map((o) => html`<option value="${String(o.id)}" ${o.id === selected?.id ? raw('selected') : raw('')}>${o.name} (${o.stableName})</option>`)}
-          </select>
-        </label>`
-      : selected
-        ? html`<input type="hidden" name="mare_id" value="${String(selected.id)}"><p>Booking <strong>${selected.name}</strong> (${selected.stableName}).</p>`
-        : raw('');
+        <form method="get" action="/market/stud/${String(l.studListingId)}">
+          <label>Which mare
+            <select name="mare">
+              ${params.mareOptions.map((o) => html`<option value="${String(o.id)}" ${o.id === selected?.id ? raw('selected') : raw('')}>${o.name} (${o.stableName})</option>`)}
+            </select>
+          </label>
+          <button type="submit" class="secondary">Choose this mare</button>
+        </form>`
+      : raw('');
 
   const bookBlock = l.isMine
     ? html`
@@ -704,17 +716,19 @@ export function renderStudDetailPage(params: {
           <button type="submit" class="secondary">Take him off stud</button>
         </form>
       </div>`
-    : params.refusal
-      ? html`<div class="card"><p class="notice">${params.refusal}</p></div>`
-      : html`
-        <div class="card">
-          <h2>Book a mare to ${l.name}</h2>
-          <p class="muted">Booking costs one turn and takes the fee out of your stable's balance right away. Neither horse changes hands - she is covered next time she comes into season, and you'll be told whether it took. There is no refund if it doesn't.</p>
-          <form method="post" action="/market/stud/${String(l.studListingId)}/book">
-            ${mareField}
-            <button type="submit">Book for ${String(l.fee)}</button>
-          </form>
-        </div>`;
+    : html`
+      <div class="card">
+        <h2>Book a mare to ${l.name}</h2>
+        ${marePicker}
+        ${params.refusal || !selected
+          ? html`<p class="notice">${params.refusal ?? 'You have no mare to book.'}</p>`
+          : html`
+            <p class="muted">Booking costs one turn and takes the fee out of your stable's balance right away. Neither horse changes hands - she is covered next time she comes into season, and you'll be told whether it took. There is no refund if it doesn't.</p>
+            <form method="post" action="/market/stud/${String(l.studListingId)}/book">
+              <input type="hidden" name="mare_id" value="${String(selected.id)}">
+              <button type="submit">Book ${selected.name} for ${String(l.fee)}</button>
+            </form>`}
+      </div>`;
 
   const body = html`
     <h1>${l.name}</h1>

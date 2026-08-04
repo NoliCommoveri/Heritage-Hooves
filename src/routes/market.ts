@@ -735,7 +735,13 @@ export async function studDetailRoute(ctx: RequestContext, studListingId: number
 
 export async function studBookRoute(ctx: RequestContext, studListingId: number): Promise<Response> {
   const form = await parseForm(ctx.request);
-  const back = (message: string) => redirect(`/market/stud/${String(studListingId)}?error=${encodeURIComponent(message)}`);
+  // The mare that was booked travels back onto the detail page with the refusal, so the picker
+  // comes back showing HER rather than resetting to the first mare in the list - the refusal is
+  // about one mare, and a player with four of them has to be able to see which one it was about.
+  const back = (message: string, mareId?: number) => {
+    const mareParam = mareId !== undefined && Number.isInteger(mareId) ? `&mare=${String(mareId)}` : '';
+    return redirect(`/market/stud/${String(studListingId)}?error=${encodeURIComponent(message)}${mareParam}`);
+  };
 
   const listing = await getStudListing(ctx.env, studListingId);
   if (!listing) return notFound();
@@ -754,13 +760,13 @@ export async function studBookRoute(ctx: RequestContext, studListingId: number):
   const mareStable = await getStableById(ctx.env, mare.owner_stable_id);
   if (!mareStable || mareStable.account_id !== ctx.account!.id) return notFound();
 
-  if (mareStable.id === listing.stable_id) return back('A stallion and mare in the same stable use the ordinary breeding page instead.');
+  if (mareStable.id === listing.stable_id) return back('A stallion and mare in the same stable use the ordinary breeding page instead.', mareId);
 
   const actionsLeft = actionsLeftFor(ctx);
-  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) return back(turnsRefusalMessage(ctx));
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) return back(turnsRefusalMessage(ctx), mareId);
 
   const refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, mareStable, stallion);
-  if (refusal) return back(refusal);
+  if (refusal) return back(refusal, mareId);
 
   const stallionStable = await getStableById(ctx.env, listing.stable_id);
   if (!stallionStable) return notFound();
