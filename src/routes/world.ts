@@ -8,13 +8,12 @@ import { actionsLeftFor } from '../lib/context';
 import { htmlResponse, notFound } from '../lib/http';
 import { renderWorldIndexPage, renderWorldStablePage, renderWorldHorsePage, type WorldStableListRow, type WorldRosterHorse, type PublicHorseView } from '../render/world';
 import { describeHorseRow } from './horses';
-import { placingText } from '../render/shows';
+import { placingText, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT, type ShowResultGroup } from '../render/shows';
 import { listStablesForWorld, getStableById } from '../db/stables';
 import { countAliveHorsesByStable, getHorse, listStableHorses, horseDisplayName, type HorseRow } from '../db/horses';
 import { getBreedById } from '../db/breeds';
 import { getShowSummary, listRecentResultsForHorse } from '../db/shows';
 import { getOpenListingForHorse } from '../db/listings';
-import { formatCalendarDate } from '../lib/calendar';
 
 export async function worldIndexRoute(ctx: RequestContext): Promise<Response> {
   const [stables, horseCounts] = await Promise.all([listStablesForWorld(ctx.env), countAliveHorsesByStable(ctx.env)]);
@@ -104,7 +103,7 @@ export function buildPublicHorseView(params: {
   sire: { id: number; name: string } | null;
   dam: { id: number; name: string } | null;
   showSummary: { starts: number; wins: number; best_placing: number | null } | null;
-  recentResults: string[];
+  recentResultGroups: ShowResultGroup[];
   /** Slice 0017 §9: the open listing, if there is one. An asking price is public. */
   listing: { listingId: number; price: number } | null;
 }): PublicHorseView {
@@ -131,7 +130,7 @@ export function buildPublicHorseView(params: {
     starts: params.showSummary?.starts ?? 0,
     wins: params.showSummary?.wins ?? 0,
     bestPlacing: params.showSummary?.best_placing ?? null,
-    recentResults: params.recentResults,
+    recentResultGroups: params.recentResultGroups,
     statusLabel: h.status === 'dead' ? 'Died' : h.status === 'removed' ? 'Retired away' : null,
     atPasture: h.status === 'alive' && h.location === 'pasture',
     listing: params.listing,
@@ -159,10 +158,10 @@ export async function worldHorseRoute(ctx: RequestContext, horseId: number): Pro
 
   const [showSummary, recentResultsRaw, listingRow] = await Promise.all([
     getShowSummary(ctx.env, horseId),
-    listRecentResultsForHorse(ctx.env, horseId, 5),
+    listRecentResultsForHorse(ctx.env, horseId, SHOW_RESULT_FETCH_LIMIT),
     getOpenListingForHorse(ctx.env, horseId),
   ]);
-  const recentResults = recentResultsRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+  const recentResultGroups = buildShowResultGroups(recentResultsRaw, gameDaysPerYear);
 
   const view: PublicHorseView = buildPublicHorseView({
     horse,
@@ -174,7 +173,7 @@ export async function worldHorseRoute(ctx: RequestContext, horseId: number): Pro
     sire: sireRow ? { id: sireRow.id, name: horseDisplayName(sireRow) } : null,
     dam: damRow ? { id: damRow.id, name: horseDisplayName(damRow) } : null,
     showSummary,
-    recentResults,
+    recentResultGroups,
     listing: listingRow ? { listingId: listingRow.id, price: listingRow.price } : null,
   });
 

@@ -66,7 +66,7 @@ import {
   type OpenStudListingRow,
 } from '../db/stud';
 import { describeHorseRow } from './horses';
-import { placingText } from '../render/shows';
+import { placingText, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT } from '../render/shows';
 import { formatCalendarDate } from '../lib/calendar';
 
 const SOLD_LIST_LIMIT = 40;
@@ -250,7 +250,7 @@ async function buildListingView(ctx: RequestContext, listing: OpenListingRow, ho
     disclosedConditionsFor(ctx, listing.seller_stable_id, horse.id),
     comesWithSentences(ctx, horse),
     getShowSummary(ctx.env, horse.id),
-    listRecentResultsForHorse(ctx.env, horse.id, 5),
+    listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT),
     horse.sire_id ? getHorse(ctx.env, horse.sire_id) : Promise.resolve(null),
     horse.dam_id ? getHorse(ctx.env, horse.dam_id) : Promise.resolve(null),
   ]);
@@ -279,7 +279,7 @@ async function buildListingView(ctx: RequestContext, listing: OpenListingRow, ho
     starts: summary?.starts ?? 0,
     wins: summary?.wins ?? 0,
     bestPlacingText: summary?.best_placing != null ? placingText(summary.best_placing) : 'none yet',
-    recentResults: recentRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, cfg.game_days_per_year)})`),
+    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year),
     price: listing.price,
     expiresGameDay: listing.expires_game_day,
     conditions,
@@ -631,7 +631,7 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     getBreeds(ctx.env),
     disclosedConditionsFor(ctx, listing.stable_id, stallion.id),
     getShowSummary(ctx.env, stallion.id),
-    listRecentResultsForHorse(ctx.env, stallion.id, 5),
+    listRecentResultsForHorse(ctx.env, stallion.id, SHOW_RESULT_FETCH_LIMIT),
     stallion.sire_id ? getHorse(ctx.env, stallion.sire_id) : Promise.resolve(null),
     stallion.dam_id ? getHorse(ctx.env, stallion.dam_id) : Promise.resolve(null),
     bookingsThisSeasonCount(ctx.env, listing.id, ctx.world.season_index),
@@ -660,7 +660,7 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     starts: summary?.starts ?? 0,
     wins: summary?.wins ?? 0,
     bestPlacingText: summary?.best_placing != null ? placingText(summary.best_placing) : 'none yet',
-    recentResults: recentRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, cfg.game_days_per_year)})`),
+    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year),
     fee: listing.fee,
     seasonCap: listing.season_cap,
     bookedThisSeason,

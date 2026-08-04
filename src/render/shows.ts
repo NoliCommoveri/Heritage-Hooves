@@ -5,7 +5,7 @@
 import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell, errorBox, noticeBox } from './layout';
 import type { WorldRow } from '../db/world';
-import type { ShowRow, ShowClassRow, ClassEntryDisplayRow } from '../db/shows';
+import type { ShowRow, ShowClassRow, ClassEntryDisplayRow, HorseResultRow } from '../db/shows';
 import type { JudgeRow } from '../db/judges';
 import { ribbonFor } from '../engines/showing/placing';
 import type { EligibilityReason } from '../engines/showing/eligibility';
@@ -73,6 +73,62 @@ export function placingText(placing: number | null): string {
   if (placing === null) return 'not yet judged';
   const color = ribbonFor(placing);
   return color ? `${ordinal(placing)} - ${color} ribbon` : ordinal(placing);
+}
+
+// ---------------------------------------------------------------------------
+// The Show record card's grouped placings. One builder and one renderer, shared by every screen
+// that shows a horse's record - the owner's own horse page, a sale listing, a stud listing, and the
+// public /world page. A horse's record reads the same wherever you meet it: a stranger's stallion
+// standing at stud is judged on exactly the display the owner sees, split by class type.
+// ---------------------------------------------------------------------------
+
+/** A Show record card group: one class type (Conformation, or a discipline's own name) the horse
+ * has actually placed in, with its own most-recent-first placings. Groups themselves are ordered
+ * most-recent-first too - both fall out of the single pass in buildShowResultGroups, not sorted
+ * again afterwards. */
+export interface ShowResultGroup {
+  label: string;
+  items: string[];
+}
+
+/** How many placings each group shows. A horse with a long career in one discipline shouldn't push
+ * every other class type off the bottom of the card, which is what a single flat cap would do. */
+export const SHOW_RESULT_GROUP_CAP = 5;
+
+/** How many result rows a caller should ask listRecentResultsForHorse for before grouping. Well
+ * above any real horse's career, because the cap applies per group and the rows have to be read
+ * before it's known which group each one lands in. */
+export const SHOW_RESULT_FETCH_LIMIT = 200;
+
+/** Groups a horse's placings by class type. Relies on listRecentResultsForHorse returning rows
+ * newest-first: the first row seen for a not-yet-seen label is by definition that group's most
+ * recent result, which is what puts the groups themselves in most-recent-activity order.
+ *
+ * The made-up show name isn't included - what a player wants to know is what kind of class a result
+ * came from (Conformation, Dressage, ...), not which of several near-identical fictional show names
+ * it happened at. */
+export function buildShowResultGroups(rows: HorseResultRow[], gameDaysPerYear: number): ShowResultGroup[] {
+  const byLabel = new Map<string, ShowResultGroup>();
+  const groups: ShowResultGroup[] = [];
+  for (const r of rows) {
+    const label = r.class_type === 'breed_conformation' ? 'Conformation' : (r.discipline_name ?? 'Discipline');
+    let group = byLabel.get(label);
+    if (!group) {
+      group = { label, items: [] };
+      byLabel.set(label, group);
+      groups.push(group);
+    }
+    if (group.items.length < SHOW_RESULT_GROUP_CAP) {
+      group.items.push(`${placingText(r.placing)} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+    }
+  }
+  return groups;
+}
+
+/** The grouped placings' markup - a heading per class type, its placings beneath. Empty for a horse
+ * that has never placed, so a caller can drop it in unconditionally. */
+export function showResultGroupsHtml(groups: ShowResultGroup[]): SafeHtml {
+  return html`${groups.map((g) => html`<h3>${g.label}</h3><ul>${g.items.map((r) => html`<li>${r}</li>`)}</ul>`)}`;
 }
 
 function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: number): string {

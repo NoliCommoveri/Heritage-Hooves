@@ -5,7 +5,7 @@
 
 import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell } from './layout';
-import { placingText } from './shows';
+import { placingText, showResultGroupsHtml, type ShowResultGroup } from './shows';
 import type { WorldRow } from '../db/world';
 
 export interface WorldStableListRow {
@@ -119,7 +119,8 @@ export interface PublicHorseView {
   starts: number;
   wins: number;
   bestPlacing: number | null;
-  recentResults: string[];
+  /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
+  recentResultGroups: ShowResultGroup[];
   /** "Died" / "Retired away" / null when alive. */
   statusLabel: string | null;
   atPasture: boolean;
@@ -171,7 +172,7 @@ export function renderWorldHorsePage(params: {
     <div class="card">
       <h2>Show record</h2>
       <p><strong>Starts:</strong> ${String(h.starts)} &middot; <strong>Wins:</strong> ${String(h.wins)} &middot; <strong>Best:</strong> ${h.bestPlacing !== null ? placingText(h.bestPlacing) : 'none yet'}</p>
-      ${h.recentResults.length ? html`<ul>${h.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+      ${showResultGroupsHtml(h.recentResultGroups)}
     </div>
     <p><a href="/world">Back to Everyone</a></p>
   `;
