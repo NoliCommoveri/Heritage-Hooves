@@ -13,12 +13,14 @@ import { resolveDueCoverings } from './coverings';
 import { runNpcBreedingDecisions } from './npcBreeding';
 import { runNpcMarketListings } from './npcMarket';
 import { refreshNpcBuyOffers, runNpcMarketPurchases } from './npcBuying';
+import { runNpcStudListings } from './npcStud';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
 import { noticeCareDue } from './care';
 import { deleteOldEvents } from './events';
 import { expireListings } from './listings';
+import { closeDeadStudListings } from './stud';
 import { runConsignments } from './consignment';
 import { killDueLethalFoals } from './health';
 import { assignLifespansAndNoticeFrailty, killDueOldHorses } from './ageing';
@@ -69,6 +71,10 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // be listed twice, per idx_listings_one_open_per_horse), so no interval marker is needed the
       // way runNpcBreedingDecisions needs last_bred_game_day.
       await runNpcMarketListings(env, newGameDay, config);
+      // Slice 0017 §13 (Part D): sits beside Part B's own selling stage above - both are an NPC
+      // stable's own tick-cycle decisions about its stock, and neither needs an interval marker
+      // (a stallion already listed is skipped; see runNpcStudListings' own header comment).
+      await runNpcStudListings(env, newGameDay, config);
       // Slice 0017 §12 (Part C): sits right after Part B's own selling stage above - both are an
       // NPC stable's own tick-cycle stock decisions. refreshNpcBuyOffers first (keeps the standing
       // offers board current for anyone browsing /market this cycle), then runNpcMarketPurchases
@@ -128,6 +134,9 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // when paused === 0), and any event this stage writes is subject to the same retention pass.
       await runConsignments(env, newGameDay, newTickSeq, config);
       await expireListings(env, newGameDay);
+      // Slice 0017 §13 (Part D): the same lazy dead-horse sweep expireListings runs above, for a
+      // stallion who died or was retired away while standing at stud.
+      await closeDeadStudListings(env, newGameDay);
       // Slice 0009 Part B §6.4: a notice board, not an archive - deletes every event (read or not)
       // older than events_retention_game_days. Sits inside this same paused === 0 branch so it
       // never runs on a paused tick either, matching upkeep's own reasoning above.

@@ -20,7 +20,11 @@ const KIND_LABELS: Record<LedgerKind, string> = {
   farrier: 'Farrier',
   sale: 'Sold a horse',
   purchase: 'Bought a horse',
-  commission: 'Sale commission',
+  // Slice 0017 Part D: renamed from "Sale commission" now that a stud fee carries the same
+  // commission a sale does - the description sentence on the row still says which.
+  commission: 'Market commission',
+  stud_fee_paid: 'Stud fee paid',
+  stud_fee_received: 'Stud fee received',
 };
 
 export function renderMoneyPage(params: {

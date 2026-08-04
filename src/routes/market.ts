@@ -21,6 +21,8 @@ import {
   renderListingPage,
   renderSoldPage,
   renderOfferDetailPage,
+  renderStudIndexPage,
+  renderStudDetailPage,
   type MarketListingRow,
   type DisclosedCondition,
   type ListingDetailView,
@@ -29,6 +31,10 @@ import {
   type MarketOfferRow,
   type OfferDetailView,
   type EligibleHorseOption,
+  type StudListRow,
+  type StudTab,
+  type StudListingDetailView,
+  type EligibleMareOption,
 } from '../render/market';
 import { getListing, listOpenListings, listSoldListings, sellListing, withdrawListing, type OpenListingRow } from '../db/listings';
 import { getHorse, horseDisplayName, countAliveHorses, listStableHorses, type HorseRow } from '../db/horses';
@@ -50,6 +56,15 @@ import {
   sellIntoOffer,
   type ActiveBuyOfferView,
 } from '../db/buyOffers';
+import {
+  listActiveStudListings,
+  getStudListing,
+  withdrawStudListing,
+  bookingsThisSeasonCount,
+  validateStudBooking,
+  bookStud,
+  type OpenStudListingRow,
+} from '../db/stud';
 import { describeHorseRow } from './horses';
 import { placingText } from '../render/shows';
 import { formatCalendarDate } from '../lib/calendar';
@@ -557,4 +572,225 @@ export async function offerSellRoute(ctx: RequestContext, offerId: number): Prom
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.sell_to_offer);
   return redirect(`/horses/${String(horse.id)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Stud services (slice 0017 §13, Part D)
+// ---------------------------------------------------------------------------
+
+export async function studIndexRoute(ctx: RequestContext): Promise<Response> {
+  const params = new URL(ctx.request.url).searchParams;
+  const activeTab: StudTab = params.get('show') === 'yours' ? 'yours' : 'all';
+  const rawBreed = Number(params.get('breed'));
+  const breedId = Number.isInteger(rawBreed) && rawBreed > 0 ? rawBreed : null;
+  const cfg = ctx.config.values;
+
+  const [listings, breeds] = await Promise.all([listActiveStudListings(ctx.env, breedId), getBreeds(ctx.env)]);
+
+  const isMine = (stableAccountId: number | null) => stableAccountId !== null && stableAccountId === ctx.account!.id;
+  const filtered = activeTab === 'yours' ? listings.filter((l) => isMine(l.stable_account_id)) : listings;
+
+  const rows: StudListRow[] = filtered.map((l) => ({
+    studListingId: l.id,
+    stallionId: l.stallion_id,
+    name: horseDisplayName({ ...l, sex: 'stallion' as const }),
+    breedName: breeds.find((b) => b.id === l.breed_id)?.name ?? (l.is_cross ? 'Cross' : 'Unknown'),
+    colourPhrase: describeHorseRow({ ...l, sex: 'stallion' as const }, ctx.world.game_day, cfg.game_days_per_year),
+    ageLabel: ageLabelFor(l.born_game_day, ctx.world.game_day, cfg.game_days_per_year),
+    fee: l.fee,
+    stableId: l.stable_id,
+    stableName: l.stable_name,
+    isMine: isMine(l.stable_account_id),
+  }));
+
+  const breedIdsOnList = new Set(listings.map((l) => l.breed_id));
+  const pickerBreeds = breeds.filter((b) => breedIdsOnList.has(b.id)).map((b) => ({ id: b.id, name: b.name }));
+
+  return htmlResponse(
+    renderStudIndexPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: cfg.game_days_per_year,
+      rows,
+      activeTab,
+      breedId,
+      breeds: pickerBreeds,
+      notice: params.get('notice') ?? undefined,
+      error: params.get('error') ?? undefined,
+    })
+  );
+}
+
+async function buildStudListingView(ctx: RequestContext, listing: OpenStudListingRow, stallion: HorseRow, isMine: boolean): Promise<StudListingDetailView> {
+  const cfg = ctx.config.values;
+  const [breeds, conditions, summary, recentRaw, sire, dam, bookedThisSeason] = await Promise.all([
+    getBreeds(ctx.env),
+    disclosedConditionsFor(ctx, listing.stable_id, stallion.id),
+    getShowSummary(ctx.env, stallion.id),
+    listRecentResultsForHorse(ctx.env, stallion.id, 5),
+    stallion.sire_id ? getHorse(ctx.env, stallion.sire_id) : Promise.resolve(null),
+    stallion.dam_id ? getHorse(ctx.env, stallion.dam_id) : Promise.resolve(null),
+    bookingsThisSeasonCount(ctx.env, listing.id, ctx.world.season_index),
+  ]);
+
+  const breederStable = stallion.breeder_stable_id ? await getStableById(ctx.env, stallion.breeder_stable_id) : null;
+  const bredByLabel = stallion.breeder_prefix
+    ? breederStable
+      ? `${stallion.breeder_prefix} (${breederStable.name})`
+      : `${stallion.breeder_prefix} (a founding stable, not one in this game)`
+    : 'a founding stable (unbred stock)';
+
+  return {
+    studListingId: listing.id,
+    stallionId: stallion.id,
+    name: horseDisplayName(stallion),
+    breedName: breeds.find((b) => b.id === stallion.breed_id)?.name ?? (stallion.is_cross ? 'Cross' : 'Unknown'),
+    description: describeHorseRow(stallion, ctx.world.game_day, cfg.game_days_per_year),
+    ageLabel: ageLabelFor(stallion.born_game_day, ctx.world.game_day, cfg.game_days_per_year),
+    imageUrl: stallion.image_url,
+    bredByLabel,
+    stableId: listing.stable_id,
+    stableName: listing.stable_name,
+    sire: sire ? { id: sire.id, name: horseDisplayName(sire) } : null,
+    dam: dam ? { id: dam.id, name: horseDisplayName(dam) } : null,
+    starts: summary?.starts ?? 0,
+    wins: summary?.wins ?? 0,
+    bestPlacingText: summary?.best_placing != null ? placingText(summary.best_placing) : 'none yet',
+    recentResults: recentRaw.map((r) => `${placingText(r.placing)} at ${r.show_name} (${formatCalendarDate(r.scheduled_game_day, cfg.game_days_per_year)})`),
+    fee: listing.fee,
+    seasonCap: listing.season_cap,
+    bookedThisSeason,
+    conditions,
+    isMine,
+  };
+}
+
+/** Every alive mare across the viewer's own stables - not pre-filtered against §13.2's breeding
+ * rules the way validateStudBooking checks a specific mare, since the picker's job is "which of my
+ * mares", not "which of my mares happens to be eligible right now". The refusal, once one is
+ * picked, is what teaches why. */
+async function mareOptionsFor(ctx: RequestContext): Promise<EligibleMareOption[]> {
+  const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
+  const options: EligibleMareOption[] = [];
+  for (const stable of stables) {
+    const horses = await listStableHorses(ctx.env, stable.id);
+    for (const horse of horses) {
+      if (horse.sex === 'mare') options.push({ id: horse.id, stableId: stable.id, stableName: stable.name, name: horseDisplayName(horse) });
+    }
+  }
+  return options;
+}
+
+export async function studDetailRoute(ctx: RequestContext, studListingId: number): Promise<Response> {
+  const listing = await getStudListing(ctx.env, studListingId);
+  if (!listing) return notFound();
+  const stallion = await getHorse(ctx.env, listing.stallion_id);
+  if (!stallion) return notFound();
+  if (listing.active !== 1) return redirect('/market/stud');
+
+  const isMine = listing.stable_account_id !== null && listing.stable_account_id === ctx.account!.id;
+  const mareOptions = isMine ? [] : await mareOptionsFor(ctx);
+  const params = new URL(ctx.request.url).searchParams;
+  const requested = Number(params.get('mare'));
+  const selected = mareOptions.find((o) => o.id === requested) ?? mareOptions[0];
+
+  const view = await buildStudListingView(ctx, listing, stallion, isMine);
+
+  let refusal: string | undefined;
+  if (!isMine) {
+    if (mareOptions.length === 0) {
+      refusal = 'You have no mare to book. Any of your own mares can be booked, once she is old enough and not already in foal or booked elsewhere.';
+    } else {
+      const mareStable = await getStableById(ctx.env, selected.stableId);
+      const mare = await getHorse(ctx.env, selected.id);
+      const actionsLeft = actionsLeftFor(ctx);
+      if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) {
+        refusal = turnsRefusalMessage(ctx);
+      } else if (!mareStable || !mare) {
+        refusal = 'That mare is no longer available.';
+      } else {
+        refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, mareStable, stallion);
+      }
+    }
+  }
+
+  return htmlResponse(
+    renderStudDetailPage({
+      world: ctx.world,
+      isAdmin: ctx.account!.is_admin === 1,
+      actionsLeft: actionsLeftFor(ctx),
+      gameDaysPerYear: ctx.config.values.game_days_per_year,
+      listing: view,
+      mareOptions,
+      selectedMareId: selected?.id ?? null,
+      refusal,
+      error: params.get('error') ?? undefined,
+    })
+  );
+}
+
+export async function studBookRoute(ctx: RequestContext, studListingId: number): Promise<Response> {
+  const form = await parseForm(ctx.request);
+  const back = (message: string) => redirect(`/market/stud/${String(studListingId)}?error=${encodeURIComponent(message)}`);
+
+  const listing = await getStudListing(ctx.env, studListingId);
+  if (!listing) return notFound();
+  if (listing.active !== 1) return back('This stallion is no longer standing at stud.');
+
+  const stallion = await getHorse(ctx.env, listing.stallion_id);
+  if (!stallion) return notFound();
+  if (stallion.status !== 'alive' || stallion.owner_stable_id !== listing.stable_id) {
+    return back(`${horseDisplayName(stallion)} doesn't belong to that stable anymore.`);
+  }
+
+  const mareId = Number(form.mare_id);
+  if (!Number.isInteger(mareId)) return back('Choose which mare you are booking.');
+  const mare = await getHorse(ctx.env, mareId);
+  if (!mare) return notFound();
+  const mareStable = await getStableById(ctx.env, mare.owner_stable_id);
+  if (!mareStable || mareStable.account_id !== ctx.account!.id) return notFound();
+
+  if (mareStable.id === listing.stable_id) return back('A stallion and mare in the same stable use the ordinary breeding page instead.');
+
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_stud) return back(turnsRefusalMessage(ctx));
+
+  const refusal = await validateStudBooking(ctx.env, ctx.config, ctx.world.game_day, listing, ctx.world.season_index, mare, mareStable, stallion);
+  if (refusal) return back(refusal);
+
+  const stallionStable = await getStableById(ctx.env, listing.stable_id);
+  if (!stallionStable) return notFound();
+
+  await bookStud(ctx.env, {
+    studListing: listing,
+    mare,
+    mareStableId: mareStable.id,
+    mareStableName: mareStable.name,
+    mareAccountId: mareStable.account_id,
+    stallion,
+    stallionStableId: stallionStable.id,
+    stallionStableName: stallionStable.name,
+    stallionAccountId: stallionStable.account_id,
+    gameDay: ctx.world.game_day,
+    tickSeq: ctx.world.tick_seq,
+    seasonIndex: ctx.world.season_index,
+    commissionPercent: ctx.config.values.market_commission_percent,
+  });
+
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.book_stud);
+  return redirect(`/horses/${String(mare.id)}`);
+}
+
+export async function studWithdrawRoute(ctx: RequestContext, studListingId: number): Promise<Response> {
+  const listing = await getStudListing(ctx.env, studListingId);
+  if (!listing) return notFound();
+  const stable = await getStableById(ctx.env, listing.stable_id);
+  if (!stable || stable.account_id !== ctx.account!.id) return notFound();
+
+  const form = await parseForm(ctx.request);
+  await withdrawStudListing(ctx.env, studListingId, listing.stable_id, ctx.world.game_day);
+
+  if (form.return_to === 'horse') return redirect(`/horses/${String(listing.stallion_id)}?stud_notice=${encodeURIComponent('Taken off stud.')}`);
+  return redirect(`/market/stud?notice=${encodeURIComponent('Taken off stud.')}`);
 }

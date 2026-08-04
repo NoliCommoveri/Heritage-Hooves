@@ -32,11 +32,24 @@ import {
   horseCareRoute,
   horseLocationRoute,
   horseListRoute,
+  horseStudRoute,
 } from './routes/horses';
 import { stableFoundingRoute } from './routes/founding';
 import { showsIndexRoute, showRoute, showEntryResultRoute } from './routes/shows';
 import { worldIndexRoute, worldStableRoute, worldHorseRoute } from './routes/world';
-import { marketIndexRoute, marketSoldRoute, listingPageRoute, listingBuyRoute, listingWithdrawRoute, offerDetailRoute, offerSellRoute } from './routes/market';
+import {
+  marketIndexRoute,
+  marketSoldRoute,
+  listingPageRoute,
+  listingBuyRoute,
+  listingWithdrawRoute,
+  offerDetailRoute,
+  offerSellRoute,
+  studIndexRoute,
+  studDetailRoute,
+  studBookRoute,
+  studWithdrawRoute,
+} from './routes/market';
 import {
   adminHomeRoute,
   adminAccountsRoute,
@@ -63,9 +76,10 @@ import { readAdminUnlockPayload, expireAdminUnlockCookie } from './lib/session';
 import { nowUtcSeconds } from './lib/time';
 
 const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/founding|\/money|\/past|\/care|\/feed)?$/;
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location|\/list)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/care|\/location|\/list|\/stud)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
+const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;
 const SHOW_ROUTE = /^\/shows\/(\d+)(\/entries\/(\d+))?$/;
 const WORLD_STABLE_ROUTE = /^\/world\/stables\/(\d+)$/;
 const WORLD_HORSE_ROUTE = /^\/world\/horses\/(\d+)$/;
@@ -158,6 +172,7 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));
     if (sub === '/list' && method === 'POST') return withReissuedCookie(ctx, await horseListRoute(ctx, horseId));
+    if (sub === '/stud' && method === 'POST') return withReissuedCookie(ctx, await horseStudRoute(ctx, horseId));
     return notFound();
   }
 
@@ -175,6 +190,19 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     const sub = offerMatch[2];
     if (!sub && method === 'GET') return withReissuedCookie(ctx, await offerDetailRoute(ctx, offerId));
     if (sub === '/sell' && method === 'POST') return withReissuedCookie(ctx, await offerSellRoute(ctx, offerId));
+    return notFound();
+  }
+  // Slice 0017 §13 (Part D): matched before LISTING_ROUTE for the same reason OFFER_ROUTE is -
+  // "stud" never matches \d+, so order doesn't actually matter, but this keeps the market's three
+  // sub-areas visually grouped in the routing table.
+  if (path === '/market/stud' && method === 'GET') return withReissuedCookie(ctx, await studIndexRoute(ctx));
+  const studMatch = path.match(STUD_ROUTE);
+  if (studMatch) {
+    const studListingId = Number(studMatch[1]);
+    const sub = studMatch[2];
+    if (!sub && method === 'GET') return withReissuedCookie(ctx, await studDetailRoute(ctx, studListingId));
+    if (sub === '/book' && method === 'POST') return withReissuedCookie(ctx, await studBookRoute(ctx, studListingId));
+    if (sub === '/withdraw' && method === 'POST') return withReissuedCookie(ctx, await studWithdrawRoute(ctx, studListingId));
     return notFound();
   }
   const listingMatch = path.match(LISTING_ROUTE);

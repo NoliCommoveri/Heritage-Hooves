@@ -29,6 +29,7 @@ import { parseIdealVector } from '../engines/showing/score';
 import { appraise, type Appraisal, type AppraiseConfig, type KnownResult } from '../engines/market/appraise';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { ConfigValues } from '../lib/config-cache';
+import { buildWithdrawStudListingsForHorseStatement } from './stud';
 
 const LOCUS_KNOWLEDGE_PREFIX = 'locus:';
 
@@ -199,7 +200,9 @@ export function buildWithdrawListingsForHorseStatement(env: Env, horseId: number
 
 /** §2.5: integer arithmetic, never a float multiply - money is always an integer (CLAUDE.md §7).
  * Pure, so test/market/sale.test.ts can exercise it without a database. Floors, so the seller never
- * loses a fraction of a unit more than the rate says. */
+ * loses a fraction of a unit more than the rate says. src/db/stud.ts keeps its own identical copy
+ * (its own comment explains why - importing from here would cycle back, since this file already
+ * imports from stud.ts for the sale batch's stud-listing withdrawal). */
 export function commissionFor(price: number, commissionPercent: number): number {
   return Math.floor((price * commissionPercent) / 100);
 }
@@ -370,6 +373,10 @@ export function buildSaleStatements(env: Env, params: SaleStatementParams): D1Pr
     // §2.6: an unjudged entry follows the horse, so the placing and any prize money land with the
     // new owner.
     env.DB.prepare('UPDATE show_entries SET entered_by_stable_id = ? WHERE horse_id = ? AND placing IS NULL').bind(buyerStableId, listing.horse_id),
+    // Slice 0017 Part D: a sold stallion's active stud listing is withdrawn, not carried to the
+    // buyer - see buildWithdrawStudListingsForHorseStatement's own comment (src/db/stud.ts) for why
+    // this doesn't travel with the horse the way pedigree and health knowledge do.
+    ...buildWithdrawStudListingsForHorseStatement(env, listing.horse_id, gameDay),
     ...buildEventStatement(env, {
       stableId: sellerStableId,
       accountId: params.sellerAccountId,

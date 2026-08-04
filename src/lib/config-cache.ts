@@ -253,6 +253,18 @@ export interface ConfigValues {
   /** Live. The fraction of an NPC stable's current balance either buying mechanism will commit to
    * a single horse - keeps one purchase from draining a whole season's takings at once. */
   npc_buying_budget_fraction: number;
+  /** Slice 0017 Part D (§13). Live. A typo guard on the stud fee field, the same job
+   * market_max_price does for a sale's asking price. */
+  stud_max_fee: number;
+  /** Live. Only pre-fills the "offer at stud" form's season-cap field - nothing enforces it, an
+   * owner can type any whole number. */
+  stud_default_season_cap: number;
+  /** Live. Shared by an NPC's own stud fee and the suggested-fee hint on a player's own offer form
+   * (src/render/horses.ts's studCard) - one number for "what's a typical stud fee, as a fraction of
+   * a horse's worth" rather than two that could drift apart. */
+  npc_stud_fee_fraction: number;
+  /** Live. How many bookings one NPC-listed stallion accepts per world.season_index. */
+  npc_stud_season_cap: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

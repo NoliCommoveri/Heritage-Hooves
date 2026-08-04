@@ -267,6 +267,9 @@ const NUMERIC_CONFIG_KEYS = [
   'npc_market_max_listings_per_tick',
   'npc_buying_capacity_buffer',
   'npc_buying_max_purchases_per_tick',
+  'stud_max_fee',
+  'stud_default_season_cap',
+  'npc_stud_season_cap',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -298,6 +301,7 @@ const DECIMAL_CONFIG_KEYS = [
   'npc_buying_min_quality',
   'npc_buy_offer_min_quality',
   'npc_buying_budget_fraction',
+  'npc_stud_fee_fraction',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {

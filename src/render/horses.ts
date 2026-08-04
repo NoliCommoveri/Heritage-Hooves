@@ -393,6 +393,58 @@ function sellCard(params: {
     </div>`;
 }
 
+/**
+ * Slice 0017 §13 (Part D): the "Offer at stud" section, on a stallion's own page only - mirroring
+ * sellCard right above it. Booking itself happens from /market/stud/:id, not here: this card only
+ * offers the stallion or withdraws him, the same split /horses/:id/list vs /market/:id/withdraw
+ * already uses for a sale listing.
+ */
+function studCard(params: {
+  horse: HorseRow;
+  canManage: boolean;
+  studListing: { studListingId: number; fee: number; seasonCap: number; bookedThisSeason: number } | null;
+  suggestedFee: number | null;
+  defaultSeasonCap: number;
+  commissionPercent: number;
+  error?: string;
+  notice?: string;
+}): SafeHtml {
+  if (!params.canManage || params.horse.sex !== 'stallion') return raw('');
+  const h = params.horse;
+
+  if (params.studListing) {
+    return html`
+      <div class="card">
+        <h2>Standing at stud</h2>
+        ${errorBox(params.error)}
+        ${noticeBox(params.notice)}
+        <p><a href="/market/stud">Standing for ${String(params.studListing.fee)}</a>, booked ${String(params.studListing.bookedThisSeason)} of ${String(params.studListing.seasonCap)} this season.</p>
+        <p class="muted">${displayNameFor(h)} stays completely yours while he stands - breed him in your own barn too if you like, show him, call the farrier. There is no live-foal guarantee: a booking's fee is not refunded if the covering doesn't take.</p>
+        <form method="post" action="/market/stud/${String(params.studListing.studListingId)}/withdraw">
+          <input type="hidden" name="return_to" value="horse">
+          <button type="submit" class="secondary">Take him off stud</button>
+        </form>
+      </div>`;
+  }
+
+  return html`
+    <div class="card">
+      <h2>Offer at stud</h2>
+      ${errorBox(params.error)}
+      ${noticeBox(params.notice)}
+      <p class="muted">Another stable's mare can be booked to him without either of you giving up a horse. Offering is free and costs no turn; if he's booked, ${String(params.commissionPercent)}% of the fee goes to the market and the rest is yours. There is no live-foal guarantee - a booking's fee is not refunded if the covering doesn't take.</p>
+      <form method="post" action="/horses/${String(h.id)}/stud">
+        <label>Stud fee
+          <input type="text" inputmode="numeric" name="fee" value="${params.suggestedFee !== null ? String(params.suggestedFee) : ''}" required>
+        </label>
+        <label>Mares per season
+          <input type="text" inputmode="numeric" name="season_cap" value="${String(params.defaultSeasonCap)}" required>
+        </label>
+        <button type="submit">Offer ${displayNameFor(h)} at stud</button>
+      </form>
+    </div>`;
+}
+
 /** Slice 0016 §4.1: the barn list's tabs - plain links with a query parameter, no JavaScript
  * (§3). Counts come off the full, unfiltered horse list (§4.5). Geldings only appears when the
  * stable actually has one (§4.1) - there is no gelding path in the game today. */
@@ -829,6 +881,12 @@ export function renderHorsePage(params: {
   marketCommissionPercent: number;
   marketError?: string;
   marketNotice?: string;
+  /** Slice 0017 §13 (Part D): this stallion's own active stud listing, or null. */
+  studListing: { studListingId: number; fee: number; seasonCap: number; bookedThisSeason: number } | null;
+  suggestedStudFee: number | null;
+  defaultStudSeasonCap: number;
+  studError?: string;
+  studNotice?: string;
 }): SafeHtml {
   const h = params.horse;
   const coiPercent = `${(h.coi * 100).toFixed(1)}%`;
@@ -1002,6 +1060,16 @@ export function renderHorsePage(params: {
       commissionPercent: params.marketCommissionPercent,
       error: params.marketError,
       notice: params.marketNotice,
+    })}
+    ${studCard({
+      horse: h,
+      canManage: params.canManage,
+      studListing: params.studListing,
+      suggestedFee: params.suggestedStudFee,
+      defaultSeasonCap: params.defaultStudSeasonCap,
+      commissionPercent: params.marketCommissionPercent,
+      error: params.studError,
+      notice: params.studNotice,
     })}
     <h2>Pedigree</h2>
     ${pedigreeTable}

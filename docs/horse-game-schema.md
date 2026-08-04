@@ -231,6 +231,8 @@ Append-only. Every game-currency movement. Distinct from `token_ledger`, which n
 
 **Built in slice 0009, Part A** (`CLAUDE.md` §10/§11), with `kind` narrowed to what actually exists today: `opening` (a stable's founding balance, so the invariant holds with no special case), `upkeep`, `prize`, `adjustment` (`/admin/money`, §7.3 of that slice). The wider list above (`entry_fee`, `sale`, `stud_fee`, `service`, `test`, `tack`, `profession_entry`) arrives kind-by-kind as each of those stages lands — `kind` has a `CHECK` constraint, so adding one is a migration, not a schema rewrite. `src/db/ledger.ts`'s `buildLedgerStatements` is the one function in the whole codebase allowed to write `stables.balance`.
 
+Slice 0017 Part A adds `sale`, `purchase` and `commission` (`migrations/0091_ledger_add_market_kinds.sql`). **Part D (2026-08-04) adds `stud_fee_paid` and `stud_fee_received`** (`migrations/0105_ledger_add_stud_kinds.sql`) rather than this section's single sketched `stud_fee` — two kinds, one per side of the booking, matching `sale`/`purchase`'s own "the ledger is a thing a child reads" reasoning. The commission on a stud booking reuses the existing `commission` kind unchanged; it needed no widening of its own.
+
 ---
 
 ## 3. Reference data
@@ -471,6 +473,8 @@ Decay is a later config flag reading `last_trained_game_day`, which already exis
 
 **Built in slice 0011:** `cancelled_game_day` (nullable), `cancelled_reason` (nullable, e.g. `dam_died`/`sire_died`/`dam_removed`/`sire_removed`). A pregnancy is "live" when `status = 'in_progress'` **and** `cancelled_game_day IS NULL` — both halves, every time, at every call site. Written by the shared exit path both a horse's natural death and its voluntary removal go through, so a mare's in-progress pregnancy ends the moment she (or the sire) does, rather than foaling weeks later against a mother who is gone.
 
+**No `stud_booking_id` was ever added here** (slice 0017 Part D, built 2026-08-04). A pregnancy already carries `covering_id` (see the built shape under §5.2 below), and a stud booking carries the same `covering_id` - the join is one hop through `coverings` rather than a second foreign key duplicating it on `pregnancies` too.
+
 ### 5.2 `stud_bookings`
 
 - `id`, `stallion_id`, `mare_id`, `stallion_stable_id`, `mare_stable_id`
@@ -479,6 +483,8 @@ Decay is a later config flag reading `last_trained_game_day`, which already exis
 The stallion book cap (§6d) is a count of active bookings for a stallion within a `season_index`.
 
 **Built in slice 0003 as `coverings`** (the mating event, separate from `pregnancies` since one covering can produce zero, one or two rows — twins), not under this name or exactly this shape; see that slice's own document. **Slice 0011 adds the same `cancelled_game_day`/`cancelled_reason` pair** described above for `pregnancies`, with the same two-part liveness rule (`status = 'booked' AND cancelled_game_day IS NULL`) — a still-booked covering is cancelled the moment either horse involved dies or is retired away.
+
+**A second, real `stud_bookings` table was also built, in slice 0017 Part D (2026-08-04, `migrations/0104_stud_bookings.sql`)** — this section's name was already taken by `coverings`' own history above, so the two coexist rather than one being renamed. The built shape: `id`, `stud_listing_id` (→ `stud_listings`, see §7.3), `covering_id` (→ the `coverings` row this booking created), `stallion_id`, `stallion_stable_id`, `mare_id`, `mare_stable_id`, `fee`, `commission_paid` (snapshotted, same reasoning as `listings.commission_paid`), `season_index` (copied from `world.season_index` at booking time), `booked_game_day`, `created_real_ts`. Append-only — nothing ever updates a row after the insert, and the season cap (§7.3) is a live `COUNT(*)` against it rather than a running counter, so it can never drift out of sync with the rows it counts. No `status` column: unlike a sale listing, a booking itself has nothing that later changes — whether it took is a property of the `coverings` row it points at, one join away.
 
 ---
 
@@ -603,6 +609,10 @@ Updated incrementally when a class resolves. Permanent — survives the horse. T
 - `id`, `stallion_id`, `stable_id`, `fee`, `season_cap`, `bookings_this_season`, `active`
 
 §10f flags NPC stallions at stud as the cheapest and best-targeted outcross mechanism available. This table is what makes that possible without the player giving up a stall.
+
+**Built in slice 0017 Part D** (`migrations/0103_stud_listings.sql`, 2026-08-04). The built shape against the sketch: `id`, `stallion_id`, `stable_id`, `fee`, `season_cap`, `active`, `created_game_day`, `closed_game_day`, `created_real_ts` — as sketched, minus `bookings_this_season`. **No running counter column** - the same reasoning `listings` never got a `sold_count`: a live `COUNT(*)` against `stud_bookings` (§5.2's built shape) can never drift, and "boring implementation" (`CLAUDE.md` §9) means not maintaining a second number that has to be kept in step with the first. A partial unique index (`WHERE active = 1`) makes "a stallion stands at stud once at a time" true, the same pattern `idx_listings_one_open_per_horse` already establishes for a sale listing.
+
+Decided by the operator when this part was commissioned (2026-08-04): **no live-foal guarantee** (a stud fee pays for the covering, not the outcome — the same as breeding two horses in one barn today, where a missed conception is not refunded), and **the market's commission applies to a stud fee exactly as it applies to a sale**. NPC stallions stand at stud too (`src/db/npcStud.ts`), reusing every function a player-to-player booking uses — the one addition is a hard filter on the NPC quality ceiling (slice 0015 §2.4): a stud booking *combines* a stallion's genetics with a player's own stock (unlike buying an NPC horse outright, which only ever hands over that horse's own ceiling-bound quality), so an NPC stallion is withdrawn from stud the moment his realised quality crosses the ceiling, not only excluded from what `selectBreedingPairs` picks to breed.
 
 ---
 
@@ -758,7 +768,7 @@ Mapped against §13, so a session can tell what it needs rather than building th
 | Tack (now its own stage, after the market) | `tack_types`, `tack_items` |
 | Ageing and death | no new tables — `status` and `ended_game_day` already exist. **Built in slice 0011:** `horses.natural_death_game_day`, `horses.frailty_notice_game_day`; `pregnancies.cancelled_game_day`/`cancelled_reason`, `coverings.cancelled_game_day`/`cancelled_reason` |
 | NPC stables | `npc_policy`, `npc_ceiling_schedule` — **built, in full (2026-08-03)**, see §9 above |
-| Market | `listings`, `buy_offers` — **built (2026-08-03)**, Parts A-C, see §7.1/§7.2 above. `stud_listings`, `stud_bookings` still not built (Part D). |
+| Market | `listings`, `buy_offers` — **built (2026-08-03)**, Parts A-C, see §7.1/§7.2 above. `stud_listings`, `stud_bookings` — **built (2026-08-04)**, Part D, see §7.3/§5.2 above. All four parts of the market are now built. |
 | Professions | `provider_state`, `provider_inventory` |
 | Registries | `registries`, `registry_inductees` |
 | The other seven breeds | no new tables — the remaining `breeds` columns filled in for every breed but the Quarter Horse, plus their `conditions` rows |

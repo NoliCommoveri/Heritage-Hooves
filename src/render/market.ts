@@ -54,6 +54,7 @@ function marketTabs(activeTab: MarketTab, breedId: number | null): SafeHtml {
     <nav class="subnav">
       ${tabs.map((t) => html`<a href="${href(t.key)}" class="${t.key === activeTab ? 'subnav-link is-active' : 'subnav-link'}">${t.label}</a>`)}
       <a href="/market/sold" class="subnav-link">Sold</a>
+      <a href="/market/stud" class="subnav-link">Stud</a>
     </nav>`;
 }
 
@@ -212,7 +213,10 @@ function disclosureBadge(result: DisclosedCondition['result']): SafeHtml {
   return html`<span class="badge badge-danger">Affected</span>`;
 }
 
-function healthPanel(conditions: DisclosedCondition[], gameDaysPerYear: number): SafeHtml {
+/** Exported for slice 0017 Part D's stud listing detail page (renderStudDetailPage below), which
+ * reuses this unchanged rather than a second copy of §2.3's "not tested is a displayed row" rule -
+ * a mare owner deciding whether to book to a stallion needs the same disclosure a buyer does. */
+export function healthPanel(conditions: DisclosedCondition[], gameDaysPerYear: number): SafeHtml {
   if (conditions.length === 0) return raw('');
   const untested = conditions.filter((c) => c.result === null).length;
   const nothingTested = untested === conditions.length;
@@ -518,6 +522,227 @@ export function renderSoldPage(params: {
   `;
   return pageShell({
     title: 'Sold',
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Stud services (slice 0017 §13, Part D)
+// ---------------------------------------------------------------------------
+
+export interface StudListRow {
+  studListingId: number;
+  stallionId: number;
+  name: string;
+  breedName: string;
+  colourPhrase: string;
+  ageLabel: string;
+  fee: number;
+  stableId: number;
+  stableName: string;
+  isMine: boolean;
+}
+
+export type StudTab = 'all' | 'yours';
+
+function studTabs(activeTab: StudTab, breedId: number | null): SafeHtml {
+  const href = (key: StudTab): string => {
+    const qs = new URLSearchParams({ show: key });
+    if (breedId !== null) qs.set('breed', String(breedId));
+    return `/market/stud?${qs.toString()}`;
+  };
+  return html`
+    <nav class="subnav">
+      <a href="${href('all')}" class="${activeTab === 'all' ? 'subnav-link is-active' : 'subnav-link'}">All</a>
+      <a href="${href('yours')}" class="${activeTab === 'yours' ? 'subnav-link is-active' : 'subnav-link'}">Yours</a>
+      <a href="/market" class="subnav-link">Back to the market</a>
+    </nav>`;
+}
+
+export function renderStudIndexPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  rows: StudListRow[];
+  activeTab: StudTab;
+  breedId: number | null;
+  breeds: { id: number; name: string }[];
+  notice?: string;
+  error?: string;
+}): SafeHtml {
+  const rows = params.rows.map(
+    (r) => html`
+    <tr>
+      <td><a href="/market/stud/${String(r.studListingId)}">${r.name}</a> ${r.isMine ? html`<span class="badge">yours</span>` : raw('')}</td>
+      <td>${r.breedName}</td>
+      <td>${r.colourPhrase}</td>
+      <td>${r.ageLabel}</td>
+      <td><a href="/world/stables/${String(r.stableId)}">${r.stableName}</a></td>
+      <td>${String(r.fee)}</td>
+      <td>
+        ${r.isMine
+          ? html`
+            <form method="post" action="/market/stud/${String(r.studListingId)}/withdraw">
+              <input type="hidden" name="return_to" value="stud">
+              <button type="submit" class="secondary">Withdraw</button>
+            </form>`
+          : html`<a href="/market/stud/${String(r.studListingId)}">Look</a>`}
+      </td>
+    </tr>`
+  );
+
+  const body = html`
+    <h1>Stud</h1>
+    ${errorBox(params.error)}
+    ${noticeBox(params.notice)}
+    <p class="muted">Every stallion standing at stud right now. Booking a mare to one costs one turn and the fee shown - neither horse ever changes hands, and there's no refund if the covering doesn't take, the same as breeding two horses in your own barn.</p>
+    ${studTabs(params.activeTab, params.breedId)}
+    ${breedPicker(params.activeTab, params.breedId, params.breeds)}
+    ${rows.length
+      ? html`
+        <table>
+          <thead><tr><th>Stallion</th><th>Breed</th><th>Colour</th><th>Age</th><th>Stable</th><th>Fee</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+      : html`<p>${params.activeTab === 'yours' ? "You haven't offered a stallion at stud right now. Do it from his own page." : 'No stallion is standing at stud right now.'}</p>`}
+  `;
+  return pageShell({
+    title: 'Stud',
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
+}
+
+export interface EligibleMareOption {
+  id: number;
+  stableId: number;
+  stableName: string;
+  name: string;
+}
+
+export interface StudListingDetailView {
+  studListingId: number;
+  stallionId: number;
+  name: string;
+  breedName: string;
+  description: string;
+  ageLabel: string;
+  imageUrl: string | null;
+  bredByLabel: string;
+  stableId: number;
+  stableName: string;
+  sire: { id: number; name: string } | null;
+  dam: { id: number; name: string } | null;
+  starts: number;
+  wins: number;
+  bestPlacingText: string;
+  recentResults: string[];
+  fee: number;
+  seasonCap: number;
+  bookedThisSeason: number;
+  conditions: DisclosedCondition[];
+  isMine: boolean;
+}
+
+export function renderStudDetailPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  listing: StudListingDetailView;
+  /** Every mare across the viewer's own stables that could plausibly be booked - built fresh on
+   * every render, the same "must still be true the moment the button is pressed" reasoning
+   * comesWithSentences already follows. Empty when the viewer owns the listing. */
+  mareOptions: EligibleMareOption[];
+  selectedMareId: number | null;
+  /** A plain sentence saying why there is no book button, or undefined when there is one. */
+  refusal?: string;
+  error?: string;
+}): SafeHtml {
+  const l = params.listing;
+
+  const portrait = l.imageUrl
+    ? html`<img class="horse-portrait" src="${l.imageUrl}" width="480" alt="">`
+    : html`<div class="horse-portrait horse-portrait--placeholder"><p>${l.name} - no picture chosen.</p></div>`;
+
+  const pedigreeCell = (slot: { id: number; name: string } | null): SafeHtml =>
+    slot ? html`<td><a href="/world/horses/${String(slot.id)}">${slot.name}</a></td>` : html`<td class="muted">unknown</td>`;
+
+  const selected = params.mareOptions.find((o) => o.id === params.selectedMareId) ?? params.mareOptions[0];
+
+  const mareField =
+    params.mareOptions.length > 1
+      ? html`
+        <label>Which mare
+          <select name="mare_id">
+            ${params.mareOptions.map((o) => html`<option value="${String(o.id)}" ${o.id === selected?.id ? raw('selected') : raw('')}>${o.name} (${o.stableName})</option>`)}
+          </select>
+        </label>`
+      : selected
+        ? html`<input type="hidden" name="mare_id" value="${String(selected.id)}"><p>Booking <strong>${selected.name}</strong> (${selected.stableName}).</p>`
+        : raw('');
+
+  const bookBlock = l.isMine
+    ? html`
+      <div class="card">
+        <p>${l.name} is standing at stud from your own barn. Booked ${String(l.bookedThisSeason)} of ${String(l.seasonCap)} this season.</p>
+        <form method="post" action="/market/stud/${String(l.studListingId)}/withdraw">
+          <input type="hidden" name="return_to" value="stud">
+          <button type="submit" class="secondary">Take him off stud</button>
+        </form>
+      </div>`
+    : params.refusal
+      ? html`<div class="card"><p class="notice">${params.refusal}</p></div>`
+      : html`
+        <div class="card">
+          <h2>Book a mare to ${l.name}</h2>
+          <p class="muted">Booking costs one turn and takes the fee out of your stable's balance right away. Neither horse changes hands - she is covered next time she comes into season, and you'll be told whether it took. There is no refund if it doesn't.</p>
+          <form method="post" action="/market/stud/${String(l.studListingId)}/book">
+            ${mareField}
+            <button type="submit">Book for ${String(l.fee)}</button>
+          </form>
+        </div>`;
+
+  const body = html`
+    <h1>${l.name}</h1>
+    ${errorBox(params.error)}
+    <div class="card">
+      ${portrait}
+      <p>${l.description}</p>
+      <p><strong>Stud fee:</strong> ${String(l.fee)} &middot; <strong>Booked this season:</strong> ${String(l.bookedThisSeason)} of ${String(l.seasonCap)}</p>
+      <p><strong>Age:</strong> ${l.ageLabel}</p>
+      <p><strong>Breed:</strong> ${l.breedName}</p>
+      <p><strong>Bred by:</strong> ${l.bredByLabel}</p>
+      <p><strong>Standing at:</strong> <a href="/world/stables/${String(l.stableId)}">${l.stableName}</a></p>
+    </div>
+    ${healthPanel(l.conditions, params.gameDaysPerYear)}
+    <div class="card">
+      <h2>Show record</h2>
+      <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText}</p>
+      ${l.recentResults.length ? html`<ul>${l.recentResults.map((r) => html`<li>${r}</li>`)}</ul>` : raw('')}
+    </div>
+    <div class="card">
+      <h2>Pedigree</h2>
+      <table>
+        <thead><tr><th>Sire</th><th>Dam</th></tr></thead>
+        <tbody><tr>${pedigreeCell(l.sire)}${pedigreeCell(l.dam)}</tr></tbody>
+      </table>
+    </div>
+    ${bookBlock}
+    <p><a href="/market/stud">Back to stud</a></p>
+  `;
+  return pageShell({
+    title: l.name,
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,

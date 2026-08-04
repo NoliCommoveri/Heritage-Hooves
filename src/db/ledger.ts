@@ -18,7 +18,11 @@ import { nowUtcSeconds } from '../lib/time';
 // and 'commission' (what the market takes out of the seller's proceeds), widened in
 // 0091_ledger_add_market_kinds.sql. Three kinds rather than one net movement because the ledger is
 // a thing a child reads.
-export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier' | 'sale' | 'purchase' | 'commission';
+// Slice 0017 Part D (§13.4) adds two more - 'stud_fee_paid' (the mare owner's payment) and
+// 'stud_fee_received' (the stallion owner's receipt), widened in 0105_ledger_add_stud_kinds.sql. A
+// stud booking's commission reuses the existing 'commission' kind rather than a third new one - the
+// operator decided a stud fee carries the same commission a sale does.
+export type LedgerKind = 'opening' | 'upkeep' | 'prize' | 'adjustment' | 'vet' | 'farrier' | 'sale' | 'purchase' | 'commission' | 'stud_fee_paid' | 'stud_fee_received';
 
 export interface LedgerEntry {
   stableId: number;

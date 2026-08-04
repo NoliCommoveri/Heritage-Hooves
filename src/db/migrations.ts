@@ -103,6 +103,10 @@ import m0099 from '../../migrations/0099_buy_offers.sql';
 import m0100 from '../../migrations/0100_config_npc_buying.sql';
 import m0101 from '../../migrations/0101_config_founding_specialists.sql';
 import m0102 from '../../migrations/0102_consignment_injection_eligible_from.sql';
+import m0103 from '../../migrations/0103_stud_listings.sql';
+import m0104 from '../../migrations/0104_stud_bookings.sql';
+import m0105 from '../../migrations/0105_ledger_add_stud_kinds.sql';
+import m0106 from '../../migrations/0106_config_stud.sql';
 
 export interface MigrationFile {
   name: string;
@@ -222,6 +226,10 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0100_config_npc_buying.sql', sql: m0100 },
   { name: '0101_config_founding_specialists.sql', sql: m0101 },
   { name: '0102_consignment_injection_eligible_from.sql', sql: m0102 },
+  { name: '0103_stud_listings.sql', sql: m0103 },
+  { name: '0104_stud_bookings.sql', sql: m0104 },
+  { name: '0105_ledger_add_stud_kinds.sql', sql: m0105 },
+  { name: '0106_config_stud.sql', sql: m0106 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
