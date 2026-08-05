@@ -6,7 +6,7 @@ import { healthRoute } from './routes/health';
 import { migrationsRoute } from './routes/migrations';
 import { setupRoute } from './routes/setup';
 import { loginRoute, logoutRoute } from './routes/login';
-import { accountPasswordRoute } from './routes/account';
+import { accountPasswordRoute, accountPauseRoute } from './routes/account';
 import {
   stablesPickerRoute,
   stablesMarkReadRoute,
@@ -129,6 +129,13 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return redirect('/account/password');
   }
 
+  // Self-service (or admin-set) pause: every page except the unpause page itself gates behind it.
+  // /admin is deliberately exempt - it's "a visibly different place" (see withAdminPinNag below),
+  // not a player action, so a paused admin can still administer while their own play is on hold.
+  if (ctx.account.paused === 1 && path !== '/account/pause' && !path.startsWith('/admin')) {
+    return redirect('/account/pause');
+  }
+
   const response = await routeForLoggedInAccount(ctx, path, method, request, env);
 
   // The admin PIN's "re-lock on leaving" behaviour, chosen over the earlier pure time-based grace
@@ -148,6 +155,7 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
   if (!ctx.account) return notFound();
 
   if (path === '/account/password') return withReissuedCookie(ctx, await accountPasswordRoute(ctx, method));
+  if (path === '/account/pause') return withReissuedCookie(ctx, await accountPauseRoute(ctx, method));
 
   if (path === '/stables' && method === 'GET') return withReissuedCookie(ctx, await stablesPickerRoute(ctx));
   if (path === '/stables' && method === 'POST') return withReissuedCookie(ctx, await stablesMarkReadRoute(ctx));

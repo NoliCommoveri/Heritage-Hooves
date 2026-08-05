@@ -37,6 +37,7 @@ import {
   setAdminFlag,
   deleteAccountRow,
   setAccountDifficulty,
+  setAccountPaused,
 } from '../db/accounts';
 import { isDifficultyLevel } from '../engines/incidents/difficulty';
 import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
@@ -177,6 +178,15 @@ export async function adminAccountsRoute(ctx: RequestContext, method: string): P
   if (form.action === 'deactivate' || form.action === 'reactivate') {
     const accountId = Number(form.account_id);
     await setActive(ctx.env, accountId, form.action === 'reactivate');
+    return redirect('/admin/accounts?saved=1');
+  }
+
+  // Distinct from deactivate/reactivate above: a paused account can still log in, and can always
+  // unpause itself from /account/pause - this is the same setAccountPaused a player's own
+  // self-service pause calls, just driven from here instead.
+  if (form.action === 'pause' || form.action === 'unpause') {
+    const accountId = Number(form.account_id);
+    await setAccountPaused(ctx.env, accountId, form.action === 'pause');
     return redirect('/admin/accounts?saved=1');
   }
 

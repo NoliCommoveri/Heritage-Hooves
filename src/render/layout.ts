@@ -85,6 +85,7 @@ export function pageShell(params: ShellParams): SafeHtml {
           <a href="/shows">Shows</a>
           <a href="/market">Market</a>
           <a href="/world">Everyone</a>
+          <a href="/account/pause">Account</a>
           <span class="nav-spacer"></span>
           ${params.isAdmin ? html`<a href="/admin" class="admin-chip">Admin</a>` : raw('')}
           <form method="post" action="/logout" class="nav-logout"><button type="submit">Log out</button></form>

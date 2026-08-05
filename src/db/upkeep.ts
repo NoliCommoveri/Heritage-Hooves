@@ -12,6 +12,7 @@ interface StableForUpkeep {
   id: number;
   last_upkeep_game_day: number;
   feed_level: string;
+  account_paused: number;
 }
 
 /**
@@ -30,10 +31,19 @@ interface StableForUpkeep {
  * horses and more money, and nobody is playing an NPC stable, so the charge would model no
  * decision - its only effect would be to silently switch the stable off. Same exemption category
  * as noticeCareDue's farrier/vet skip for is_npc = 1 stables (slice 0013 §2.6).
+ *
+ * A paused account (migration 0174) is charged nothing either, for as long as it stays paused -
+ * but unlike the NPC exemption above, last_upkeep_game_day still advances every tick it's paused,
+ * so daysOwed reads 0 again the moment the account unpauses rather than back-billing the whole
+ * paused span in one lump the next time the tick runs.
  */
 export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number, config: Config): Promise<void> {
   const rate = config.values.upkeep_per_horse_per_game_day;
-  const stablesResult = await env.DB.prepare('SELECT id, last_upkeep_game_day, feed_level FROM stables WHERE active = 1 AND is_npc = 0').all<StableForUpkeep>();
+  const stablesResult = await env.DB.prepare(
+    `SELECT s.id, s.last_upkeep_game_day, s.feed_level, a.paused AS account_paused
+     FROM stables s JOIN accounts a ON a.id = s.account_id
+     WHERE s.active = 1 AND s.is_npc = 0`
+  ).all<StableForUpkeep>();
   const stables = stablesResult.results ?? [];
   if (stables.length === 0) return;
 
@@ -63,6 +73,15 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
 
   stables.forEach((stable, i) => {
     const daysOwed = newGameDay - stable.last_upkeep_game_day;
+
+    // Migration 0174: a paused account owes nothing for the days it was paused. The marker still
+    // advances (rather than being skipped the way an NPC stable's is) so unpausing doesn't present
+    // a lump-sum bill for the whole paused span.
+    if (stable.account_paused === 1) {
+      if (daysOwed > 0) markerStatements.push(env.DB.prepare('UPDATE stables SET last_upkeep_game_day = ? WHERE id = ?').bind(newGameDay, stable.id));
+      return;
+    }
+
     const aliveHorses = countResults[i].results[0]?.barn ?? 0;
     const pastureHorses = countResults[i].results[0]?.pasture ?? 0;
     // Slice 0013 §2.5/§7.1: feed multiplies the existing charge rather than creating a second one -
