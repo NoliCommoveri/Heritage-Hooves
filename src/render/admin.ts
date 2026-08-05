@@ -426,6 +426,13 @@ function configSections(v: Config['values']): { name: string; body: SafeHtml }[]
         <input type="text" inputmode="numeric" name="npc_show_barn_size" value="${String(v.npc_show_barn_size)}">
       </label>
       <p class="muted">The five class-shaping numbers above (noise, falloff, field size, entry cap, minimum age) are copied onto each class the moment it's created - changing them here only affects shows created afterwards, never one already scheduled or judged.</p>
+      <label>Yearling band starts at (game days old)
+        <input type="text" inputmode="numeric" name="young_horse_yearling_min_age_game_days" value="${String(v.young_horse_yearling_min_age_game_days)}">
+      </label>
+      <label>Two-year-old band starts at (game days old)
+        <input type="text" inputmode="numeric" name="young_horse_two_year_old_min_age_game_days" value="${String(v.young_horse_two_year_old_min_age_game_days)}">
+      </label>
+      <p class="muted">Slice 0025 stage 3: the yearling band runs from the first number up to one day short of the second; the two-year-old band runs from the second up to one day short of "Minimum age to show" above, which is also where the adult classes pick up - there is no gap and no day double-eligible for two bands.</p>
       `,
     },
     {

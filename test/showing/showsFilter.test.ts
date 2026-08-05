@@ -46,3 +46,34 @@ describe('classMatchesShowsFilter with a missing breed param', () => {
     expect(classMatchesShowsFilter(cls, { classType: 'all', breedId: parseBreedIdParam('1') })).toBe(false);
   });
 });
+
+// Slice 0025 stage 3: 'young' groups young_conformation and ability_test together, since a horse
+// only ever matches one age band regardless of which of the two class types it entered.
+describe('classMatchesShowsFilter with the "young" tab', () => {
+  it('matches a young_conformation class', () => {
+    const cls = { class_type: 'young_conformation' as const, discipline_code: null, breed_id: 1 };
+    expect(classMatchesShowsFilter(cls, { classType: 'young', breedId: null })).toBe(true);
+  });
+
+  it('matches an ability_test class (no breed_id at all)', () => {
+    const cls = { class_type: 'ability_test' as const, discipline_code: null, breed_id: null };
+    expect(classMatchesShowsFilter(cls, { classType: 'young', breedId: null })).toBe(true);
+  });
+
+  it('excludes an adult breed_conformation class', () => {
+    const cls = { class_type: 'breed_conformation' as const, discipline_code: null, breed_id: 1 };
+    expect(classMatchesShowsFilter(cls, { classType: 'young', breedId: null })).toBe(false);
+  });
+
+  it('excludes a discipline class', () => {
+    const cls = { class_type: 'discipline' as const, discipline_code: 'barrels', breed_id: null };
+    expect(classMatchesShowsFilter(cls, { classType: 'young', breedId: null })).toBe(false);
+  });
+
+  it('the "all" tab still matches young_conformation and ability_test too', () => {
+    expect(classMatchesShowsFilter({ class_type: 'young_conformation', discipline_code: null, breed_id: 1 }, { classType: 'all', breedId: null })).toBe(
+      true
+    );
+    expect(classMatchesShowsFilter({ class_type: 'ability_test', discipline_code: null, breed_id: null }, { classType: 'all', breedId: null })).toBe(true);
+  });
+});

@@ -17,6 +17,7 @@ function row(overrides: Partial<HorseResultRow> & Pick<HorseResultRow, 'schedule
     class_name: 'a class',
     class_type: 'breed_conformation',
     discipline_name: null,
+    ability_trait_name: null,
     final_score: 100,
     ...overrides,
   };
@@ -75,5 +76,31 @@ describe('buildShowResultGroups', () => {
   it('never mentions the show name - the class type is what a buyer needs, not a made-up venue', () => {
     const groups = buildShowResultGroups([row({ scheduled_game_day: 100, placing: 2 })], GAME_DAYS_PER_YEAR);
     expect(groups[0].items[0]).not.toContain('Stonebrook');
+  });
+
+  // Slice 0025 stage 3: young_conformation and ability_test each get their own label, deliberately
+  // distinct from the adult "Conformation" group they resemble.
+  it('groups young_conformation under "Young Horse Conformation", separate from adult Conformation', () => {
+    const groups = buildShowResultGroups(
+      [row({ scheduled_game_day: 100, placing: 1 }), row({ scheduled_game_day: 90, placing: 2, class_type: 'young_conformation' })],
+      GAME_DAYS_PER_YEAR
+    );
+    expect(groups.map((g) => g.label)).toEqual(['Conformation', 'Young Horse Conformation']);
+  });
+
+  it('groups ability_test under its own trait name, with "Test" appended', () => {
+    const groups = buildShowResultGroups(
+      [row({ scheduled_game_day: 100, placing: 1, class_type: 'ability_test', ability_trait_name: 'Speed' })],
+      GAME_DAYS_PER_YEAR
+    );
+    expect(groups.map((g) => g.label)).toEqual(['Speed Test']);
+  });
+
+  it('falls back to "Ability Test" when an ability_test row somehow has no trait name joined in', () => {
+    const groups = buildShowResultGroups(
+      [row({ scheduled_game_day: 100, placing: 1, class_type: 'ability_test', ability_trait_name: null })],
+      GAME_DAYS_PER_YEAR
+    );
+    expect(groups.map((g) => g.label)).toEqual(['Ability Test']);
   });
 });

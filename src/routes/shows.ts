@@ -57,12 +57,15 @@ export function parseBreedIdParam(raw: string | null): number | null {
 /** Slice 0016 §5.1: parses `class`/`breed` off the query string, validated against the disciplines
  * actually enabled - an unrecognised class tab reads as 'all' (Part A's "a filter is not an
  * assertion" applies here too). breed is only meaningful for 'all'/'conformation' - a discipline
- * class never carries a breed_id (§5.1's "mutually exclusive by construction"). */
+ * class never carries a breed_id (§5.1's "mutually exclusive by construction"). Slice 0025 stage 3
+ * adds 'young' (young_conformation + ability_test together, classMatchesShowsFilter's own rule) -
+ * no breed picker on that tab, since half of what it shows (ability_test) has no breed_id at all. */
 async function resolveShowsFilter(ctx: RequestContext): Promise<ShowsFilterParams> {
   const params = new URL(ctx.request.url).searchParams;
   const rawClass = params.get('class') ?? 'all';
   const disciplines = await getEnabledDisciplines(ctx.env);
-  const classType = rawClass === 'all' || rawClass === 'conformation' || disciplines.some((d) => d.code === rawClass) ? rawClass : 'all';
+  const classType =
+    rawClass === 'all' || rawClass === 'conformation' || rawClass === 'young' || disciplines.some((d) => d.code === rawClass) ? rawClass : 'all';
   const usesBreed = classType === 'all' || classType === 'conformation';
   const breedId = usesBreed ? parseBreedIdParam(params.get('breed')) : null;
   return { classType, breedId };

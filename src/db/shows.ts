@@ -15,6 +15,8 @@ import { parseDisciplineAptitudes, aptitudeFor } from '../engines/breeds/identit
 import { assignPlacings } from '../engines/showing/placing';
 import { noiseForEntry } from '../engines/showing/noise';
 import { conformationValues, abilityValues, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import { ABILITY_TRAITS } from '../engines/conformation/traits';
+import { abilityLabelFor, type ConformationLabelBands } from '../engines/conformation/labels';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
@@ -22,6 +24,8 @@ import { getHorse, horseDisplayName, type HorseRow } from './horses';
 import { getBreedsInPlay, getBreeds } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
+import { getAbilityTraits } from './quantitativeTraits';
+import { buildAbilityWordUpsertStatement, type AbilityWordLabel } from './abilityTests';
 import { listNpcStableHorses } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
@@ -52,9 +56,18 @@ export interface ShowClassRow {
   id: number;
   show_id: number;
   name: string;
-  class_type: 'breed_conformation' | 'discipline';
+  /** Slice 0025 stage 3 adds 'young_conformation' (an in-hand conformation class restricted to a
+   * yearling or two-year-old age band, scored exactly like breed_conformation) and 'ability_test'
+   * (a single ABILITY_TRAITS trait, scored exactly like a discipline). Migration 0161's CHECK
+   * enforces which columns each of the four requires. */
+  class_type: 'breed_conformation' | 'discipline' | 'young_conformation' | 'ability_test';
   breed_id: number | null;
   discipline_code: string | null;
+  /** Non-null for exactly 'ability_test' - which ABILITY_TRAITS code this class measures. */
+  ability_trait_code: TraitCode | null;
+  /** Non-null for exactly 'young_conformation'/'ability_test' - display/grouping metadata only;
+   * min_age_game_days/max_age_game_days are what eligibility and judging actually read. */
+  age_band: 'yearling' | 'two_year_old' | null;
   min_age_game_days: number;
   max_age_game_days: number | null;
   sex_restriction: 'mare' | 'stallion' | 'gelding' | null;
@@ -63,9 +76,9 @@ export interface ShowClassRow {
   target_field_size: number;
   max_entries_per_stable: number;
   judge_id: number;
-  /** Null for a discipline class (§6.4's CHECK enforces the pairing). */
+  /** Null for a discipline or ability_test class (migration 0161's CHECK enforces the pairing). */
   ideal_vector: string | null;
-  /** Null for a breed_conformation class. */
+  /** Null for a breed_conformation or young_conformation class. */
   ability_weights: string | null;
   ideal_falloff: number;
   noise_sd: number;
@@ -140,12 +153,16 @@ export interface HorseResultRow {
   class_name: string;
   /** Which grouping this result belongs to on the horse page's Show record card (§ grouping by
    * discipline/conformation): 'breed_conformation' groups under "Conformation", 'discipline' groups
-   * under the discipline's own name (discipline_name below). */
-  class_type: 'breed_conformation' | 'discipline';
-  /** Null for a breed_conformation result. The discipline's display name, e.g. "Barrel Racing" -
+   * under the discipline's own name (discipline_name below), 'young_conformation' groups under
+   * "Young Horse Conformation", 'ability_test' groups under its trait's own name (ability_trait_name
+   * below) - slice 0025 stage 3. */
+  class_type: 'breed_conformation' | 'discipline' | 'young_conformation' | 'ability_test';
+  /** Null for anything but a discipline result. The discipline's display name, e.g. "Barrel Racing" -
    * joined in here rather than looked up separately since listRecentResultsForHorse already reads
    * one row per result. */
   discipline_name: string | null;
+  /** Null for anything but an ability_test result. The trait's display name, e.g. "Speed". */
+  ability_trait_name: string | null;
   scheduled_game_day: number;
   placing: number;
   final_score: number;
@@ -197,17 +214,27 @@ export async function listRecentJudgedShows(env: Env, limit: number): Promise<Sh
 // ---------------------------------------------------------------------------
 
 export interface ShowsFilterParams {
-  /** 'all' | 'conformation' | a discipline code. */
+  /** 'all' | 'conformation' | 'young' | a discipline code. 'young' (slice 0025 stage 3) is
+   * young_conformation and ability_test together - the slice's own "young-horse classes" grouping,
+   * kept as one tab rather than splitting it the way a breed/discipline picker would, since a horse
+   * only ever matches one age band at a time regardless of which of the two class types it entered. */
   classType: string;
-  /** Ignored (by construction - §5.1) unless classType is 'all' or 'conformation', since a
-   * discipline class never carries a breed_id. */
+  /** Ignored (by construction - §5.1) unless classType is 'all' or 'conformation', since neither a
+   * discipline nor a young-horse class carries a breed_id filter worth offering (ability_test has
+   * none at all, and young_conformation's own breed picker would be confusing shared with
+   * ability_test on the same tab). */
   breedId: number | null;
 }
 
 /** The one predicate every filtered view of a show's classes shares. */
-export function classMatchesShowsFilter(cls: Pick<ShowClassRow, 'class_type' | 'discipline_code' | 'breed_id'>, filter: ShowsFilterParams): boolean {
+export function classMatchesShowsFilter(
+  cls: Pick<ShowClassRow, 'class_type' | 'discipline_code' | 'breed_id'>,
+  filter: ShowsFilterParams
+): boolean {
   if (filter.classType === 'conformation') {
     if (cls.class_type !== 'breed_conformation') return false;
+  } else if (filter.classType === 'young') {
+    if (cls.class_type !== 'young_conformation' && cls.class_type !== 'ability_test') return false;
   } else if (filter.classType !== 'all') {
     if (cls.discipline_code !== filter.classType) return false;
   }
@@ -340,12 +367,13 @@ export async function getShowSummary(env: Env, horseId: number): Promise<HorseSh
 export async function listRecentResultsForHorse(env: Env, horseId: number, limit: number): Promise<HorseResultRow[]> {
   const result = await env.DB.prepare(
     `SELECT se.id AS entry_id, s.id AS show_id, s.name AS show_name, sc.id AS class_id, sc.name AS class_name,
-            sc.class_type, d.name AS discipline_name,
+            sc.class_type, d.name AS discipline_name, qt.name AS ability_trait_name,
             s.scheduled_game_day, se.placing, se.final_score
      FROM show_entries se
      JOIN show_classes sc ON sc.id = se.class_id
      JOIN shows s ON s.id = sc.show_id
      LEFT JOIN disciplines d ON d.code = sc.discipline_code
+     LEFT JOIN quantitative_traits qt ON qt.code = sc.ability_trait_code
      WHERE se.horse_id = ? AND se.placing IS NOT NULL
      ORDER BY s.scheduled_game_day DESC
      LIMIT ?`
@@ -395,15 +423,19 @@ export async function listShowsForAdmin(env: Env, limit: number): Promise<AdminS
 // Entering a horse
 // ---------------------------------------------------------------------------
 
-/** Slice 0012 §7.1/§8.2: branches on the class's own class_type - conformationValues for a
- * breed_conformation class, abilityValues for a discipline one. Both go through the identical
- * potential -> geneticValue -> realization -> expressedValue pipeline; only which trait list gets
- * mapped differs. */
+/** Slice 0012 §7.1/§8.2 (widened by slice 0025 stage 3): branches on the class's own class_type -
+ * conformationValues for a breed_conformation or young_conformation class, abilityValues for a
+ * discipline or ability_test one. Both go through the identical potential -> geneticValue ->
+ * realization -> expressedValue pipeline; only which trait list gets mapped differs. */
+export function classUsesAbilityScoring(classType: ShowClassRow['class_type']): boolean {
+  return classType === 'discipline' || classType === 'ability_test';
+}
+
 function expressedTraitsForClass(horse: HorseRow, classType: ShowClassRow['class_type'], gameDay: number, config: RealizationConfig, gameDaysPerYear: number): Partial<Record<TraitCode, number>> {
   const genotype = parseGenotype(horse.genotype);
   const ageYears = (gameDay - horse.born_game_day) / gameDaysPerYear;
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
-  const values = classType === 'discipline' ? abilityValues(genotype, noise, ageYears, horse.coi, config) : conformationValues(genotype, noise, ageYears, horse.coi, config);
+  const values = classUsesAbilityScoring(classType) ? abilityValues(genotype, noise, ageYears, horse.coi, config) : conformationValues(genotype, noise, ageYears, horse.coi, config);
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
   return expressed;
@@ -532,6 +564,25 @@ export async function createDueShows(env: Env, gameDay: number, config: Config):
   }
 }
 
+/** Slice 0025 stage 3 §7.3: the two young-horse age bands, derived from the two boundary config keys
+ * plus the existing adult conformation min age - see migration 0163's own comment for why there is
+ * no separate "two-year-old max" key. Exported for the eligibility-message rendering in
+ * render/shows.ts, which needs the same arithmetic to describe a class's own age band in years. */
+export interface YoungHorseAgeBands {
+  yearling: { min: number; max: number };
+  twoYearOld: { min: number; max: number };
+}
+
+export function youngHorseAgeBands(config: Config['values']): YoungHorseAgeBands {
+  const yearlingMin = config.young_horse_yearling_min_age_game_days;
+  const twoYearOldMin = config.young_horse_two_year_old_min_age_game_days;
+  const adultMin = config.show_conformation_min_age_game_days;
+  return {
+    yearling: { min: yearlingMin, max: twoYearOldMin - 1 },
+    twoYearOld: { min: twoYearOldMin, max: adultMin - 1 },
+  };
+}
+
 async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: number, config: Config): Promise<void> {
   const breeds = await getBreedsInPlay(env);
   // §4.2: a class is only created for a breed whose ideal_vector is non-null. Today that is the
@@ -544,20 +595,28 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
   // show_discipline_classes_per_show. Today that's Barrel Racing and nothing else (§5.1/§6.3) -
   // the other five disciplines arrive as pure data, no code change here either.
   const enabledDisciplines = (await getEnabledDisciplines(env)).slice(0, config.values.show_discipline_classes_per_show);
+  // Slice 0025 stage 3: one ability_test class per ABILITY_TRAITS trait, always - unlike a
+  // discipline, an ability test does not depend on any discipline being enabled (a Show Jumping
+  // fan wants a jump_scope test even before Show Jumping itself has enough players to run).
+  const abilityTraitNames = await getAbilityTraits(env);
   if (eligibleBreeds.length === 0 && enabledDisciplines.length === 0) return;
 
   // Slice 0024 §2: conformation and discipline classes draw from separate judge pools now (a
   // discipline judge's ability_weights would contribute nothing to a breed_conformation score, and
   // vice versa) - each pool only needs to be non-empty when a class of its type is actually being
-  // created below.
+  // created below. Slice 0025 stage 3: young_conformation reuses the conformation pool (it is
+  // scored exactly like breed_conformation) and ability_test reuses the discipline pool (scored
+  // exactly like discipline) - ability_test classes are always created once any show is, so the
+  // discipline pool is required unconditionally here, not only when enabledDisciplines.length > 0.
   const conformationJudges = await getJudges(env, 'conformation');
   if (eligibleBreeds.length > 0 && conformationJudges.length === 0) {
     throw new Error('createShowIfMissing: no active conformation judges are seeded');
   }
   const disciplineJudges = await getJudges(env, 'discipline');
-  if (enabledDisciplines.length > 0 && disciplineJudges.length === 0) {
+  if (disciplineJudges.length === 0) {
     throw new Error('createShowIfMissing: no active discipline judges are seeded');
   }
+  const ageBands = youngHorseAgeBands(config.values);
 
   const { venue, name } = calendarEntryFor(scheduledGameDay, config.values.show_interval_game_days);
   const seed = randomSeed();
@@ -645,6 +704,92 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
     );
   });
 
+  // Slice 0025 stage 3 §7.3/§7.4: young_conformation (one per eligible breed per age band) and
+  // ability_test (one per ABILITY_TRAITS trait per age band) classes, numbered after every breed and
+  // discipline class - continuing the same class_N/judge_N sub-seed labelling, never restarting it.
+  const youngBands: { band: 'yearling' | 'two_year_old'; label: string; min: number; max: number }[] = [
+    { band: 'yearling', label: 'Yearling', min: ageBands.yearling.min, max: ageBands.yearling.max },
+    { band: 'two_year_old', label: 'Two-Year-Old', min: ageBands.twoYearOld.min, max: ageBands.twoYearOld.max },
+  ];
+  let ordinalCursor = eligibleBreeds.length + enabledDisciplines.length;
+
+  eligibleBreeds.forEach((breed) => {
+    youngBands.forEach((band) => {
+      ordinalCursor += 1;
+      const ordinal = ordinalCursor;
+      const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
+      const judge = conformationJudges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(conformationJudges.length)];
+
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO show_classes (
+             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, min_age_game_days, max_age_game_days,
+             sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
+             judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+           ) VALUES (
+             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'young_conformation', ?, NULL, NULL, ?, ?, ?,
+             NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
+           )`
+        ).bind(
+          `${band.label} ${breed.name} Conformation`,
+          breed.id,
+          band.band,
+          band.min,
+          band.max,
+          config.values.show_target_field_size,
+          config.values.show_max_entries_per_stable,
+          judge.id,
+          breed.ideal_vector,
+          config.values.show_ideal_falloff,
+          config.values.show_noise_sd,
+          classSeed,
+          prizeSchedule
+        )
+      );
+    });
+  });
+
+  // ability_test classes reuse the discipline judge pool and scoreAbilityEntry's own single-trait
+  // weight vector - a key missing from `weights` already reads 0 (src/engines/showing/abilityScore.ts),
+  // so writing only the one trait that matters is enough.
+  ABILITY_TRAITS.forEach((trait) => {
+    const traitName = abilityTraitNames.find((t) => t.code === trait)?.name ?? trait;
+    youngBands.forEach((band) => {
+      ordinalCursor += 1;
+      const ordinal = ordinalCursor;
+      const classSeed = deriveSeed(seed, `class_${String(ordinal)}`);
+      const judge = disciplineJudges[makeRng(deriveSeed(seed, `judge_${String(ordinal)}`)).int(disciplineJudges.length)];
+      const abilityWeights = JSON.stringify({ v: 1, traits: { [trait]: 1 } });
+
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO show_classes (
+             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, min_age_game_days, max_age_game_days,
+             sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
+             judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+           ) VALUES (
+             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'ability_test', NULL, NULL, ?, ?, ?, ?,
+             NULL, 1, 0, ?, ?, ?, NULL, ?, ?, ?, 'scheduled', NULL, ?, ?
+           )`
+        ).bind(
+          `${band.label} ${traitName} Test`,
+          trait,
+          band.band,
+          band.min,
+          band.max,
+          config.values.show_target_field_size,
+          config.values.show_max_entries_per_stable,
+          judge.id,
+          abilityWeights,
+          config.values.show_ideal_falloff,
+          config.values.show_noise_sd,
+          classSeed,
+          prizeSchedule
+        )
+      );
+    });
+  });
+
   try {
     await env.DB.batch(statements);
   } catch (err) {
@@ -674,6 +819,14 @@ export async function judgeDueShowClasses(env: Env, gameDay: number, config: Con
 async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, config: Config): Promise<void> {
   const gameDaysPerYear = config.values.game_days_per_year;
   const conformationConfig: RealizationConfig = config.values;
+  // Slice 0025 stage 3 §7.4: the same Poor/Weak/Acceptable/Good/Outstanding band edges the
+  // Conformation card already uses - one vocabulary, not a second set of tunables (CLAUDE.md §13).
+  const abilityBands: ConformationLabelBands = {
+    outstandingMin: config.values.conformation_label_outstanding_min,
+    goodMin: config.values.conformation_label_good_min,
+    acceptableMin: config.values.conformation_label_acceptable_min,
+    weakMin: config.values.conformation_label_weak_min,
+  };
 
   const existingEntries = await getEntriesForClass(env, cls.id);
   const alreadyIn = new Set(existingEntries.map((e) => e.horse_id));
@@ -751,27 +904,35 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   // Care card would show.
   const acuteDeltaByHorseId = await acuteCarePenaltyMapForHorses(env, Array.from(horseById.keys()), config.values.acute_incident_care_penalty);
 
-  // Slice 0012 §8.2: branch once, at the top, on class_type. Everything after this block (NPC
-  // top-up already happened above, placings/summaries/prizes/events below) is shared and
-  // unchanged - it does not care which scorer produced the numbers.
-  const isDiscipline = cls.class_type === 'discipline';
-  const ideal = isDiscipline ? null : parseIdealVector(cls.ideal_vector!);
-  const abilityWeights = isDiscipline ? parseAbilityWeights(cls.ability_weights!) : null;
+  // Slice 0012 §8.2 (widened by slice 0025 stage 3): branch once, at the top, on class_type.
+  // Everything after this block (NPC top-up already happened above, placings/summaries/prizes/events
+  // below) is shared and unchanged - it does not care which scorer produced the numbers.
+  // usesAbilityScoring covers 'discipline' and 'ability_test' (both scored by scoreAbilityEntry);
+  // isRealDiscipline is narrower - only a true 'discipline' class has a discipline_code a breed
+  // aptitude can be looked up against, so that modifier stays scoped to it alone (an ability_test
+  // measures raw ability, not suitability for a specific discipline, and has no discipline_code to
+  // look one up with).
+  const usesAbilityScoring = classUsesAbilityScoring(cls.class_type);
+  const isRealDiscipline = cls.class_type === 'discipline';
+  const ideal = usesAbilityScoring ? null : parseIdealVector(cls.ideal_vector!);
+  const abilityWeights = usesAbilityScoring ? parseAbilityWeights(cls.ability_weights!) : null;
   const judge = await getJudgeById(env, cls.judge_id);
   const judgeWeights = judge ? parseJudgeWeights(judge.trait_weights) : {};
   // Slice 0024 §3: the discipline counterpart to judgeWeights above - a judge row's ability_weights
   // is only ever non-null for a 'discipline'-kind judge (§2), which is the only kind judgeOneClass
-  // ever assigns to a discipline class, so this is never read against a conformation judge's null.
+  // ever assigns to a discipline or ability_test class, so this is never read against a conformation
+  // judge's null.
   const judgeAbilityWeights = judge?.ability_weights ? parseAbilityWeights(judge.ability_weights) : {};
   const judgeCode = judge?.code ?? 'unknown';
 
   // Migration 0143: one parse per BREED for the whole class, not one per horse - getBreeds is a
   // cached eight-row read and every horse in a discipline class is looked up against it. Built only
-  // for a discipline class; a breed_conformation class admits one breed and judges it against its
-  // own ideal_vector, so an aptitude there would multiply every entry by the same number (see
-  // ScoreAbilityEntryParams.aptitudeModifier's own comment).
+  // for a real discipline class; a breed_conformation/young_conformation class admits one breed and
+  // judges it against its own ideal_vector, so an aptitude there would multiply every entry by the
+  // same number (see ScoreAbilityEntryParams.aptitudeModifier's own comment), and an ability_test has
+  // no discipline_code for an aptitude to mean anything against.
   const aptitudeByBreedId = new Map<number, ReturnType<typeof parseDisciplineAptitudes>>();
-  if (isDiscipline) {
+  if (isRealDiscipline) {
     for (const breed of await getBreeds(env)) {
       aptitudeByBreedId.set(breed.id, parseDisciplineAptitudes(breed.discipline_aptitudes));
     }
@@ -785,6 +946,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     careModifierApplied: number;
     ageModifierApplied: number;
     breakdown: Record<string, unknown>;
+    /** Slice 0025 stage 3 §7.4: set only for an 'ability_test' entry - the true expressed value
+     * (before noise/care/age) for the one trait this class measures, banded into the same permanent
+     * word src/db/abilityTests.ts writes to horse_ability_words. */
+    abilityWord?: { traitCode: TraitCode; label: AbilityWordLabel };
   }
 
   const scored: Scored[] = [];
@@ -807,12 +972,13 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const careBreakdown = { modifier: care.modifier, farrier_status: care.farrier.status, wellness_status: care.wellness.status };
     const ageBreakdown = { modifier: age.modifier, phase: age.phase, age_years: age.ageYears };
 
-    if (isDiscipline) {
+    if (usesAbilityScoring) {
       // A horse whose breed_id is null, or whose breed has no aptitudes decided, or that is a
       // cross, all land on NEUTRAL_APTITUDE - see aptitudeFor, which owns that rule so this loop
-      // does not have to restate it.
-      const breedAptitudes = horse.breed_id === null ? {} : (aptitudeByBreedId.get(horse.breed_id) ?? {});
-      const aptitude = aptitudeFor(breedAptitudes, cls.discipline_code, horse.is_cross === 1);
+      // does not have to restate it. An ability_test class never applies one at all - see
+      // isRealDiscipline's own comment above.
+      const breedAptitudes = !isRealDiscipline || horse.breed_id === null ? {} : (aptitudeByBreedId.get(horse.breed_id) ?? {});
+      const aptitude = isRealDiscipline ? aptitudeFor(breedAptitudes, cls.discipline_code, horse.is_cross === 1) : 1.0;
       const result = scoreAbilityEntry({
         expressed,
         weights: abilityWeights!,
@@ -822,6 +988,18 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         ageModifier: age.modifier,
         aptitudeModifier: aptitude,
       });
+      // Slice 0025 stage 3 §7.4: the permanent word, banded off the true expressed value for the
+      // one trait this class measures - never the noisy/modified finalScore, same discipline
+      // conformationLabelFor already holds (CLAUDE.md §13).
+      const abilityWord =
+        cls.class_type === 'ability_test' && cls.ability_trait_code
+          ? {
+              traitCode: cls.ability_trait_code,
+              // eligible is always true here - this class exists to test exactly this trait, so
+              // abilityLabelFor's 'unknown' branch (an untested trait) can never fire.
+              label: abilityLabelFor(expressed[cls.ability_trait_code] ?? 0, abilityBands, true) as AbilityWordLabel,
+            }
+          : undefined;
       scored.push({
         horseId: horse.id,
         rawScore: result.rawScore,
@@ -829,12 +1007,14 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         finalScore: result.finalScore,
         careModifierApplied: care.modifier,
         ageModifierApplied: age.modifier,
+        abilityWord,
         // No target column - there is no target for an ability trait, only a weight and a
         // contribution.
         breakdown: {
           v: 1,
           kind: 'ability',
           discipline_code: cls.discipline_code,
+          ability_trait_code: cls.ability_trait_code,
           traits: result.traits.map((t) => ({ code: t.code, expressed: t.expressed, weight: t.weight, contribution: t.contribution })),
           weight_sum: result.weightSum,
           raw_score: result.rawScore,
@@ -844,8 +1024,9 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           age: ageBreakdown,
           // Snapshotted into the breakdown because the aptitude itself is NOT snapshotted onto the
           // class (migration 0143's own comment) - if the operator retunes a breed later, this row
-          // is the only remaining record of what the horse was actually judged with.
-          aptitude: { modifier: aptitude, breed_id: horse.breed_id, is_cross: horse.is_cross === 1 },
+          // is the only remaining record of what the horse was actually judged with. Only present for
+          // a real discipline class - see isRealDiscipline's own comment above.
+          aptitude: isRealDiscipline ? { modifier: aptitude, breed_id: horse.breed_id, is_cross: horse.is_cross === 1 } : undefined,
         },
       });
     } else {
@@ -976,6 +1157,24 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
            starts = excluded.starts, wins = excluded.wins, placings = excluded.placings,
            best_placing = excluded.best_placing, last_shown_game_day = excluded.last_shown_game_day`
       ).bind(horseId, starts, wins, JSON.stringify(placings), bestPlacing, gameDay)
+    );
+  }
+
+  // Slice 0025 stage 3 §7.4: the permanent ability word, upserted once per horse per trait - every
+  // entry in an 'ability_test' class carries one (scored.abilityWord above), never entries in any
+  // other class_type.
+  for (const s of scored) {
+    if (!s.abilityWord) continue;
+    const entryId = entryIdByHorseId.get(s.horseId);
+    if (entryId === undefined) continue;
+    statements.push(
+      buildAbilityWordUpsertStatement(env, {
+        horseId: s.horseId,
+        traitCode: s.abilityWord.traitCode,
+        label: s.abilityWord.label,
+        entryId,
+        gameDay,
+      })
     );
   }
 

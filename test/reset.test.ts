@@ -13,6 +13,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   listings: ['horses', 'stables'],
   import_candidates: ['import_offers', 'horses'],
   import_offers: ['stables', 'accounts', 'breeds'],
+  horse_ability_words: ['horses', 'show_entries'],
   show_entries: ['show_classes', 'horses', 'stables'],
   horse_show_summary: ['horses'],
   show_classes: ['shows', 'breeds', 'judges'],
