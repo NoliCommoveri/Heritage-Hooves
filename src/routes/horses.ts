@@ -63,8 +63,10 @@ import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantita
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
 import { evaluateHorse, wouldSharpen, type StoredEvaluation } from '../engines/conformation/evaluation';
+import { bandForTraitScore } from '../engines/conformation/labels';
+import { foalExpressedDistribution, centralInterval } from '../engines/genetics/foalPrediction';
 import { buildEvaluationStatements, evaluationCost, getLatestEvaluation } from '../db/evaluations';
-import { parseIdealVector } from '../engines/showing/score';
+import { parseIdealVector, traitScoreFor } from '../engines/showing/score';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { ConfigValues } from '../lib/config-cache';
 import {
@@ -503,10 +505,12 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
  *  - `stallionKnowledgeStableId` - whose horse_knowledge stands for what is known about him. His
  *    own owner's, for a stud listing: that is the disclosure the market already makes on his stud
  *    page (slice 0017 §2.3), not a widening of it.
- *  - `stallionConformationKnown` - false for somebody else's stallion. His conformation is shown
- *    nowhere else in the game to anyone but his owner (not on /world/horses/:id, not on his stud
- *    page), so his column reads Unknown rather than quietly becoming the one screen that tells you.
- *    His show record, which IS public, is one link away on his stud page.
+ *  - `stallionConformationKnown` - **true since 2026-08-05 for a stallion standing at stud**, false
+ *    for anyone else's stallion. It used to be false everywhere, on the reasoning that his
+ *    conformation was shown nowhere else in the game to anyone but his owner. That reasoning expired
+ *    when stud listings started showing those words for free (src/db/conformationLabels.ts): the
+ *    preview would otherwise read Unknown down his column while his own stud page printed the same
+ *    words in full. A stallion who is neither at stud nor for sale still reads Unknown.
  */
 async function buildBreedPreview(
   ctx: RequestContext,
@@ -560,11 +564,37 @@ async function buildBreedPreview(
     stallionConformationKnown && (stallionShowSummary?.starts ?? 0) >= 1,
     ctx.config.values
   );
-  const conformationRows = mareConformation.map((row) => ({
-    name: row.name,
-    mareLabel: CONFORMATION_LABEL_TEXT[mareLabels.get(row.code) ?? 'unknown'],
-    stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabels.get(row.code) ?? 'unknown'],
-  }));
+  // 2026-08-05: the third column - what this pairing is actually likely to throw. The operator's
+  // decision was to fix the expectation rather than the genetics ("they still say it's too random
+  // whether babies born are good or not"), so nothing about inheritance changed; this is an exact
+  // calculation over the foal's own distribution (src/engines/genetics/foalPrediction.ts).
+  //
+  // A foal has no breed of its own until it exists, so the range is only computed for a same-breed
+  // pairing, judged against that breed's standard. A cross has no single standard to be judged
+  // against - which is a real fact about the game, not a gap, and the row says so rather than
+  // quietly picking the dam's breed.
+  const sameBreedIdeal = mare.breed_id !== null && mare.breed_id === stallion.breed_id && mareBreed?.ideal_vector ? parseIdealVector(mareBreed.ideal_vector) : null;
+  const mareGenotype = parseGenotype(mare.genotype);
+  const stallionGenotype = parseGenotype(stallion.genotype);
+
+  const conformationRows = mareConformation.map((row) => {
+    const mareLabel = mareLabels.get(row.code) ?? 'unknown';
+    const stallionLabel = stallionLabels.get(row.code) ?? 'unknown';
+    return {
+      name: row.name,
+      mareLabel: CONFORMATION_LABEL_TEXT[mareLabel],
+      stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabel],
+      // The knowledge boundary the operator chose (Q27): the range is honest only if both parents
+      // are actually known, so an unknown parent makes the foal column Unknown too rather than
+      // handing over a prediction built from values this player has not earned the right to see.
+      foalRange:
+        mareLabel === 'unknown' || stallionLabel === 'unknown'
+          ? 'Unknown'
+          : sameBreedIdeal
+            ? foalRangeText(mareGenotype, stallionGenotype, row.code, coi, sameBreedIdeal, ctx.config.values)
+            : 'No single standard',
+    };
+  });
 
   return {
     mareId: mare.id,
@@ -746,9 +776,13 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), error: 'That stallion is not standing at stud anymore.' });
     }
 
+    // 2026-08-05: his conformation words are now public on his stud listing (the operator's oldest
+    // daughter's point - you can look a stud over before paying), so the preview shows them here
+    // too rather than reading Unknown down his column while /market/stud/:id prints them in full.
+    // Still the same gate: he must have started at least one show, or the words are Unknown anyway.
     const preview = await buildBreedPreview(ctx, stableId, mare, outsideStallion, describe, {
       stallionKnowledgeStableId: listing.stable_id,
-      stallionConformationKnown: false,
+      stallionConformationKnown: true,
     });
     // Shown in place of the Book button rather than after pressing it - the refusal is about this
     // mare, and a player with four of them needs to be able to try another without being bounced to
@@ -2065,6 +2099,48 @@ export async function horseEvaluateRoute(ctx: RequestContext, horseId: number): 
 
   return redirect(`${back}${back.includes('?') ? '&' : '?'}evaluated=1`);
 }
+
+/** The share of foals a predicted range is drawn to cover. 0.8 is the operator's own number:
+ * "say what they'd get 80% of the time". */
+const FOAL_RANGE_COVERAGE = 0.8;
+
+/**
+ * The plain-words prediction for one trait: the best and worst label inside the central 80% of the
+ * foal distribution. Taking the extremes of the SET of labels rather than the labels at the two ends
+ * of the value interval is the whole subtlety here - a trait's label is not monotonic in its value
+ * (too far above the breed's target is as bad as too far below), so an interval that straddles the
+ * target contains its best word in the middle, not at an edge.
+ */
+function foalRangeText(
+  sire: Genotype,
+  dam: Genotype,
+  trait: TraitCode,
+  coi: number,
+  ideal: ReturnType<typeof parseIdealVector>,
+  cfg: ConfigValues
+): string {
+  const target = ideal[trait];
+  if (target === undefined) return 'Unknown';
+
+  const distribution = foalExpressedDistribution({ sire, dam, trait, coi, noiseSd: cfg.conformation_noise_sd, config: cfg });
+  const { low, high } = centralInterval(distribution, FOAL_RANGE_COVERAGE);
+  const bands = conformationLabelBands(cfg);
+
+  let best = -1;
+  let worst = LABEL_ORDER.length;
+  for (let value = low; value <= high; value++) {
+    const index = LABEL_ORDER.indexOf(bandForTraitScore(traitScoreFor(value, target.target, cfg.show_ideal_falloff), bands));
+    if (index > best) best = index;
+    if (index < worst) worst = index;
+  }
+  if (best < 0) return 'Unknown';
+
+  const worstText = CONFORMATION_LABEL_TEXT[LABEL_ORDER[worst]];
+  const bestText = CONFORMATION_LABEL_TEXT[LABEL_ORDER[best]];
+  return worstText === bestText ? worstText : `${worstText} to ${bestText}`;
+}
+
+const LABEL_ORDER: ConformationLabel[] = ['poor', 'weak', 'acceptable', 'good', 'outstanding'];
 
 /** "Good", or "Weak to Good" while the evaluator is still hedging. */
 function verdictText(verdict: { low: ConformationLabel; high: ConformationLabel }): string {

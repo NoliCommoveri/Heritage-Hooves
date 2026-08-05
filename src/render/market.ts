@@ -10,6 +10,8 @@
 // /market/:id or /world.
 
 import { html, raw, SafeHtml } from '../lib/html';
+import type { ConformationLabelRow } from '../db/conformationLabels';
+import type { EvaluationSectionView } from './horses';
 import { pageShell, errorBox, noticeBox } from './layout';
 import { showResultGroupsHtml, type ShowResultGroup } from './shows';
 import type { WorldRow } from '../db/world';
@@ -239,6 +241,62 @@ export function healthPanel(conditions: DisclosedCondition[], gameDaysPerYear: n
     </div>`;
 }
 
+/**
+ * 2026-08-05: what a stallion's conformation is worth, in words, on his stud listing. The operator's
+ * oldest daughter's point, verbatim: "in real life, we would be able to look at a stud and get an
+ * idea how well they meet a breed standard ... its not knowing the number or which side of the ideal
+ * it falls on, so it isn't cheating".
+ *
+ * That last clause is the design constraint, and this render keeps it: a word, never a number, and
+ * never which side of the target the horse sits on. "Weak" does not say whether his neck is too long
+ * or too short, so it does not hand over anything a breeder could use to reverse-engineer a genotype.
+ */
+function conformationPanel(rows: ConformationLabelRow[], name: string): SafeHtml {
+  if (rows.length === 0) return raw('');
+  const allUnknown = rows.every((row) => row.label === 'unknown');
+  return html`
+    <div class="card">
+      <h2>Conformation</h2>
+      ${allUnknown
+        ? html`<p class="notice">${name} has never been shown, so nobody has judged him against the breed standard yet. You can pay for an evaluation below if you want an opinion before booking.</p>`
+        : html`<p class="muted">How ${name} measures up against his own breed's standard, in the same words a judge would use. No numbers, and no hint which way he misses - you are looking over the rail, not reading his file.</p>`}
+      <table>
+        <tbody>${rows.map((row) => html`<tr><td>${row.name}</td><td><strong>${row.text}</strong></td></tr>`)}</tbody>
+      </table>
+    </div>`;
+}
+
+/**
+ * The paid evaluation, offered on a horse somebody else owns. Same purchase, same price and the same
+ * POST as the owner's own button - the operator's decision when this was commissioned ("they can pay
+ * for an evaluation if they want to buy"), which is why this is a second render of one mechanism
+ * rather than a second mechanism.
+ */
+function evaluationOfferCard(view: EvaluationSectionView, name: string): SafeHtml {
+  return html`
+    <div class="card">
+      <h2>Pay for an evaluation</h2>
+      ${errorBox(view.error)}
+      ${noticeBox(view.notice)}
+      <p class="muted">Have a judge look ${name} over on your behalf and tell you, in words, how ${name} measures up against the breed standard. Costs ${String(view.cost)} and no turn. On a young horse the answer is deliberately vague and narrows as it grows.</p>
+      ${view.current
+        ? html`
+          <table>
+            <tbody>${view.current.rows.map((row) => html`<tr><td>${row.name}</td><td><strong>${row.text}</strong></td></tr>`)}</tbody>
+          </table>
+          ${view.worthBuyingAgain
+            ? raw('')
+            : html`<p class="muted">Another look would say exactly the same words until this horse is older - save the money.</p>`}`
+        : raw('')}
+      <form method="post" action="/horses/${String(view.horseId)}/evaluate">
+        <input type="hidden" name="stable_id" value="${String(view.payerStableId)}">
+        <input type="hidden" name="back" value="${view.back}">
+        <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>${view.current ? 'Have another look' : 'Get an evaluation'} (${String(view.cost)})</button>
+      </form>
+      ${view.affordable ? raw('') : html`<p class="muted">Not enough money in that stable right now.</p>`}
+    </div>`;
+}
+
 export interface ListingDetailView {
   listingId: number;
   horseId: number;
@@ -285,6 +343,9 @@ export function renderListingPage(params: {
   selectedBuyerStableId: number | null;
   /** A plain sentence saying why there is no buy button, or undefined when there is one (§6.2). */
   refusal?: string;
+  /** 2026-08-05: the paid evaluation offer, or null when the viewer has no stable to bill (or owns
+   * the horse already, in which case the buying block is not what they came for). */
+  evaluation: EvaluationSectionView | null;
   error?: string;
 }): SafeHtml {
   const l = params.listing;
@@ -373,6 +434,7 @@ export function renderListingPage(params: {
       <p class="muted">Listed until game day ${String(l.expiresGameDay)}.</p>
     </div>
     ${healthPanel(l.conditions, params.gameDaysPerYear)}
+    ${params.evaluation ? evaluationOfferCard(params.evaluation, l.name) : raw('')}
     ${comesWithBlock}
     <div class="card">
       <h2>Show record</h2>
@@ -691,6 +753,11 @@ export interface StudListingDetailView {
   seasonCap: number;
   bookedThisSeason: number;
   conditions: DisclosedCondition[];
+  /** 2026-08-05: one word per conformation trait, against this stallion's own breed standard. Free
+   * and public on a stud listing, on the same gate the owner's own card uses - he must have started
+   * at least one show, or every row reads "Unknown". See src/db/conformationLabels.ts for why this
+   * is disclosure rather than a widening. */
+  conformationLabels: ConformationLabelRow[];
   isMine: boolean;
 }
 
@@ -709,6 +776,8 @@ export function renderStudDetailPage(params: {
   selectedMareId: number | null;
   /** A plain sentence saying why there is no book button, or undefined when there is one. */
   refusal?: string;
+  /** The paid evaluation offer, or null when the viewer has no stable to bill. */
+  evaluation: EvaluationSectionView | null;
   error?: string;
 }): SafeHtml {
   const l = params.listing;
@@ -792,6 +861,8 @@ export function renderStudDetailPage(params: {
       <p><strong>Bred by:</strong> ${l.bredByLabel}</p>
       <p><strong>Standing at:</strong> <a href="/world/stables/${String(l.stableId)}">${l.stableName}</a></p>
     </div>
+    ${conformationPanel(l.conformationLabels, l.name)}
+    ${params.evaluation ? evaluationOfferCard(params.evaluation, l.name) : raw('')}
     ${healthPanel(l.conditions, params.gameDaysPerYear)}
     <div class="card">
       <h2>Show record</h2>

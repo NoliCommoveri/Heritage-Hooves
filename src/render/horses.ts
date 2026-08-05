@@ -603,7 +603,11 @@ export interface BreedPreview {
   /** Slice 0022 §B5: one row per conformation trait, each parent's own plain-word verdict against
    * ITS OWN breed's ideal - already resolved to display text ('Unknown' included), gated per
    * parent by that horse's own show record. */
-  conformationRows: { name: string; mareLabel: string; stallionLabel: string }[];
+  /** 2026-08-05: foalRange is the honest prediction - the best and worst word covering about eight
+   * foals in ten from this exact pairing. "Unknown" when either parent's own label is unknown (a
+   * prediction built from values the player has not earned would be cheating, not helpfulness), and
+   * "No single standard" for a cross-breed pairing, whose foal has no one breed to be judged by. */
+  conformationRows: { name: string; mareLabel: string; stallionLabel: string; foalRange: string }[];
   /**
    * Set only when the stallion is standing at another ranch, in which case the booking is a stud
    * booking (slice 0017 Part D) rather than an ordinary same-stable covering - a fee, a commission,
@@ -735,10 +739,13 @@ export function renderBreedPage(params: {
     ? html`
       <h3>Conformation</h3>
       <table>
-        <thead><tr><th>Trait</th><th>Mare</th><th>Stallion</th></tr></thead>
-        <tbody>${preview.conformationRows.map((r) => html`<tr><td>${r.name}</td><td>${r.mareLabel}</td><td>${r.stallionLabel}</td></tr>`)}</tbody>
+        <thead><tr><th>Trait</th><th>Mare</th><th>Stallion</th><th>Likely foal</th></tr></thead>
+        <tbody>${preview.conformationRows.map((r) => html`<tr><td>${r.name}</td><td>${r.mareLabel}</td><td>${r.stallionLabel}</td><td><strong>${r.foalRange}</strong></td></tr>`)}</tbody>
       </table>
-      <p class="muted">Judged against each parent's own breed. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>`
+      <p class="muted">Judged against each parent's own breed. The last column is what about eight foals out of ten from this pairing would come out as - the other two land outside it, in either direction. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>
+      ${preview.conformationRows.some((r) => r.foalRange === 'Unknown')
+        ? html`<p class="muted">Where the last column says Unknown, one of the parents has never been shown and never been evaluated, so there is nothing honest to predict from. Show them, or pay for an evaluation from the horse's own page.</p>`
+        : raw('')}`
     : raw('');
 
   // The one place the two kinds of booking differ on this page. An own-stallion pairing posts back
