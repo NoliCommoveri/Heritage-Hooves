@@ -30,9 +30,9 @@ The operator asked for stud previews and difficulty first, then the rest in the 
 | 1 | Difficulty levels · paid evaluations · conformation words on stud listings · the breeding preview's foal range | **built 2026-08-05** |
 | 2 | The per-horse time warp · free foal upkeep | **built 2026-08-05** |
 | 3 | Young-horse classes · ability tests | **built 2026-08-05** |
-| 4 | Two shows per cycle · the three-rank progression | specified |
+| 4 | Two shows per cycle · the three-rank progression · classes created on demand | specified |
 
-Stage 4 is the largest and the one most likely to need the paid Workers tier — see §7.6.
+Stage 4 is the largest and the one most likely to need the paid Workers tier — see §7.6. **Its shape changed on 2026-08-05, before any of it was built:** classes are now to be created when a player enters a horse, rather than minted across the whole catalogue on a fixed calendar, which makes "two shows per cycle" and "two entries per stable" fall out of one rule instead of being built separately. See §7.5a, and read it alongside §7.5 rather than instead of it.
 
 ---
 
@@ -156,11 +156,83 @@ Agreed shape, after the operator asked for a recommendation:
 - **Graduation is points-based**, and the operator offered an equivalent compound rule as an alternative: *"at least four ribbons 1-3 place and at least one must be 1st."* Points, tuned so that rule is roughly what it takes, is the implementation to aim at.
 - **NPC horses carry ranks and fill the classes properly** — *"let the npcs compete like real players."* The operator's own sizing: three player stables, three breeds, realistically four class types in play per day, nine NPC stables showing.
 
+### 7.5a Classes are created on demand, not on a calendar (stage 4)
+
+**Decided in conversation, 2026-08-05, before stage 4 was built.** The operator's question was *"why not wait to create classes until a user expresses interest in entering one instead of doing them automatically every day like currently?"* — and §7.6 below had already asked for exactly that in one clause. This section is that clause spelled out.
+
+**The decision: a class exists because somebody entered a horse in it.** `createDueShows` stops minting the whole catalogue on a fixed calendar; a class is minted by a player action and is visible to everyone the moment it exists, accepting entries from anyone else until it is judged.
+
+**The flow is "enter this horse", not "find a show".** The operator's follow-up caught a real hole in the first sketch of this — *"how do you know if they want to show in conformation or jumping though?"* A mature horse is eligible for its breed conformation class plus most of the six disciplines, so a picker is genuinely required and the flow does not collapse to one click. What the bundling actually buys is narrower, and still worth having:
+
+- the **rank is decided by the horse's own rank in that class type**, so there is no Novice/Open/Champion menu for a child to understand;
+- **creation is rate-limited by whatever the entry already costs** (`ACTION_COSTS.enter_show`), with no separate budget for minting;
+- **a double-click cannot mint an empty show**, because there is no way to create one without an entry landing in it.
+
+**The picker is built from the catalogue, not from the rows that exist.** Today the class list on `/shows/:id` *is* the discipline picker; with nothing pre-minted there is no list to pick from, so the horse page's existing "Enter in a show" card (`buildEnterShowInfos`, `src/routes/horses.ts`) becomes the door, built from the `disciplines` rows plus the breeds carrying an `ideal_vector` plus the two young-horse class types. This is an improvement rather than a cost, because the catalogue can be filtered by what *this horse* can do before the list is ever drawn — a three-year-old sees only Flat Racing (`min_age_game_days` 720, against Dressage and Show Jumping at 1440 and Endurance at 1800), a non-gaited horse never sees Gaited Pleasure, a Quarter Horse never sees Arabian Conformation. Today the child scrolls all 40 classes and is refused on most of them after clicking.
+
+Each row states which of the two things pressing it does — joining something live, or starting something new:
+
+```
+Show Jumping   3 entered · judged in 6 days                      [Enter]
+Dressage       nobody yet · starts a show, judged in 14 days     [Enter]
+Endurance      Comet is too young (5 years)
+```
+
+**Join before minting.** A request **joins an open class of that type if one exists and the stable has room in it**; it mints only when there is none, or when this stable already holds its `max_entries_per_stable` in the live one. This is the load-bearing rule and the reason to prefer it over minting per request: three children each asking for a dressage show on different days would otherwise get three shows of one entry apiece topped up with NPCs, and the sibling rivalry — which is most of the point — quietly disappears. §1.3's complaint was that *one stable's* horses collide, not that the family should stop meeting. Note that this makes §7.5's first two bullets **emergent rather than separately built**: a second show appears exactly when a stable wants a third entry, which is "two shows per cycle, two entries per stable" without a cycle counter anywhere.
+
+**"Cycle" stops existing, and one rule has to be restated.** Once a deadline is measured from the moment of creation, there is no shared calendar for §7.5's *"the same horse may not enter both shows in a cycle"* to attach to. Restate it as **"a horse may not be in two open classes of the same class type at once"** — cleaner, enforceable at entry time with no calendar, and already close to what `checkHorseEligibilityForClass`'s `alreadyEntered` check does within a single class.
+
+**Order the picker by the horse's record; never filter it.** Once a horse has ribbons, sort its eligible class types by where it has placed well — but show every eligible one regardless. That is the precedent the Breed page's outside-stallion picker already set (CLAUDE.md §10, the Market row: *"ordering only, never filtering"*), and it matters more here: a child discovering that her barrel horse is secretly a dressage horse is the good outcome, and a filter would hide it.
+
+**`disciplines.teaching_text` is already written for this picker.** Every discipline row carries a sentence saying what it rewards (*"Rewards a horse with real scope over a jump, the trainability to read a line…"*). That is the answer for a child who does not know whether her horse is a jumper, and it means the picker teaches rather than just lists. It has never been shown at the point of choosing before.
+
+**NPC stables never request a class.** They stay top-up-only, exactly as `judgeOneClass` already tops up at judging time. §7.5's *"let the npcs compete like real players"* must not be read as letting them mint — nine NPC stables requesting would put the whole catalogue straight back. **The world only creates a class when a person asks.**
+
+**The idempotency guarantee has to be replaced, not dropped.** Today it comes from `UNIQUE(scheduled_game_day, tier)` on `shows`, which is what makes a re-fired tick safe (CLAUDE.md §5.4). A user-triggered `POST` needs its own: a **partial unique index on the open classes** — `(class_type, discipline_code, breed_id, ability_trait_code, age_band, rank) WHERE status = 'entries_open'`. SQLite supports partial unique indexes, and this is the direct replacement for the guarantee being given up.
+
+**Two entry points, one mechanism.** `/shows` stops being the only door, not the only screen: it becomes open classes accepting entries plus recent results, and entering from there still works unchanged for joining something live — same `enterHorseInClass`, exactly the pet home's two-entry-points-one-price shape (CLAUDE.md §10). The horse page is where a class gets **created**; the show page is where one gets **joined**.
+
+**Keep a way back.** A `show_auto_create_enabled` config key, defaulted off, leaving `createDueShows` in place behind it — so the calendar can be switched back on from `/admin/config` without a deploy if an empty show page turns out to read as a broken game to the children. Cheap insurance for an operator with no terminal.
+
+#### 7.5a.1 Fix `buildEnterShowInfos` — required, and do it first
+
+**This is a real defect on a live screen, not a consequence of stage 4, and it should be fixed whether or not the rest of §7.5a is ever built.** It is listed here because §7.5a rebuilds the same function and a session that fixes it in passing will get it right by accident; a session that does not will carry the bug into the new picker.
+
+`buildEnterShowInfos` (`src/routes/horses.ts`) calls `checkHorseEligibilityForClass` **once per open class, every time a horse page is drawn.** That function is four queries deep, so at stage 3's 40 classes a single horse page costs roughly **160 D1 round trips**. It was ~56 before stage 3 tripled the catalogue, and stage 4 would take it past 500. This is the screen the children use most.
+
+The fix is a refactor of the loop, not a change to any rule — **every eligibility answer stays exactly what it is today.** Of the four queries `checkHorseEligibilityForClass` makes, two do not depend on the class at all:
+
+- `isBarredFromShowing(env, horseId, genotype, gameDay)` and `acquiredBarringFlags(env, horseId)` take **only the horse**. Hoist both out of the loop and compute them **once per page**: 80 round trips become 2.
+- `getEntryByClassAndHorse` and `countStableEntriesInClass` are genuinely per-class, but both batch trivially across the whole class list — "which of these class ids does this horse already have an entry in" is one query, and "how many entries does this stable hold in each of these classes" is one grouped query: another 80 become 2.
+
+Everything left in `checkEligibility` is already pure — breed, cross, age, sex, gait, availability, and the class's own restrictions — so **the whole card lands at about 4 queries regardless of how large the catalogue grows.** That is what makes stage 4's class count stop mattering to this screen, which is the property worth having, not the constant factor.
+
+Two details not to lose while doing it:
+
+- `checkHorseEligibilityForClass` is also called by `judgeOneClass`'s NPC top-up, where it is the dominant cost of the whole tick (§7.6). **Do not change its signature in a way that leaves that caller behind** — the same hoist-and-batch shape is what the top-up loop needs too, per NPC horse rather than per class. Prefer adding a batched sibling over rewriting the single-horse function, so the two call sites can converge rather than drift into two eligibility paths. CLAUDE.md §13's no-second-scoring-path rule is the same instinct applied to scoring, and it applies here.
+- The per-class work is not only queries. `checkHorseEligibilityForClass` also runs `parseGenotype` and `expressPhenotype` on every iteration — and `expressPhenotype` folds all thirteen colour/pattern loci (slice 0021). At 40 classes that is 40 full phenotype expressions per page render against a 10ms CPU budget. Both depend only on the horse, so **they hoist out with the other two.**
+
+**Two things the operator still has to decide:**
+
+1. **How long an on-demand class runs before judging.** The existing 30 days (`show_entry_window_game_days`) exists *because* shows sit on a calendar and everyone needs notice; on demand the creator already knows, so the window can shrink. **Recommendation: 7-14 days.** This is the same child from §1.2 who has already said that waiting six weeks does not work, and "on demand" that takes a game month will not feel on-demand.
+2. **Whether the two-shows/three-ranks multiplier applies to young-horse classes at all.** §7.3 already rules their ribbons out of adult progression, which is an argument that it should not.
+
 ### 7.6 The thing to watch in stage 4
 
-Two shows × three ranks × fourteen class types is 84 classes a cycle before young-horse classes, and judging happens inside one scheduled invocation against a 10ms CPU ceiling on the free tier. **Create classes only where an entry can actually exist** rather than minting all 84. If that is not enough, this is the stage that justifies the $5/month Workers tier — CLAUDE.md §3 anticipates exactly this, and the instruction there is to move tiers rather than contort the design.
+**The original note, kept because its instruction was right:** two shows × three ranks × fourteen class types is 84 classes a cycle before young-horse classes, and judging happens inside one scheduled invocation against a 10ms CPU ceiling on the free tier. **Create classes only where an entry can actually exist** rather than minting all 84. If that is not enough, this is the stage that justifies the $5/month Workers tier — CLAUDE.md §3 anticipates exactly this, and the instruction there is to move tiers rather than contort the design.
 
-**Stage 3 already sits at 40 classes a cycle** (8 breed + 6 discipline + 16 young_conformation + 10 ability_test), created and judged the same way stage 1's single-class-per-breed always was — no CPU trouble observed building it, but stage 4's own multiplier lands on top of this number, not a smaller one, so the 84 above is an underestimate of what stage 4 would add if it followed §7.3's own pattern of "mint every combination regardless of demand" for the young-horse classes too. Worth deciding explicitly whether stage 4's two-shows/three-ranks multiplier applies to young-horse classes at all before building it.
+**Stage 3 already sits at 40 classes a cycle** (8 breed + 6 discipline + 16 young_conformation + 10 ability_test), created and judged the same way stage 1's single-class-per-breed always was — no CPU trouble observed building it, but stage 4's own multiplier lands on top of this number, not a smaller one. Adult classes at two shows × three ranks is 84; young-horse classes at two shows is another 52; **the real stage-4 figure is about 136 classes a cycle, not 84.**
+
+**The diagnosis in that first paragraph is wrong about where the cost is, though, and §7.5a should not be justified on it.** Measured against the code as it stands:
+
+- An **empty** class costs **2 D1 round trips** to judge (fetch entries, find none, close it out — `judgeOneClass`'s `allHorseIds.length === 0` branch). At 136 classes with a handful entered, that is roughly 260 wasted round trips a cycle. Real, but the cheap part.
+- A **non-empty** class runs the NPC top-up, which calls `checkHorseEligibilityForClass` **once per NPC horse in the game** — and that function is **4 round trips each** (`getEntryByClassAndHorse`, `countStableEntriesInClass`, `isBarredFromShowing`, `acquiredBarringFlags`). With nine NPC stables' stock this dominates everything else in the stage by a wide margin.
+
+A class only becomes non-empty because somebody entered it, and it would be judged either way — so **on-demand creation removes the cheap waste and does not touch the expensive loop.** If stage 4 needs the paid tier, it will need it for the top-up loop, and that loop wants batching (one query for every candidate's barring flags, not four per horse) far more than it wants fewer classes. Build §7.5a for the screen it fixes, not for the milliseconds.
+
+**The same loop is already costing a page view, not just a tick.** `buildEnterShowInfos` calls the same `checkHorseEligibilityForClass` once per open class **every time a horse page is drawn** — ~160 D1 round trips at stage 3's 40 classes, on the screen the children use most, live today. **This is a defect independent of stage 4 and §7.5a.1 specifies the fix**; it is required work, it is small, and it should be done first, because §7.5a rebuilds that same function and would otherwise carry the bug into the new picker. The tick's top-up loop wants the identical hoist-and-batch treatment — see the first bullet at the end of §7.5a.1 for why the two should converge rather than grow a second eligibility path.
+
+**Worth confirming before building stage 4:** Workers' **subrequest** limit (50 on the free tier, 1000 on paid), which D1 binding calls count against. The tick may well hit that ceiling before it hits the 10ms CPU one, and if so it is the number that actually decides the tier question.
 
 ---
 
@@ -180,3 +252,5 @@ Every one of these is a first guess:
 | `young_horse_yearling_min_age_game_days` | 360 | Not really a guess about the number itself (it's exactly one game year) - watch whether a one-year-old's conformation has realised enough for the class to feel meaningful rather than noisy (`conformation_realization_at_birth`/`conformation_maturity_years` govern that curve). |
 | `young_horse_two_year_old_min_age_game_days` | 720 | Same watch as above, one band up. |
 | `time_warp_game_days` | 180 | Six months a purchase, so a newborn is six turns and 2,400 from grown. |
+| `show_entry_window_game_days` (stage 4) | 30 today, **undecided** | How long an on-demand class runs before judging (§7.5a). The 30 exists because shows sit on a calendar and need announcing; on demand, 7-14 is the recommendation. The child in §1.2 has already said six weeks of waiting does not work. |
+| `show_auto_create_enabled` (stage 4) | off | The way back to the calendar if an empty show page reads as a broken game (§7.5a). Watch whether the children find the "Enter in a show" card on their own, or wait at `/shows` for something to appear. |
