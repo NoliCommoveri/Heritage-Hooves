@@ -144,19 +144,6 @@ export async function countAliveHorsesByBreed(env: Env): Promise<Map<number, num
   return map;
 }
 
-/** The same grouping as countAliveHorsesByBreed, scoped to one stable - what stockShowBarn needs
- * to top a multi-breed NPC barn up per breed rather than as one blended total. */
-export async function countAliveHorsesByBreedForStable(env: Env, stableId: number): Promise<Map<number, number>> {
-  const result = await env.DB.prepare(
-    `SELECT breed_id, COUNT(*) AS n FROM horses WHERE owner_stable_id = ? AND status = 'alive' AND breed_id IS NOT NULL GROUP BY breed_id`
-  )
-    .bind(stableId)
-    .all<{ breed_id: number; n: number }>();
-  const map = new Map<number, number>();
-  for (const row of result.results ?? []) map.set(row.breed_id, row.n);
-  return map;
-}
-
 export async function getHorse(env: Env, id: number): Promise<HorseRow | null> {
   return env.DB.prepare('SELECT * FROM horses WHERE id = ?').bind(id).first<HorseRow>();
 }
@@ -285,6 +272,12 @@ export interface FoundingHorseInsertInput {
    * show barn) already shares for horse_conditions rows, so it is also the one place this needs
    * wiring in. */
   lifespanConfig: LifespanRollConfig;
+  /** Slice 0026 stage 4 §4.6: the show barn's own horses fix their death day at the exact game day
+   * age decline would otherwise start, rather than rolling one from their own seed - present only
+   * for those mints (src/db/npc.ts's mintFoundingHorses). When set, this wins over the lifespan
+   * rolled from lifespanConfig below rather than the roll being skipped, so the roll stays
+   * deterministic from the horse's own seed either way. */
+  naturalDeathGameDayOverride?: number;
   /** Slice 0013 §5.2's reasoning, applied at creation rather than only at deploy: a founding horse
    * (or an admin-created one) can arrive already older than care_start_age_game_days - founding
    * candidates are minted at 4-8 game years, well past the 3-year care start age. Without this, a
@@ -319,8 +312,11 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
     input.sex === 'mare' ? input.worldTickSeq + makeRng(deriveSeed(input.rngSeed, 'cycle_slot')).int(input.estrousCycleTicks) : null;
   const environmentalNoise = serializeNoise(rollEnvironmentalNoise(input.rngSeed, input.conformationNoiseSd));
   // Slice 0011 §4.2/§7.1: a new sub-seed label, independent of every stream that already derives
-  // from this horse's rng_seed - rolled once here and never rerolled.
-  const naturalDeathGameDay = input.bornGameDay + rollLifespanGameDays(makeRng(deriveSeed(input.rngSeed, 'lifespan')), input.lifespanConfig);
+  // from this horse's rng_seed - rolled once here and never rerolled. Slice 0026 stage 4 §4.6: the
+  // roll still happens even when naturalDeathGameDayOverride wins below, so the RNG stream stays
+  // identical to every other founding path regardless of which value is actually stored.
+  const rolledNaturalDeathGameDay = input.bornGameDay + rollLifespanGameDays(makeRng(deriveSeed(input.rngSeed, 'lifespan')), input.lifespanConfig);
+  const naturalDeathGameDay = input.naturalDeathGameDayOverride ?? rolledNaturalDeathGameDay;
   // Slice 0013 §5.2 applied at creation - see this input's own comment.
   const startsCurrentCare = input.currentGameDay - input.bornGameDay >= input.careStartAgeGameDays;
   const initialCareGameDay = startsCurrentCare ? input.currentGameDay : null;

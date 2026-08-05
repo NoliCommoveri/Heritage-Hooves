@@ -16,6 +16,7 @@ import { refreshNpcBuyOffers, runNpcMarketPurchases } from './npcBuying';
 import { runNpcBalanceFloor } from './npcFinance';
 import { runNpcPetHomeSales } from './petHome';
 import { runNpcStudListings } from './npcStud';
+import { topUpShowBarnToPlan } from './npc';
 import { foalDuePregnancies } from './pregnancies';
 import { createDueShows, judgeDueShowClasses } from './shows';
 import { chargeUpkeep } from './upkeep';
@@ -126,6 +127,9 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // both stages guard their own writes (the UNIQUE(scheduled_game_day, tier) index and each
       // class's own status column), so re-running them against the same newGameDay is a no-op.
       await createDueShows(env, newGameDay, config);
+      // Slice 0026 stage 4 §4.7: before judging, so a class judged this tick sees a barn already
+      // refilled - idempotent the same way the stages above it are (only ever mints a shortfall).
+      await topUpShowBarnToPlan(env, { config, gameDay: newGameDay, worldTickSeq: newTickSeq });
       await judgeDueShowClasses(env, newGameDay, config);
       // Slice 0009 §4.3: charged from the world clock's game_day, not tick_seq - this stage never
       // runs on a paused tick (it sits inside this same paused === 0 branch) and re-derives what's

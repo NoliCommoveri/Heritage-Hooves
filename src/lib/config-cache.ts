@@ -91,9 +91,19 @@ export interface ConfigValues {
   /** Slice 0008 §5.4. Snapshotted onto show_classes at creation - the same number
    * min_breeding_age_game_days already uses (three game years). */
   show_conformation_min_age_game_days: number;
-  /** Slice 0008 §5.8/§8.2. Live - read only when an admin stocks the NPC show barn. */
-  npc_show_barn_quality_band: string;
+  /** Slice 0026 stage 4 §4.3. Live - read whenever the show barn is topped up (the tick's auto
+   * top-up stage, or the admin "Restock show barn to plan" button). A real array, embedded with
+   * json() the same way quality_bands/market_rank_factors are, not a double-encoded string -
+   * replaces the old single npc_show_barn_quality_band (slice 0008), since the barn now seeds three
+   * ranks per breed rather than minting one flat band. Target size per breed is the sum of every
+   * entry's count (10 today: 2 novice + 4 open + 4 champion). */
+  npc_show_barn_rank_plan: { rank: ShowRank; count: number; band: string }[];
   npc_show_barn_size: number;
+  /** Slice 0026 stage 4 §4.6. Read only at mint, for the show barn's own horses - a wider spread
+   * than founding_age_min/max_game_days so its turnover is continuous rather than arriving as a
+   * wave. */
+  npc_show_barn_age_min_game_days: number;
+  npc_show_barn_age_max_game_days: number;
   /** Slice 0009 §2.2/§4.3/§4.7. Live - read fresh by the tick's upkeep stage every time it runs. */
   upkeep_per_horse_per_game_day: number;
   /** Slice 0009 §4.4. JSON array, index 0 = first place. Snapshotted onto show_classes at creation

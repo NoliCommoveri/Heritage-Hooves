@@ -72,10 +72,11 @@ function freshDb(): DatabaseSync {
   return db;
 }
 
-// migrations 0085/0097/0136/0137/0168 seed eleven NPC stables (ids 1-11), so the two player stables
-// below are 12 and 13 - the same numbering test/market/stud-d1.test.ts uses.
-const STALLION_STABLE = 12;
-const MARE_STABLE = 13;
+// migrations 0085/0097/0136/0137/0168/0172 seed twelve NPC stables (ids 1-12, migration 0172 adds
+// the show barn split off Apples and Oats Ranch), so the two player stables below are 13 and 14 -
+// the same numbering test/market/stud-d1.test.ts uses.
+const STALLION_STABLE = 13;
+const MARE_STABLE = 14;
 const STALLION_ID = 1;
 const MARE_ONE_ID = 2; // booked, unresolved
 const MARE_TWO_ID = 3; // already conceived

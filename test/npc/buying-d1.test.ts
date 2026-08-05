@@ -80,10 +80,12 @@ async function readConfig(env: Env): Promise<Config> {
 // unchanged: Apples and Oats Ranch 1, Bronco Valley 2, Horseshoe Bay 3); amendment 0017a's
 // consignment dealer is 4, with no npc_policy row (never touched by this file); migration 0137
 // (slice 0023) adds six more Paso Fino/German Warmblood personality stables, ids 5-10; migration
-// 0168 adds an 11th, Dressur Stables (German Warmblood's second discipline barn). Player stables
-// start at 12, same numbering test/market/sale-d1.test.ts already established.
+// 0168 adds an 11th, Dressur Stables (German Warmblood's second discipline barn); slice 0026 stage 4
+// (migration 0172) adds a 12th, the show barn split off Apples and Oats Ranch, also with no
+// npc_policy row. Player stables start at 13, same numbering test/market/sale-d1.test.ts already
+// established.
 const CEDAR_HOLLOW = 2; // conformation_specialist (now "Bronco Valley"), targets QH, capacity 40
-const PLAYER = 12;
+const PLAYER = 13;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
 const GAME_DAY = 5000; // well past min_breeding_age_game_days (1080, migrations/0016)
 

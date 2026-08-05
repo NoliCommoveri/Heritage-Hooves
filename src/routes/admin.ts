@@ -67,7 +67,6 @@ import {
 import {
   createFoundingHorse,
   countAliveHorsesByBreed,
-  countAliveHorsesByBreedForStable,
   listStableHorses,
   horseDisplayName,
   searchHorses,
@@ -75,7 +74,7 @@ import {
 import { parseAllelePool } from '../engines/founding/pool';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
-import { getShowBarnStable, stockShowBarn, stockNpcStable } from '../db/npc';
+import { getShowBarnStable, topUpShowBarnToPlan, stockNpcStable, countShowBarnByBreedAndRank } from '../db/npc';
 import { listShowsForAdmin, judgeDueShowClasses, backfillHistoricalRanks } from '../db/shows';
 import { listNpcStablesForAdmin, listNpcCeilingSchedule, upsertNpcCeilingScheduleRow, foundNpcStable } from '../db/npcBreeding';
 import { getDisciplines } from '../db/disciplines';
@@ -744,16 +743,19 @@ export async function adminResetRoute(ctx: RequestContext, method: string): Prom
 export async function adminShowsRoute(ctx: RequestContext, method: string): Promise<Response> {
   async function page(error?: string, notice?: string): Promise<Response> {
     const barn = await getShowBarnStable(ctx.env);
-    const barnCountsByBreed = barn ? await countAliveHorsesByBreedForStable(ctx.env, barn.id) : new Map<number, number>();
+    const barnCountsByBreedAndRank = barn ? await countShowBarnByBreedAndRank(ctx.env, barn.id) : new Map<string, number>();
     const recentShows = await listShowsForAdmin(ctx.env, 20);
     // Slice 0011 §2.3/§8.2: the show barn ages and dies on the same code path as everyone else's
     // horses (CLAUDE.md §13), so it will thin out on its own over months of play - this has to be
     // visible or it is a mystery. listStableHorses already sorts oldest-first, so its top five are
-    // the barn's oldest without a second query.
+    // the barn's oldest without a second query. Slice 0026 stage 4 §4.10: natural_death_game_day is
+    // now deterministic for these horses (born_game_day + age_decline_start_game_days), worth
+    // showing alongside the age state it explains.
     const barnHorses = barn ? await listStableHorses(ctx.env, barn.id) : [];
     const oldestBarnHorses = barnHorses.slice(0, 5).map((h) => ({
       name: horseDisplayName(h),
       ageState: ageState({ bornGameDay: h.born_game_day, naturalDeathGameDay: h.natural_death_game_day, status: h.status }, ctx.world.game_day, ctx.config.values),
+      naturalDeathGameDay: h.natural_death_game_day,
     }));
 
     // Asked for directly: the standards each class actually scores against, readable without
@@ -767,16 +769,21 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
       getAbilityTraits(ctx.env),
     ]);
 
-    // Slice-0012-era single blended count against one target stopped meaning anything once the barn
-    // started stocking every breed in play (docs/breed-ideal-vectors.md §6.2) rather than Quarter
-    // Horses alone - this is the same "in play" breeds the barn actually mints, one row per breed.
-    const barnByBreed = breeds
+    // Slice 0026 stage 4 §4.3: one row per (breed, rank) rather than one blended count per breed -
+    // the barn now seeds three ranks per breed, not one flat band, so "below target" has to be read
+    // per rank or a full Novice tier could hide an empty Champion one.
+    const rankPlan = ctx.config.values.npc_show_barn_rank_plan;
+    const barnPlanRows = breeds
       .filter((b): b is BreedRow & { ideal_vector: string } => b.ideal_vector !== null)
-      .map((b) => ({
-        breedName: b.name,
-        enabled: b.enabled === 1,
-        count: barnCountsByBreed.get(b.id) ?? 0,
-      }));
+      .flatMap((b) =>
+        rankPlan.map((entry) => ({
+          breedName: b.name,
+          enabled: b.enabled === 1,
+          rank: entry.rank,
+          has: barnCountsByBreedAndRank.get(`${String(b.id)}:${entry.rank}`) ?? 0,
+          target: entry.count,
+        }))
+      );
 
     const conformationCriteria = breeds
       .filter((b): b is BreedRow & { ideal_vector: string } => b.ideal_vector !== null)
@@ -808,11 +815,8 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
     return htmlResponse(
       renderShowsAdminPage({
         world: ctx.world,
-        barnByBreed,
-        barnTarget: ctx.config.values.npc_show_barn_size,
+        barnPlanRows,
         oldestBarnHorses,
-        qualityBands: ctx.config.values.quality_bands,
-        defaultBand: ctx.config.values.npc_show_barn_quality_band,
         recentShows,
         conformationCriteria,
         disciplineCriteria,
@@ -826,7 +830,7 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
     const params = new URL(ctx.request.url).searchParams;
     const rankPairs = params.get('ranks_backfilled');
     const notice = params.get('stocked')
-      ? 'Show barn stocked.'
+      ? 'Show barn restocked to plan.'
       : params.get('judged')
         ? 'Judged every show that was due.'
         : rankPairs !== null
@@ -843,17 +847,13 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
     return redirect(`/admin/shows?ranks_backfilled=${result.pairsUpdated}`);
   }
 
-  if (form.action === 'stock_barn') {
-    if (form.confirm !== 'yes') return page('Tick the box to confirm before stocking the barn.');
-    const band = form.band ?? '';
-    if (ctx.config.values.quality_bands[band] === undefined) return page('Choose a quality band.');
+  if (form.action === 'restock_barn_to_plan') {
+    if (form.confirm !== 'yes') return page('Tick the box to confirm before restocking the barn.');
 
-    await stockShowBarn(ctx.env, {
+    await topUpShowBarnToPlan(ctx.env, {
       config: ctx.config,
       gameDay: ctx.world.game_day,
       worldTickSeq: ctx.world.tick_seq,
-      targetSize: ctx.config.values.npc_show_barn_size,
-      band,
     });
     return redirect('/admin/shows?stocked=1');
   }
@@ -1145,12 +1145,26 @@ export async function adminNpcRoute(ctx: RequestContext, method: string): Promis
   if (form.action === 'outcross') {
     if (form.confirm !== 'yes') return page('Tick the box to confirm before adding an outcross batch.');
     const stableId = Number(form.stable_id);
-    const breedId = Number(form.breed_id);
     const band = form.band ?? '';
     const count = Number(form.count);
-    if (!Number.isFinite(stableId) || !Number.isFinite(breedId)) return page('Choose a stable and a breed.');
+    if (!Number.isFinite(stableId)) return page('Choose a stable.');
     if (ctx.config.values.quality_bands[band] === undefined) return page('Choose a quality band.');
     if (!Number.isInteger(count) || count <= 0) return page('The number to add must be a positive whole number.');
+
+    // Slice 0026 stage 4 §4.8: "breed (or all in play)" - the breed picker's "all" option loops this
+    // same per-breed mint over every breed currently in play, `count` each, rather than needing a
+    // second form.
+    if (form.breed_id === 'all') {
+      const breedsInPlay = (await getBreedsInPlay(ctx.env)).filter((b) => b.ideal_vector !== null);
+      if (breedsInPlay.length === 0) return page('No breed with an ideal vector is in play yet.');
+      for (const breed of breedsInPlay) {
+        await stockNpcStable(ctx.env, { stableId, breedId: breed.id, config: ctx.config, gameDay: ctx.world.game_day, worldTickSeq: ctx.world.tick_seq, count, band });
+      }
+      return redirect('/admin/npc?stocked=1');
+    }
+
+    const breedId = Number(form.breed_id);
+    if (!Number.isFinite(breedId)) return page('Choose a breed.');
 
     await stockNpcStable(ctx.env, {
       stableId,

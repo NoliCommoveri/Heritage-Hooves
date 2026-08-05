@@ -1004,6 +1004,9 @@ export function renderBreedsAdminPage(params: {
           <input type="hidden" name="enabled" value="${b.enabled === 1 ? '0' : '1'}">
           <button type="submit">${b.enabled === 1 ? 'In play - take out' : 'Out of play - bring in'}</button>
         </form>
+        ${b.enabled === 1
+          ? raw('')
+          : html`<p class="muted">Bringing this in gets it a show-barn field within a tick - press "Restock show barn to plan" at /admin/shows to mint it immediately instead.</p>`}
       </td>
       <td>${r?.hasIdealVector ? 'Yes' : html`<span class="muted">No - no breed show class yet</span>`}</td>
       <td>${r?.poolOk ? 'Yes' : html`<span class="notice">No - missing a locus</span>`}</td>
@@ -1142,13 +1145,15 @@ export function renderResetPage(params: {
  * one form per action, both behind the `required`-checkbox confirm pattern the world-clock page
  * established.
  */
-/** The barn's stock, one row per breed in play with an ideal vector - a single blended count
- * against one target stopped meaning anything once the barn started stocking every breed
- * (docs/breed-ideal-vectors.md §6.2), not Quarter Horses alone. */
-export interface AdminBarnBreedCount {
+/** Slice 0026 stage 4 §4.3: the barn's stock, one row per (breed, rank) - a single blended count per
+ * breed stopped meaning anything once the barn started seeding three ranks per breed rather than
+ * minting one flat band, since a full Novice tier could otherwise hide an empty Champion one. */
+export interface AdminBarnPlanRow {
   breedName: string;
   enabled: boolean;
-  count: number;
+  rank: 'novice' | 'open' | 'champion';
+  has: number;
+  target: number;
 }
 
 export interface AdminConformationCriteria {
@@ -1165,13 +1170,12 @@ export interface AdminDisciplineCriteria {
 
 export function renderShowsAdminPage(params: {
   world: WorldRow;
-  barnByBreed: AdminBarnBreedCount[];
-  barnTarget: number;
+  barnPlanRows: AdminBarnPlanRow[];
   /** Slice 0011 §2.3/§8.2: the barn's five oldest living horses, oldest first, with their own
-   * age state - the show barn ages and dies on the same code path as everyone else's horses. */
-  oldestBarnHorses: { name: string; ageState: string }[];
-  qualityBands: Record<string, number>;
-  defaultBand: string;
+   * age state - the show barn ages and dies on the same code path as everyone else's horses. Slice
+   * 0026 stage 4 §4.10: naturalDeathGameDay is now deterministic for these horses, worth showing
+   * alongside the age state it explains. */
+  oldestBarnHorses: { name: string; ageState: string; naturalDeathGameDay: number | null }[];
   recentShows: AdminShowSummary[];
   /** Asked for directly: what each breed's conformation class actually scores against, one dropdown
    * per breed - only breeds with an ideal vector at all appear (§4.2's "no ideal vector means no
@@ -1182,11 +1186,6 @@ export function renderShowsAdminPage(params: {
   error?: string;
   notice?: string;
 }): SafeHtml {
-  const bandOptions = html`${Object.keys(params.qualityBands).map(
-    (band) =>
-      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
-  )}`;
-
   const showRows = params.recentShows.map(
     (s) => html`
     <tr>
@@ -1198,25 +1197,32 @@ export function renderShowsAdminPage(params: {
     </tr>`
   );
 
-  // Slice 0011 §2.3: what must not happen is show fields quietly shrinking for a reason nobody can
-  // see - so a below-target barn gets a visible warning, not just a smaller number. Per breed now,
-  // since one breed thinning out no longer shows up in a single blended total.
-  const belowTargetBreeds = params.barnByBreed.filter((b) => b.enabled && b.count < params.barnTarget);
-  const belowTargetWarning = belowTargetBreeds.length
-    ? html`<p class="notice">Below target: ${belowTargetBreeds.map((b) => `${b.breedName} (${String(b.count)}/${String(params.barnTarget)})`).join(', ')} - horses in this barn age and die like any other, and nothing restocks it automatically. Use the button below.</p>`
+  // Slice 0011 §2.3, extended by slice 0026 stage 4 §4.3/§4.7: what must not happen is a show field
+  // quietly shrinking for a reason nobody can see - so a below-target (breed, rank) gets a visible
+  // warning, not just a smaller number. The tick tops the barn up to plan automatically every tick
+  // now, so this is mostly a way to notice a breed just enabled at /admin/breeds before its own next
+  // tick catches up, or a rank plan pointing at a quality band that no longer exists.
+  const belowTargetRows = params.barnPlanRows.filter((r) => r.enabled && r.has < r.target);
+  const belowTargetWarning = belowTargetRows.length
+    ? html`<p class="notice">Below target: ${belowTargetRows.map((r) => `${r.breedName} ${r.rank} (${String(r.has)}/${String(r.target)})`).join(', ')} - the tick tops these up automatically before it next judges a show; press the button below to do it immediately.</p>`
     : raw('');
 
-  const totalBarnCount = params.barnByBreed.reduce((sum, b) => sum + b.count, 0);
-  const barnBreedRows = params.barnByBreed.map(
-    (b) => html`
+  const totalBarnCount = params.barnPlanRows.reduce((sum, r) => sum + r.has, 0);
+  const barnBreedCount = new Set(params.barnPlanRows.map((r) => r.breedName)).size;
+  const RANK_LABEL: Record<string, string> = { novice: 'Novice', open: 'Open', champion: 'Champion' };
+  const barnPlanTableRows = params.barnPlanRows.map(
+    (r) => html`
     <tr>
-      <td>${b.breedName}${b.enabled ? raw('') : html` <span class="muted">(not in play)</span>`}</td>
-      <td>${String(b.count)}</td>
-      <td>${String(params.barnTarget)}</td>
+      <td>${r.breedName}${r.enabled ? raw('') : html` <span class="muted">(not in play)</span>`}</td>
+      <td>${RANK_LABEL[r.rank] ?? r.rank}</td>
+      <td>${String(r.has)}</td>
+      <td>${String(r.target)}</td>
     </tr>`
   );
 
-  const oldestBarnRows = params.oldestBarnHorses.map((h) => html`<tr><td>${h.name}</td><td>${h.ageState}</td></tr>`);
+  const oldestBarnRows = params.oldestBarnHorses.map(
+    (h) => html`<tr><td>${h.name}</td><td>${h.ageState}</td><td>${h.naturalDeathGameDay === null ? raw('&mdash;') : String(h.naturalDeathGameDay)}</td></tr>`
+  );
 
   // Asked for directly: the standards each class is actually judged against, one <details> dropdown
   // per breed/discipline rather than a form or a JSON blob - reading them needs no editing control,
@@ -1253,32 +1259,29 @@ export function renderShowsAdminPage(params: {
     ${noticeBox(params.notice)}
     <div class="card">
       <h2>The NPC show barn</h2>
-      <p><strong>Apples and Oats Ranch</strong> currently holds ${String(totalBarnCount)} horses across ${String(params.barnByBreed.length)} breeds, a target of ${String(params.barnTarget)} each. It never breeds or improves, but it does age and die like any other horse - stocking it only ever tops each breed up to its own target, never past it.</p>
-      ${params.barnByBreed.length
+      <p><strong>Fair Meadow Show Barn</strong> currently holds ${String(totalBarnCount)} horses across ${String(barnBreedCount)} breeds, seeded Novice/Open/Champion per the rank plan below. It never breeds or improves and never earns a rank by competing (its ranks are fixed at mint) - the tick tops it up to plan automatically, every tick, before judging.</p>
+      ${params.barnPlanRows.length
         ? html`
           <table>
-            <thead><tr><th>Breed</th><th>Has</th><th>Target</th></tr></thead>
-            <tbody>${barnBreedRows}</tbody>
+            <thead><tr><th>Breed</th><th>Rank</th><th>Has</th><th>Target</th></tr></thead>
+            <tbody>${barnPlanTableRows}</tbody>
           </table>`
         : raw('')}
       ${belowTargetWarning}
       ${params.oldestBarnHorses.length
         ? html`
           <table>
-            <thead><tr><th>Horse</th><th>State</th></tr></thead>
+            <thead><tr><th>Horse</th><th>State</th><th>Dies (game day)</th></tr></thead>
             <tbody>${oldestBarnRows}</tbody>
           </table>`
         : raw('')}
       <form method="post" action="/admin/shows">
-        <input type="hidden" name="action" value="stock_barn">
-        <label>Quality band
-          <select name="band" required>${bandOptions}</select>
-        </label>
+        <input type="hidden" name="action" value="restock_barn_to_plan">
         <label class="confirm-checkbox">
           <input type="checkbox" name="confirm" value="yes" required>
-          Yes, mint however many horses it takes to reach the target size.
+          Yes, mint whatever the plan is short right now.
         </label>
-        <button type="submit">Stock the show barn</button>
+        <button type="submit">Restock show barn to plan</button>
       </form>
     </div>
     <div class="card">
@@ -1709,6 +1712,10 @@ export function renderNpcAdminPage(params: {
   const breedOptions = html`${params.breeds
     .filter((b) => b.ideal_vector !== null)
     .map((b) => html`<option value="${String(b.id)}">${b.name}</option>`)}`;
+  // Slice 0026 stage 4 §4.8: the outcross form's own breed picker, generalised with an "all breeds
+  // in play" option - founding a new personality stable still wants exactly one breed, so breedOptions
+  // above (used there) is untouched.
+  const outcrossBreedOptions = html`<option value="all">All breeds in play</option>${breedOptions}`;
   const disciplineOptions = html`${params.disciplines.map((d) => html`<option value="${d.code}">${d.name}</option>`)}`;
   const npcStableOptions = html`${params.stables.map((s) => html`<option value="${String(s.stableId)}">${s.stableName}</option>`)}`;
   const bandOptions = html`${Object.keys(params.qualityBands).map(
@@ -1785,9 +1792,9 @@ export function renderNpcAdminPage(params: {
       <form method="post" action="/admin/npc">
         <input type="hidden" name="action" value="outcross">
         <label>NPC stable <select name="stable_id" required>${npcStableOptions}</select></label>
-        <label>Breed <select name="breed_id" required>${breedOptions}</select></label>
+        <label>Breed <select name="breed_id" required>${outcrossBreedOptions}</select></label>
         <label>Quality band <select name="band" required>${bandOptions}</select></label>
-        <label>How many to add <input type="text" inputmode="numeric" name="count" required></label>
+        <label>How many to add, per breed if "all breeds in play" <input type="text" inputmode="numeric" name="count" required></label>
         <label class="confirm-checkbox">
           <input type="checkbox" name="confirm" value="yes" required>
           Yes, mint this many horses straight into that stable.

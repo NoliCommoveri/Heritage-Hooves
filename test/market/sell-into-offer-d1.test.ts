@@ -81,7 +81,7 @@ async function readConfig(env: Env): Promise<Config> {
 
 // See test/npc/buying-d1.test.ts's own comment for this numbering.
 const CEDAR_HOLLOW = 2; // conformation_specialist (now "Bronco Valley"), targets QH (breed id 1)
-const PLAYER = 12; // migrations seed eleven NPC stables now (migration 0168 added an 11th), so a player stable is 12.
+const PLAYER = 13; // migrations seed twelve NPC stables now (migration 0172, slice 0026 stage 4, added a 12th), so a player stable is 13.
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
 const GAME_DAY = 5000; // well past min_breeding_age_game_days (1080, migrations/0016)
 

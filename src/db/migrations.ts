@@ -169,6 +169,8 @@ import m0168 from '../../migrations/0168_npc_stable_gw_dressage.sql';
 import m0169 from '../../migrations/0169_horses_gelded_game_day.sql';
 import m0170 from '../../migrations/0170_config_gelding.sql';
 import m0171 from '../../migrations/0171_ledger_add_gelding_kind.sql';
+import m0172 from '../../migrations/0172_show_barn_split.sql';
+import m0173 from '../../migrations/0173_config_show_barn_plan.sql';
 
 export interface MigrationFile {
   name: string;
@@ -354,6 +356,8 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0169_horses_gelded_game_day.sql', sql: m0169 },
   { name: '0170_config_gelding.sql', sql: m0170 },
   { name: '0171_ledger_add_gelding_kind.sql', sql: m0171 },
+  { name: '0172_show_barn_split.sql', sql: m0172 },
+  { name: '0173_config_show_barn_plan.sql', sql: m0173 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
