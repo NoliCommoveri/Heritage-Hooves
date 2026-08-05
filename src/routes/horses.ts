@@ -11,6 +11,7 @@ import {
   renderTestPage,
   renderRetireConfirmPage,
   renderPetHomeConfirmPage,
+  renderGeldConfirmPage,
   renderPastHorsesPage,
   displayNameFor,
   type BreedPreview,
@@ -46,7 +47,7 @@ import { validateHorseNamePart } from '../lib/validation';
 import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
 import { formatCalendarDate } from '../lib/calendar';
-import { buildEndHorseParticipationStatements, ageModifierForHorse } from '../db/ageing';
+import { buildEndHorseParticipationStatements, ageModifierForHorse, buildGeldStatements } from '../db/ageing';
 import { petHomePayout, sellHorseToPetHome } from '../db/petHome';
 import { isHorseDeletable, buildDeleteHorseStatements } from '../db/horseRemoval';
 import { ageState } from '../engines/ageing/lifespan';
@@ -122,8 +123,10 @@ import {
   listActiveStudListings,
   getStudListing,
   validateStudBooking,
+  unresolvedStudBookingForStallion,
 } from '../db/stud';
 import { incidentsForHorse, treatOneIncident, openIncidentHorseIds, acuteCarePenaltyMapForHorses } from '../db/incidents';
+import { buildEventStatement } from '../db/events';
 
 /** Also used by src/routes/world.ts (slice 0016 §6): a colour-and-markings sentence is public
  * (§2.2's "you could learn it standing at the rail"), so the /world pages reuse this exact function
@@ -2072,6 +2075,127 @@ export async function horsePetHomeRoute(ctx: RequestContext, method: string, hor
   });
 
   return redirect(`/stables/${String(ownerStable.id)}/horses`);
+}
+
+/** Slice 0026 §1.1: only an unresolved covering where this horse is the SIRE is a warning here -
+ * unlike buildRetireWarnings above, an existing pregnancy is never listed, because gelding leaves
+ * it untouched (§1.2's "existing pregnancies stand"). */
+async function buildGeldWarnings(ctx: RequestContext, horse: HorseRow): Promise<string[]> {
+  const coverings = await listBookedCoveringsInvolvingHorse(ctx.env, horse.id);
+  const name = displayNameFor(horse);
+  const warnings: string[] = [];
+  for (const c of coverings) {
+    if (c.stallion_id !== horse.id) continue;
+    const mare = await getHorse(ctx.env, c.mare_id);
+    const mareName = mare ? displayNameFor(mare) : 'a mare';
+    warnings.push(`${name} has a booked covering to ${mareName} that hasn't resolved yet. Gelding ${name} cancels it.`);
+  }
+  return warnings;
+}
+
+/**
+ * /horses/:id/geld - slice 0026 §1. Owner-only, the same notFound()-for-a-non-owner shape every
+ * horse-scoped route in this file uses. Only ever reachable for a living stallion - a mare or
+ * gelding 404s, the same hard-fact shape horseStudRoute already uses for "wrong sex", since there
+ * is never a link to this route for either.
+ *
+ * Two kinds of "no" here, and they render differently. A stallion who is unavailable (out at
+ * pasture, still settling in) or standing against an unresolved paid stud booking is *blocked* -
+ * the confirmation page says why and draws no button, the same "don't invite a click that was
+ * always going to fail" rule docs/fixes/breeding-eligibility-display.md established. Everything
+ * else (the confirm checkbox, turns, money) is an ordinary refusal, rendered with an error box.
+ */
+export async function horseGeldRoute(ctx: RequestContext, method: string, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+  if (horse.status !== 'alive') return notFound();
+  if (horse.sex !== 'stallion') return notFound();
+
+  const ageYears = (ctx.world.game_day - horse.born_game_day) / ctx.config.values.game_days_per_year;
+  const cost = ctx.config.values.gelding_cost;
+
+  const computeBlocked = async (): Promise<string | null> => {
+    const availability = availabilityForHorse(horse, ctx.config.values, ctx.world.game_day);
+    if (!availability.available) {
+      return availability.reason === 'at_pasture'
+        ? `${displayNameFor(horse)} is out at pasture. Bring him into the barn first.`
+        : `${displayNameFor(horse)} came in from pasture recently and is still settling in. Try again in a few days.`;
+    }
+    const booking = await unresolvedStudBookingForStallion(ctx.env, horse.id);
+    if (booking) {
+      return `${displayNameFor(horse)} has an unresolved stud booking to ${displayNameFor(booking)} - wait for it to resolve before gelding him.`;
+    }
+    return null;
+  };
+
+  const render = async (error?: string) => {
+    const [warnings, blocked, hasFoundingOffer] = await Promise.all([
+      buildGeldWarnings(ctx, horse),
+      computeBlocked(),
+      hasWaitingFoundingOffer(ctx.env, ownerStable.id),
+    ]);
+    return htmlResponse(
+      renderGeldConfirmPage({
+        world: ctx.world,
+        isAdmin: ctx.account!.is_admin === 1,
+        actionsLeft: actionsLeftFor(ctx),
+        gameDaysPerYear: ctx.config.values.game_days_per_year,
+        ownerStable,
+        hasFoundingOffer,
+        horse,
+        ageYears,
+        cost,
+        warnings,
+        blocked,
+        error,
+      })
+    );
+  };
+
+  if (method === 'GET') return render();
+  if (method !== 'POST') return notFound();
+
+  const form = await parseForm(ctx.request);
+  if (form.confirm !== 'yes') return render("Tick the box to confirm - gelding a horse can't be undone.");
+
+  const blocked = await computeBlocked();
+  if (blocked) return render(blocked);
+
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.geld) return render(turnsRefusalMessage(ctx));
+  if (!canTakeOnCost(ownerStable.balance) || ownerStable.balance < cost) {
+    return render(`${ownerStable.name} has ${String(ownerStable.balance)} and gelding costs ${String(cost)}. Win a show, sell a horse, or ask a grown-up to add money first.`);
+  }
+
+  await ctx.env.DB.batch([
+    ...buildGeldStatements(ctx.env, { horseId, gameDay: ctx.world.game_day }),
+    ...buildWithdrawStudListingsForHorseStatement(ctx.env, horseId, ctx.world.game_day),
+    ...buildLedgerStatements(ctx.env, [
+      {
+        stableId: ownerStable.id,
+        amount: -cost,
+        kind: 'gelding',
+        referenceType: 'horse',
+        referenceId: horseId,
+        description: `Gelding ${displayNameFor(horse)}`,
+        gameDay: ctx.world.game_day,
+      },
+    ]),
+    ...buildEventStatement(ctx.env, {
+      stableId: ownerStable.id,
+      accountId: ctx.account!.id,
+      gameDay: ctx.world.game_day,
+      kind: 'gelded',
+      subjectHorseId: horseId,
+      payload: { horse_name: displayNameFor(horse) },
+    }),
+  ]);
+
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.geld);
+
+  return redirect(`/horses/${String(horseId)}?gelded=1`);
 }
 
 /**

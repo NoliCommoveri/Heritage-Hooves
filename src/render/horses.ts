@@ -487,7 +487,7 @@ function studCard(params: {
 
 /** Slice 0016 §4.1: the barn list's tabs - plain links with a query parameter, no JavaScript
  * (§3). Counts come off the full, unfiltered horse list (§4.5). Geldings only appears when the
- * stable actually has one (§4.1) - there is no gelding path in the game today. */
+ * stable actually has one (§4.1). */
 function barnTabs(stableId: number, activeTab: BarnBucket | 'all', counts: Record<BarnBucket, number>): SafeHtml {
   const tabs: { key: BarnBucket | 'all'; label: string; count: number | null }[] = [
     { key: 'all', label: 'All', count: null },
@@ -1496,6 +1496,8 @@ export function renderHorsePage(params: {
 
   // Both one-way exits sit together: a child weighing one should see the other. The pet home pays
   // and takes the horse; retiring away pays nothing and is for a horse going to somebody known.
+  const geldLink = params.canManage && h.sex === 'stallion' ? html`<p><a href="/horses/${String(h.id)}/geld">Geld ${displayNameFor(h)}</a></p>` : raw('');
+
   const retireLink = params.canManage
     ? html`<p><a href="/horses/${String(h.id)}/pet-home">Send ${displayNameFor(h)} to a pet home</a></p>
            <p><a href="/horses/${String(h.id)}/retire">Retire ${displayNameFor(h)} away</a></p>`
@@ -1640,6 +1642,7 @@ export function renderHorsePage(params: {
     ${pedigreeTable}
     ${nameForm}
     ${params.owner ? barnNameForm : raw('')}
+    ${geldLink}
     ${retireLink}
     ${genotypeBlock}
     ${adminDeleteBlock}
@@ -2008,6 +2011,70 @@ export function renderPetHomeConfirmPage(params: {
   `;
   return pageShell({
     title: `Send ${displayNameFor(h)} to a pet home`,
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    subnav: stableSubnav(params.ownerStable.id, 'horses', params.hasFoundingOffer),
+    body,
+  });
+}
+
+/**
+ * Slice 0026 §1.1: the gelding confirmation - shaped like renderRetireConfirmPage/
+ * renderPetHomeConfirmPage above (same one-way warning, same checkbox), with one difference: a
+ * gelding can be genuinely blocked (not available, or a paying customer's stud booking has not
+ * resolved yet), and when it is, the page says why instead of drawing a button that would only be
+ * refused - the same "don't invite a click that was always going to fail" rule
+ * docs/fixes/breeding-eligibility-display.md established.
+ */
+export function renderGeldConfirmPage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  ownerStable: StableRow;
+  hasFoundingOffer: boolean;
+  horse: HorseRow;
+  ageYears: number;
+  cost: number;
+  warnings: string[];
+  /** Set when gelding cannot proceed right now - the sentence explains why, and no form is drawn. */
+  blocked: string | null;
+  error?: string;
+}): SafeHtml {
+  const h = params.horse;
+  const ageText = params.ageYears < 1 ? 'under a year old' : `${String(Math.floor(params.ageYears))} years old`;
+  const portrait = h.image_url ? html`<img class="horse-portrait" src="${h.image_url}" width="240" alt="">` : raw('');
+
+  const body = html`
+    <h1>Geld ${displayNameFor(h)}</h1>
+    ${errorBox(params.error)}
+    <div class="card">
+      ${portrait}
+      <p><strong>${displayNameFor(h)}</strong>, ${ageText}.</p>
+      <p><strong>This cannot be undone.</strong></p>
+      <p>${displayNameFor(h)} can still be shown and can still work - he just can no longer sire foals. His pedigree stays, and any foals he has already sired keep their family tree.</p>
+      ${params.warnings.map((w) => html`<p class="notice">${w}</p>`)}
+      ${
+        params.blocked
+          ? html`<p class="notice">${params.blocked}</p>`
+          : html`
+            <p>Costs ${String(params.cost)} and one turn.</p>
+            <form method="post" action="/horses/${String(h.id)}/geld">
+              <label class="confirm-checkbox">
+                <input type="checkbox" name="confirm" value="yes" required>
+                Yes, I understand this cannot be undone.
+              </label>
+              <button type="submit">Geld ${displayNameFor(h)} for ${String(params.cost)}</button>
+            </form>`
+      }
+      <p><a href="/horses/${String(h.id)}">Cancel</a></p>
+    </div>
+  `;
+  return pageShell({
+    title: `Geld ${displayNameFor(h)}`,
     world: params.world,
     loggedIn: true,
     isAdmin: params.isAdmin,

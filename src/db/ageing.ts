@@ -59,6 +59,32 @@ export function cancelledReasonFor(sex: 'mare' | 'stallion' | 'gelding', status:
   return `${sex === 'stallion' ? 'sire' : 'dam'}_${status === 'dead' ? 'died' : 'removed'}`;
 }
 
+/** Slice 0026 §1.2: a third value alongside cancelledReasonFor's own sire_died/sire_removed, for a
+ * stallion's own unresolved coverings cancelled by his own gelding (src/routes/horses.ts's
+ * horseGeldRoute) - kept as its own constant rather than widening cancelledReasonFor above, whose
+ * signature is keyed on ('dead' | 'removed'), neither of which gelding is. */
+export const SIRE_GELDED_REASON = 'sire_gelded';
+
+/**
+ * Slice 0026 §1.2: the core of what gelding writes to `horses` and `coverings` - pulled out of
+ * horseGeldRoute so it is checkable against a real database (test/ageing/geld-d1.test.ts) the same
+ * way buildEndHorseParticipationStatements above is. The stud-listing withdrawal, the ledger row and
+ * the event are each already-tested builders the route composes alongside this one; only as SIRE,
+ * unlike buildEndHorseParticipationStatements' own covering cancel - a gelding was never a mare, so
+ * there is no dam_id half to this WHERE clause. Existing pregnancies are untouched deliberately
+ * (§1.2's "a conception already resolved is untouched") - nothing here writes to `pregnancies`.
+ */
+export function buildGeldStatements(env: Env, params: { horseId: number; gameDay: number }): D1PreparedStatement[] {
+  return [
+    env.DB
+      .prepare(`UPDATE horses SET sex = 'gelding', gelded_game_day = ? WHERE id = ? AND status = 'alive' AND sex = 'stallion'`)
+      .bind(params.gameDay, params.horseId),
+    env.DB
+      .prepare(`UPDATE coverings SET cancelled_game_day = ?, cancelled_reason = ? WHERE stallion_id = ? AND status = 'booked' AND cancelled_game_day IS NULL`)
+      .bind(params.gameDay, SIRE_GELDED_REASON, params.horseId),
+  ];
+}
+
 export function buildEndHorseParticipationStatements(env: Env, params: EndHorseParticipationParams): D1PreparedStatement[] {
   const cancelledReason = cancelledReasonFor(params.sex, params.status);
 

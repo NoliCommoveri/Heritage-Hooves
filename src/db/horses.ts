@@ -65,6 +65,9 @@ export interface HorseRow {
    * frozen-care credit while out, and the settling period while in - see that migration's comment
    * and src/engines/care/location.ts. */
   location_changed_game_day: number | null;
+  /** Slice 0026 §1.2. Null for every horse never gelded. Drives gelding_recovery_game_days'
+   * eligibility window (isRecoveringFromGelding) - the show-noise relief needs only sex, not this. */
+  gelded_game_day: number | null;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {

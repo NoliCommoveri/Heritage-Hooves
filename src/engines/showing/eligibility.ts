@@ -20,6 +20,9 @@ export type EligibilityReason =
   // "she came in four days ago" is a wait with an end date.
   | 'at_pasture'
   | 'settling_in'
+  // Slice 0026 §1.3: a freshly gelded horse is unavailable for a wait with an end date, the same
+  // shape as settling_in - see isRecoveringFromGelding below.
+  | 'recovering_from_gelding'
   // Slice 0020 §5.4. Two reasons, not one, because they call for different sentences and different
   // futures: an open incident clears the moment it resolves, a degenerative outcome never does.
   | 'acute_incident'
@@ -68,6 +71,10 @@ export interface EligibilityHorse {
    * implementation of the settling rule in the codebase - breeding, which is not a show and never
    * comes through this file, shares that same function rather than a copy of the arithmetic. */
   availability: WorkAvailability;
+  /** Slice 0026 §1.3: true while game_day - horses.gelded_game_day is still under
+   * gelding_recovery_game_days - computed by the caller via isRecoveringFromGelding below. Always
+   * false for a mare, a stallion, or a gelding never gelded within the window. */
+  recoveringFromGelding: boolean;
   /** Slice 0025 stage 4 §7.5: this horse's own current rank in the class's class type (breed or
    * discipline), from horse_class_ranks - 'novice' when it has never been tracked yet (a horse
    * starts at the bottom, not unranked). Ignored entirely when cls.rank is 'none' (a
@@ -105,6 +112,9 @@ export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass,
   // rule, it is simply not in work. Being told "she's out at pasture" is more use than being told
   // she is the wrong breed for a class she was never going to enter this month.
   if (!horse.availability.available) return { ok: false, reason: horse.availability.reason };
+  // Slice 0026 §1.3: ordered right after the location checks, before age - the same footing as
+  // settling_in, a wait with an end date rather than a fact about the horse's breed or age.
+  if (horse.recoveringFromGelding) return { ok: false, reason: 'recovering_from_gelding' };
 
   if (horse.isCross) {
     if (!cls.crossesEligible) return { ok: false, reason: 'crossbred_not_eligible' };
@@ -124,4 +134,24 @@ export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass,
   if (stableEntryCountInClass >= cls.maxEntriesPerStable) return { ok: false, reason: 'entry_cap_reached' };
 
   return { ok: true };
+}
+
+/** Slice 0026 §1.3: the one place this window is computed, so checkHorseEligibilityForClass,
+ * buildCatalogueStatusForHorse and eligibleNpcHorsesForClass (src/db/shows.ts) cannot drift on it. */
+export function isRecoveringFromGelding(geldedGameDay: number | null, gameDay: number, recoveryGameDays: number): boolean {
+  return geldedGameDay !== null && gameDay - geldedGameDay < recoveryGameDays;
+}
+
+const RANK_ORDER: ShowRank[] = ['novice', 'open', 'champion'];
+
+/** Slice 0026 §1.5/§3.1: a horse's own highest rank held across every class_key it has a
+ * horse_class_ranks row for - 'novice' (the empty-list default) for a horse with no row. The one
+ * place this comparison is made, so appraise() and the barn-list badge (stage 3) cannot drift on
+ * which rank counts as "higher". */
+export function highestRankHeld(ranks: ShowRank[]): ShowRank {
+  let best: ShowRank = 'novice';
+  for (const r of ranks) {
+    if (RANK_ORDER.indexOf(r) > RANK_ORDER.indexOf(best)) best = r;
+  }
+  return best;
 }

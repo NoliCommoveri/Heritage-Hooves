@@ -32,6 +32,7 @@ import {
   horseWarpRoute,
   horseRetireRoute,
   horsePetHomeRoute,
+  horseGeldRoute,
   horseCareRoute,
   horseTreatRoute,
   horseLocationRoute,
@@ -87,7 +88,7 @@ const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/fou
 // the player as a bare "Not found" page with no explanation. Slice 0020's "Call the vet" button
 // (POST /horses/:id/treat) shipped with a handler and no entry here, and did exactly that. The
 // regression test in test/router-paths.test.ts now asserts the two lists match.
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/evaluate|\/warp|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud|\/admin-delete)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/evaluate|\/warp|\/retire|\/pet-home|\/geld|\/care|\/treat|\/location|\/list|\/stud|\/admin-delete)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;
@@ -183,6 +184,7 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/warp' && method === 'POST') return withReissuedCookie(ctx, await horseWarpRoute(ctx, horseId));
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
     if (sub === '/pet-home') return withReissuedCookie(ctx, await horsePetHomeRoute(ctx, method, horseId));
+    if (sub === '/geld') return withReissuedCookie(ctx, await horseGeldRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));
     if (sub === '/treat' && method === 'POST') return withReissuedCookie(ctx, await horseTreatRoute(ctx, horseId));
     if (sub === '/location' && method === 'POST') return withReissuedCookie(ctx, await horseLocationRoute(ctx, horseId));

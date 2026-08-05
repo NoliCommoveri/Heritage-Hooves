@@ -8,12 +8,12 @@ import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { calendarEntryFor, onDemandCalendarEntryFor } from '../engines/showing/calendar';
-import { checkEligibility, type EligibilityReason, type ShowRank, type ClassRank } from '../engines/showing/eligibility';
+import { checkEligibility, isRecoveringFromGelding, type EligibilityReason, type ShowRank, type ClassRank } from '../engines/showing/eligibility';
 import { scoreEntry, parseIdealVector, parseJudgeWeights } from '../engines/showing/score';
 import { scoreAbilityEntry, parseAbilityWeights } from '../engines/showing/abilityScore';
 import { parseDisciplineAptitudes, aptitudeFor } from '../engines/breeds/identity';
 import { assignPlacings } from '../engines/showing/placing';
-import { noiseForEntry } from '../engines/showing/noise';
+import { noiseForEntry, geldingAdjustedNoise } from '../engines/showing/noise';
 import { conformationValues, abilityValues, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 import { ABILITY_TRAITS } from '../engines/conformation/traits';
 import { abilityLabelFor, type ConformationLabelBands } from '../engines/conformation/labels';
@@ -710,6 +710,7 @@ export async function checkHorseEligibilityForClass(
       // The location flag: needs pasture_settle_game_days, which is why this function now takes the
       // live config rather than the two loose numbers it used to.
       availability: availabilityForHorse(horse, config.values, gameDay),
+      recoveringFromGelding: isRecoveringFromGelding(horse.gelded_game_day, gameDay, config.values.gelding_recovery_game_days),
       rank,
     },
     {
@@ -1249,6 +1250,7 @@ export async function buildCatalogueStatusForHorse(
         hasOpenAcuteIncident: barringFlags.hasOpenAcuteIncident,
         hasDegenerativeIncident: barringFlags.hasDegenerativeIncident,
         availability: availabilityForHorse(horse, config.values, gameDay),
+        recoveringFromGelding: isRecoveringFromGelding(horse.gelded_game_day, gameDay, config.values.gelding_recovery_game_days),
         rank: targetRank,
       },
       {
@@ -1495,6 +1497,7 @@ async function eligibleNpcHorsesForClass(
         hasOpenAcuteIncident: flags.hasOpenAcuteIncident,
         hasDegenerativeIncident: flags.hasDegenerativeIncident,
         availability: availabilityForHorse(horse, config.values, gameDay),
+        recoveringFromGelding: isRecoveringFromGelding(horse.gelded_game_day, gameDay, config.values.gelding_recovery_game_days),
         rank: rankMap.get(horse.id) ?? 'novice',
       },
       {
@@ -1654,7 +1657,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const horse = horseById.get(horseId);
     if (!horse) continue;
     const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
-    const noise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
+    const rawNoise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
+    const isGelding = horse.sex === 'gelding';
+    const noise = geldingAdjustedNoise(rawNoise, isGelding, config.values.show_gelding_noise_relief);
+    const geldingBreakdown = { is_gelding: isGelding, raw_noise: rawNoise, relief: isGelding ? config.values.show_gelding_noise_relief : 1, adjusted_noise: noise };
     const feedLevel = feedLevelByStableId.get(horse.owner_stable_id) ?? 'standard';
     const conditionDelta = (conditionDeltaByHorseId.get(horse.id)?.delta ?? 0) + (acuteDeltaByHorseId.get(horse.id) ?? 0);
     const care = careModifierForHorse(horse, feedLevel, config.values, gameDay, conditionDelta);
@@ -1724,6 +1730,9 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           // is the only remaining record of what the horse was actually judged with. Only present for
           // a real discipline class - see isRealDiscipline's own comment above.
           aptitude: isRealDiscipline ? { modifier: aptitude, breed_id: horse.breed_id, is_cross: horse.is_cross === 1 } : undefined,
+          // Slice 0026 §1.4: show_gelding_noise_relief is live, not snapshotted onto the class - this
+          // is the only surviving record of what the horse was actually judged with.
+          gelding: geldingBreakdown,
         },
       });
     } else {
@@ -1753,6 +1762,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
           // No aptitude key here, deliberately: a breed_conformation class admits one breed and
           // judges it against that breed's own ideal_vector, so there is no cross-breed comparison
           // for an aptitude to correct. See ScoreAbilityEntryParams.aptitudeModifier's own comment.
+          gelding: geldingBreakdown,
         },
       });
     }

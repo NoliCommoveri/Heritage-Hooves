@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { noiseForEntry } from '../../src/engines/showing/noise';
+import { noiseForEntry, geldingAdjustedNoise } from '../../src/engines/showing/noise';
 
 describe('noiseForEntry', () => {
   it('the same (class seed, horse id) gives the same noise every time', () => {
@@ -32,5 +32,29 @@ describe('noiseForEntry', () => {
     const firstRun = horseIds.map((id) => noiseForEntry(classSeed, id, 5));
     const secondRun = horseIds.map((id) => noiseForEntry(classSeed, id, 5));
     expect(secondRun).toEqual(firstRun);
+  });
+});
+
+// Slice 0026 §1.4/§5 test 1.
+describe('geldingAdjustedNoise', () => {
+  it('leaves positive noise untouched even for a gelding', () => {
+    expect(geldingAdjustedNoise(4, true, 0.75)).toBe(4);
+  });
+
+  it('leaves a non-gelding untouched, whatever the sign of the noise', () => {
+    expect(geldingAdjustedNoise(-4, false, 0.75)).toBe(-4);
+    expect(geldingAdjustedNoise(4, false, 0.75)).toBe(4);
+  });
+
+  it('softens negative noise for a gelding by the relief factor', () => {
+    expect(geldingAdjustedNoise(-4, true, 0.75)).toBeCloseTo(-3, 10);
+  });
+
+  it('the same (class seed, horse id) reproduces the same adjusted value across runs - a re-fired tick byte for byte', () => {
+    const classSeed = 222;
+    const horseId = 7;
+    const first = geldingAdjustedNoise(noiseForEntry(classSeed, horseId, 5), true, 0.75);
+    const second = geldingAdjustedNoise(noiseForEntry(classSeed, horseId, 5), true, 0.75);
+    expect(second).toBe(first);
   });
 });

@@ -21,6 +21,7 @@
 import { scoreEntry, type IdealVector } from '../showing/score';
 import { agePerformanceModifier, type AgeModifierConfig } from '../ageing/performance';
 import type { TraitCode } from '../genetics/polygenic';
+import type { ShowRank } from '../showing/eligibility';
 
 /** The seller's own knowledge results for this horse - what they have paid to learn, never what is
  * true (slice 0017 §2.3). An untested condition is simply absent from this list and changes
@@ -60,6 +61,11 @@ export interface AppraiseParams {
   /** From horse_show_summary. topThree counts firsts, seconds and thirds together, wins included. */
   wins: number;
   topThree: number;
+  /** Slice 0026 §1.5. True when sex = 'gelding'. */
+  isGelding: boolean;
+  /** Slice 0026 §1.5. The horse's own highest rank held across every horse_class_ranks row -
+   * 'novice' (the caller's own default) when it holds none. */
+  highestRank: ShowRank;
   params: AppraiseConfig;
 }
 
@@ -86,6 +92,10 @@ export interface AppraiseConfig extends AgeModifierConfig {
   /** Slice 0021 §6.4: one flat multiplier applied once when the horse shows any pattern at all,
    * never per-pattern. */
   market_pattern_factor: number;
+  /** Slice 0026 §1.5. Applied when sex = 'gelding', otherwise 1. */
+  market_gelding_factor: number;
+  /** Slice 0026 §1.5. Keyed by the horse's own highest held show rank. */
+  market_rank_factors: Record<ShowRank, number>;
 }
 
 export interface AppraisalFactor {
@@ -152,7 +162,15 @@ export function appraise(input: AppraiseParams): Appraisal {
   const pattern = input.hasPattern ? c.market_pattern_factor : 1;
   if (input.hasPattern) factors.push({ label: 'Markings', detail: 'a marked pattern - tobiano, frame, splash, sabino or appaloosa' });
 
-  const raw = base * youth * age.modifier * failing * health * record * colour * pattern * c.market_price_multiplier;
+  // §1.5: the two compound, deliberately - an intact stallion who also shows is premium, a gelding
+  // that has never shown is cheapest.
+  const gelding = input.isGelding ? c.market_gelding_factor : 1;
+  if (input.isGelding) factors.push({ label: 'Sex', detail: 'gelded - cannot be bred' });
+
+  const rank = c.market_rank_factors[input.highestRank] ?? 1;
+  if (input.highestRank !== 'novice') factors.push({ label: 'Show rank', detail: `has reached ${input.highestRank} in at least one class` });
+
+  const raw = base * youth * age.modifier * failing * health * record * colour * pattern * gelding * rank * c.market_price_multiplier;
   const value = Math.max(c.market_min_value, Math.round(raw / 10) * 10);
 
   return { value, factors, qualityUnknown: !hasIdeal };
