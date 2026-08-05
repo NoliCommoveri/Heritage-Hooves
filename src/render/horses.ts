@@ -895,6 +895,7 @@ function conformationCard(params: {
   possessive: string;
   hasShown: boolean;
   breedName: string | null;
+  evaluation: EvaluationSectionView | null;
 }): SafeHtml {
   const closingLine = params.hasShown
     ? html`<p class="muted">These words are measured against ${params.breedName ?? "this horse's own breed"}'s own standard - a different breed would score the same horse differently.</p>`
@@ -907,7 +908,74 @@ function conformationCard(params: {
         : raw('')}
       ${params.conformation.map((row) => conformationRow(row, params.labels.get(row.code) ?? 'unknown'))}
       ${closingLine}
+      ${params.evaluation ? evaluationSection(params.evaluation, params.name) : raw('')}
     </div>`;
+}
+
+/** One trait's evaluated verdict, already turned into words by the caller. */
+export interface EvaluationVerdictRow {
+  name: string;
+  /** "Good", or "Weak to Good" when the evaluator is still hedging. */
+  text: string;
+}
+
+export interface EvaluationSectionView {
+  horseId: number;
+  cost: number;
+  /** Which of this account's stables pays, and where the POST returns to. */
+  payerStableId: number;
+  back: string;
+  /** The most recent evaluation this stable holds, or null if it has never bought one. */
+  current: { rows: EvaluationVerdictRow[]; ageYears: number; certain: boolean } | null;
+  /** False when buying again today would return the identical words - the spread only narrows as
+   * the horse ages, so this is the difference between a useful purchase and a wasted one. */
+  worthBuyingAgain: boolean;
+  /** False when the stable simply can't afford it; the button is still drawn, with the reason. */
+  affordable: boolean;
+  error?: string;
+  notice?: string;
+}
+
+/**
+ * The evaluation block inside the Conformation card, 2026-08-05. Deliberately part of that card
+ * rather than a card of its own: it is the same subject, and a child comparing the bars to the words
+ * should not have to scroll between them.
+ *
+ * The honest framing matters more than the words here. An evaluation is one person's opinion, given
+ * with hedging that narrows as the horse grows, and the page says so - a range is never presented as
+ * a measurement, and the "no sharper yet" line exists so a child does not spend the same money twice
+ * for the same sentence.
+ */
+function evaluationSection(view: EvaluationSectionView, horseName: string): SafeHtml {
+  const buyLabel = view.current ? 'Have another look' : 'Get an evaluation';
+  const buyForm = html`
+    <form method="post" action="/horses/${String(view.horseId)}/evaluate">
+      <input type="hidden" name="stable_id" value="${String(view.payerStableId)}">
+      <input type="hidden" name="back" value="${view.back}">
+      <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>${buyLabel} (${String(view.cost)})</button>
+    </form>`;
+
+  return html`
+    <details class="section-collapse" ${view.error ? raw('open') : raw('')}>
+      <summary>Evaluation${view.current ? '' : ' - not bought'}</summary>
+      ${errorBox(view.error)}
+      ${noticeBox(view.notice)}
+      <p class="muted">A judge looks ${horseName} over and says how ${horseName === 'this horse' ? 'it' : 'they'} measure${' '}up against the breed standard, without ever giving you a number. On a young foal the answer is deliberately vague - nobody can tell yet - and it narrows every year until it is a single word.</p>
+      ${view.current
+        ? html`
+          <table>
+            <tbody>${view.current.rows.map((row) => html`<tr><td>${row.name}</td><td><strong>${row.text}</strong></td></tr>`)}</tbody>
+          </table>
+          <p class="muted">Bought at age ${view.current.ageYears < 1 ? 'under a year' : `${String(Math.floor(view.current.ageYears))}`}. ${
+            view.current.certain
+              ? 'Old enough now that the verdict is a single word - another look would say the same thing.'
+              : view.worthBuyingAgain
+                ? 'Another look now would be sharper.'
+                : 'Another look would say exactly the same words until this horse is older - save the money.'
+          }</p>`
+        : raw('')}
+      ${view.affordable ? buyForm : html`${buyForm}<p class="muted">Not enough money for that right now.</p>`}
+    </details>`;
 }
 
 /** Slice 0006 §6.3: a compact one-line-per-horse comparison for the barn list, first word of each
@@ -1185,6 +1253,9 @@ export function renderHorsePage(params: {
   conformation: ConformationDisplayRow[];
   conformationLabels: Map<TraitCode, ConformationLabel>;
   conformationMaturityYears: number;
+  /** The paid evaluation block inside the Conformation card, 2026-08-05. Null for a viewer who
+   * cannot buy one for this horse (no stable of their own, or an ended horse). */
+  evaluation: EvaluationSectionView | null;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
   /** Slice 0008 §8.1/slice 0012 §9: the Show record card - starts, wins, best result, a few recent
@@ -1430,6 +1501,7 @@ export function renderHorsePage(params: {
       possessive,
       hasShown: (params.showSummary?.starts ?? 0) >= 1,
       breedName: params.breed?.name ?? null,
+      evaluation: params.evaluation,
     })}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${params.owner || params.isAdmin

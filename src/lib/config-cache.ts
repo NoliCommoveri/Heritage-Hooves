@@ -328,6 +328,22 @@ export interface ConfigValues {
   conformation_label_good_min: number;
   conformation_label_acceptable_min: number;
   conformation_label_weak_min: number;
+  /** Migration 0154, 2026-08-05. The numbers behind the three named per-account difficulty levels.
+   * `normal` is 1.0/1.0 by definition - today's game unchanged - and moving it moves the baseline
+   * for everyone at once, including NPC stables, which always read neutral rather than this key.
+   * See src/engines/incidents/difficulty.ts. */
+  difficulty_gentle_incident_rate: number;
+  difficulty_gentle_bad_outcome: number;
+  difficulty_normal_incident_rate: number;
+  difficulty_normal_bad_outcome: number;
+  difficulty_realistic_incident_rate: number;
+  difficulty_realistic_bad_outcome: number;
+  /** Migration 0156, 2026-08-05. The paid conformation evaluation. All three read at the point of
+   * purchase; the resulting words are then snapshotted onto the horse_evaluations row, so retuning
+   * these never rewrites an evaluation somebody already bought. */
+  evaluation_cost: number;
+  evaluation_max_spread_bands: number;
+  evaluation_certain_age_years: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

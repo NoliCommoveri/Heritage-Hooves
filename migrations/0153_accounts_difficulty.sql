@@ -1,0 +1,11 @@
+-- Operator feedback, 2026-08-05: sickness and injury were arriving too often for the two youngest
+-- children. Difficulty is per ACCOUNT (the operator's choice - a person, not a barn, finds the game
+-- too harsh), set only from /admin/accounts, and it touches exactly two things: how often an acute
+-- incident starts, and how bad the outcome is when one does. It deliberately does NOT touch
+-- genetics, lethal foals or death from old age - an inherited disease is a fact about a genotype,
+-- and softening it would make two children's horses genuinely different animals.
+--
+-- Values: 'gentle' / 'normal' / 'realistic'. No CHECK constraint, following breeds.ideal_vector's
+-- precedent (migration 0034) - an unrecognised value reads as the neutral multiplier rather than
+-- breaking a tick. NPC stables have no account and are always scored at 'normal'.
+ALTER TABLE accounts ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'normal';

@@ -21,6 +21,7 @@ import type { NpcStableAdminRow, NpcCeilingScheduleRow } from '../db/npcBreeding
 import type { DisciplineRow } from '../db/disciplines';
 import type { ConsignmentInjectionRow } from '../db/consignment';
 import { LOCI } from '../engines/genetics/loci';
+import { DIFFICULTY_LEVELS, DIFFICULTY_LABEL, DIFFICULTY_BLURB, isDifficultyLevel } from '../engines/incidents/difficulty';
 import { formatLocal } from '../lib/time';
 import { libraryImagePath } from '../lib/images';
 
@@ -203,11 +204,32 @@ export function renderAccountsPage(params: {
               <button type="submit" class="secondary">Delete account</button>
             </form>`;
 
+    // 2026-08-05: difficulty, set only here (the operator's decision - a child can't turn their own
+    // game down). The blurb under the picker is the whole explanation a non-coding operator gets, so
+    // it says what difficulty does NOT touch as plainly as what it does.
+    const difficultyLevel = isDifficultyLevel(a.difficulty) ? a.difficulty : 'normal';
+    const difficultyForm = html`
+      <form method="post" action="/admin/accounts">
+        <input type="hidden" name="action" value="set_difficulty">
+        <input type="hidden" name="account_id" value="${String(a.id)}">
+        <label>Difficulty
+          <select name="difficulty">
+            ${DIFFICULTY_LEVELS.map(
+              (level) => html`<option value="${level}" ${level === difficultyLevel ? raw('selected') : raw('')}>${DIFFICULTY_LABEL[level]}</option>`
+            )}
+          </select>
+        </label>
+        <p class="muted">${DIFFICULTY_BLURB[difficultyLevel]}</p>
+        <p class="muted">Changes how often this player's horses fall ill or get hurt, and how badly it goes when they do. It does not change inherited disease, foals born affected, or death from old age - those are facts about a horse, and they stay the same for everybody.</p>
+        <button type="submit" class="secondary">Save difficulty</button>
+      </form>`;
+
     return html`
     <tr>
       <td>${a.username}</td>
       <td>${a.display_name}</td>
       <td>${a.is_admin ? 'admin' : 'player'}</td>
+      <td>${DIFFICULTY_LABEL[difficultyLevel]}</td>
       <td>${a.active ? 'active' : 'deactivated'}</td>
       <td>${String(stableCount)}</td>
       <td>${a.last_login_real_ts !== null ? formatLocal(a.last_login_real_ts, params.world.tick_timezone) : raw('&mdash;')}</td>
@@ -226,6 +248,7 @@ export function renderAccountsPage(params: {
             </label>
             <button type="submit" class="secondary">Save name/username</button>
           </form>
+          ${difficultyForm}
           ${adminToggle}
           <form method="post" action="/admin/accounts">
             <input type="hidden" name="action" value="${a.active ? 'deactivate' : 'reactivate'}">
@@ -252,7 +275,7 @@ export function renderAccountsPage(params: {
     ${noticeBox(params.notice)}
     <p class="muted">Deactivate is the normal answer for an account nobody uses anymore. Delete only works for an account that owns nothing - in practice, one created with a typo and never used.</p>
     <table>
-      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Stables</th><th>Last login</th><th></th><th></th></tr></thead>
+      <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Difficulty</th><th>Status</th><th>Stables</th><th>Last login</th><th></th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     <details class="section-collapse" ${params.error ? raw('open') : raw('')}>
@@ -347,6 +370,31 @@ function configSections(v: Config['values']): { name: string; body: SafeHtml }[]
       </label>
       <label>Weak, minimum traitScore
         <input type="text" inputmode="numeric" name="conformation_label_weak_min" value="${String(v.conformation_label_weak_min)}">
+      </label>
+      `,
+    },
+    {
+      name: 'Difficulty',
+      body: html`
+      <p class="muted">The numbers behind the three levels you set on each player at /admin/accounts. Normal is the game as it is tuned for everyone - leave it at 1.0 unless you want to move the baseline for the whole family at once.</p>
+      <p class="muted">Illness rate multiplies how often an incident starts. Bad outcome multiplies the combined chance of death or a permanent, career-marking result; whatever that frees goes back into "recovered" and "manageable". Difficulty never touches inherited disease, foals born affected, or death from old age.</p>
+      <label>Gentle - illness rate
+        <input type="text" inputmode="decimal" name="difficulty_gentle_incident_rate" value="${String(v.difficulty_gentle_incident_rate)}">
+      </label>
+      <label>Gentle - bad outcome
+        <input type="text" inputmode="decimal" name="difficulty_gentle_bad_outcome" value="${String(v.difficulty_gentle_bad_outcome)}">
+      </label>
+      <label>Normal - illness rate
+        <input type="text" inputmode="decimal" name="difficulty_normal_incident_rate" value="${String(v.difficulty_normal_incident_rate)}">
+      </label>
+      <label>Normal - bad outcome
+        <input type="text" inputmode="decimal" name="difficulty_normal_bad_outcome" value="${String(v.difficulty_normal_bad_outcome)}">
+      </label>
+      <label>Realistic - illness rate
+        <input type="text" inputmode="decimal" name="difficulty_realistic_incident_rate" value="${String(v.difficulty_realistic_incident_rate)}">
+      </label>
+      <label>Realistic - bad outcome
+        <input type="text" inputmode="decimal" name="difficulty_realistic_bad_outcome" value="${String(v.difficulty_realistic_bad_outcome)}">
       </label>
       `,
     },

@@ -39,7 +39,11 @@ export type LedgerKind =
   | 'commission'
   | 'stud_fee_paid'
   | 'stud_fee_received'
-  | 'pet_home_payout';
+  | 'pet_home_payout'
+  // The paid conformation evaluation (2026-08-05, migration 0157). Its own kind rather than 'vet'
+  // because the ledger is a thing a child reads, and it is the one deliberately repeatable purchase
+  // in the game - an operator watching where money goes wants it named.
+  | 'evaluation';
 
 export interface LedgerEntry {
   stableId: number;

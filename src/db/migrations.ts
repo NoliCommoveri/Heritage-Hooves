@@ -150,6 +150,11 @@ import m0149 from '../../migrations/0149_seed_signs_delays.sql';
 import m0150 from '../../migrations/0150_horse_conditions_signs.sql';
 import m0151 from '../../migrations/0151_horse_conditions_drop_incident_columns.sql';
 import m0152 from '../../migrations/0152_pssm1_breed_associations.sql';
+import m0153 from '../../migrations/0153_accounts_difficulty.sql';
+import m0154 from '../../migrations/0154_config_difficulty.sql';
+import m0155 from '../../migrations/0155_horse_evaluations.sql';
+import m0156 from '../../migrations/0156_config_evaluation.sql';
+import m0157 from '../../migrations/0157_ledger_add_evaluation_kind.sql';
 
 export interface MigrationFile {
   name: string;
@@ -316,6 +321,11 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0150_horse_conditions_signs.sql', sql: m0150 },
   { name: '0151_horse_conditions_drop_incident_columns.sql', sql: m0151 },
   { name: '0152_pssm1_breed_associations.sql', sql: m0152 },
+  { name: '0153_accounts_difficulty.sql', sql: m0153 },
+  { name: '0154_config_difficulty.sql', sql: m0154 },
+  { name: '0155_horse_evaluations.sql', sql: m0155 },
+  { name: '0156_config_evaluation.sql', sql: m0156 },
+  { name: '0157_ledger_add_evaluation_kind.sql', sql: m0157 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

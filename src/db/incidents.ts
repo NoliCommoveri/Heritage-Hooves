@@ -15,6 +15,8 @@ import { deriveSeed, makeRng } from '../lib/rng';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { potential } from '../engines/genetics/polygenic';
 import { onsetProbability, rollOutcome, parseIncidentRiskModel, type IncidentOutcome } from '../engines/incidents/risk';
+import { difficultyMultipliers, NEUTRAL_DIFFICULTY } from '../engines/incidents/difficulty';
+import { getAccountDifficulties } from './accounts';
 import { timerState, feedLevelDefinition, type TimerConfig, type TimerResult } from '../engines/care/modifier';
 import { careStartGameDay } from './care';
 import { buildEventStatement } from './events';
@@ -158,6 +160,12 @@ export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: num
   const incidentTypes = await getEnabledIncidentTypes(env);
   if (incidentTypes.length === 0) return;
 
+  // 2026-08-05: per-account difficulty. An NPC stable's account_id is null and reads neutral, which
+  // is why this is a lookup rather than a column on the horse row - difficulty belongs to a person,
+  // and a horse sold from one child's barn to another's takes on the buyer's setting from the next
+  // check onward rather than carrying the seller's around with it.
+  const difficulties = await getAccountDifficulties(env);
+
   const horseIds = horses.map((h) => h.id);
   const placeholders = horseIds.map(() => '?').join(',');
 
@@ -200,6 +208,7 @@ export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: num
     const workloadFactor = clamp01((workloadByHorse.get(horse.id) ?? 0) / Math.max(1, cfg.workload_ceiling_entries));
     const feedRiskFactor = feedRiskFactorFor(horse.feed_level, cfg.feed_levels);
     const genotype = parseGenotype(horse.genotype);
+    const difficulty = horse.account_id === null ? NEUTRAL_DIFFICULTY : difficultyMultipliers(difficulties.get(horse.account_id), cfg);
 
     for (const incidentType of incidentTypes) {
       if (alreadyOpen.has(incidentType.code)) continue;
@@ -215,6 +224,7 @@ export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: num
           feedRiskFactor,
           location: horse.location,
           robustnessPotential,
+          difficultyRateMultiplier: difficulty.incidentRate,
         },
         cfg.incident_probability_ceiling_per_game_day
       );
@@ -291,20 +301,31 @@ export async function resolveAcuteIncidents(env: Env, gameDay: number, config: C
   const rows = due.results ?? [];
   if (rows.length === 0) return;
 
-  const incidentTypes = await getIncidentTypes(env);
+  const [incidentTypes, difficulties] = await Promise.all([getIncidentTypes(env), getAccountDifficulties(env)]);
 
   for (const row of rows) {
-    await resolveOneIncident(env, row, gameDay, incidentTypes, config);
+    await resolveOneIncident(env, row, gameDay, incidentTypes, config, difficulties);
   }
 }
 
-async function resolveOneIncident(env: Env, row: DueIncidentRow, gameDay: number, incidentTypes: IncidentTypeRow[], config: Config): Promise<void> {
+async function resolveOneIncident(
+  env: Env,
+  row: DueIncidentRow,
+  gameDay: number,
+  incidentTypes: IncidentTypeRow[],
+  config: Config,
+  difficulties: Map<number, string>
+): Promise<void> {
   const incidentType = incidentTypes.find((t) => t.code === row.incident_type_code);
   if (!incidentType) return;
   const trigger = parseIncidentRiskModel(incidentType.risk_model);
   const treated = row.treated_game_day !== null;
   const rng = makeRng(deriveSeed(row.rng_seed, `incident_resolve_${String(row.id)}`));
-  const outcome: IncidentOutcome = rollOutcome(trigger, treated, rng);
+  // 2026-08-05: the owning account's difficulty reshapes the outcome table before the draw. The
+  // seed and the draw are unchanged, so an outcome stays reproducible from the horse's own seed -
+  // it is the same roll against a kinder or harsher table, never a second roll.
+  const difficulty = row.account_id === null ? NEUTRAL_DIFFICULTY : difficultyMultipliers(difficulties.get(row.account_id), config.values);
+  const outcome: IncidentOutcome = rollOutcome(trigger, treated, rng, difficulty.badOutcome);
   const horseName = horseDisplayName(row);
 
   const statements: D1PreparedStatement[] = [
