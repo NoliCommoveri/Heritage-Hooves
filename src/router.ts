@@ -28,6 +28,8 @@ import {
   horseImageRoute,
   horseEnterShowRoute,
   horseTestRoute,
+  horseEvaluateRoute,
+  horseWarpRoute,
   horseRetireRoute,
   horsePetHomeRoute,
   horseCareRoute,
@@ -85,7 +87,7 @@ const STABLE_ROUTE = /^\/stables\/(\d+)(\/select|\/prefix|\/horses|\/breed|\/fou
 // the player as a bare "Not found" page with no explanation. Slice 0020's "Call the vet" button
 // (POST /horses/:id/treat) shipped with a handler and no entry here, and did exactly that. The
 // regression test in test/router-paths.test.ts now asserts the two lists match.
-const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud|\/admin-delete)?$/;
+const HORSE_ROUTE = /^\/horses\/(\d+)(\/name|\/barn-name|\/image|\/enter-show|\/test|\/evaluate|\/warp|\/retire|\/pet-home|\/care|\/treat|\/location|\/list|\/stud|\/admin-delete)?$/;
 const LISTING_ROUTE = /^\/market\/(\d+)(\/buy|\/withdraw)?$/;
 const OFFER_ROUTE = /^\/market\/offers\/(\d+)(\/sell)?$/;
 const STUD_ROUTE = /^\/market\/stud\/(\d+)(\/book|\/withdraw)?$/;
@@ -177,6 +179,8 @@ async function routeForLoggedInAccount(ctx: RequestContext, path: string, method
     if (sub === '/image') return withReissuedCookie(ctx, await horseImageRoute(ctx, method, horseId));
     if (sub === '/enter-show' && method === 'POST') return withReissuedCookie(ctx, await horseEnterShowRoute(ctx, horseId));
     if (sub === '/test') return withReissuedCookie(ctx, await horseTestRoute(ctx, method, horseId));
+    if (sub === '/evaluate' && method === 'POST') return withReissuedCookie(ctx, await horseEvaluateRoute(ctx, horseId));
+    if (sub === '/warp' && method === 'POST') return withReissuedCookie(ctx, await horseWarpRoute(ctx, horseId));
     if (sub === '/retire') return withReissuedCookie(ctx, await horseRetireRoute(ctx, method, horseId));
     if (sub === '/pet-home') return withReissuedCookie(ctx, await horsePetHomeRoute(ctx, method, horseId));
     if (sub === '/care' && method === 'POST') return withReissuedCookie(ctx, await horseCareRoute(ctx, horseId));

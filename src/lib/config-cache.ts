@@ -328,6 +328,33 @@ export interface ConfigValues {
   conformation_label_good_min: number;
   conformation_label_acceptable_min: number;
   conformation_label_weak_min: number;
+  /** Migration 0154, 2026-08-05. The numbers behind the three named per-account difficulty levels.
+   * `normal` is 1.0/1.0 by definition - today's game unchanged - and moving it moves the baseline
+   * for everyone at once, including NPC stables, which always read neutral rather than this key.
+   * See src/engines/incidents/difficulty.ts. */
+  difficulty_gentle_incident_rate: number;
+  difficulty_gentle_bad_outcome: number;
+  difficulty_normal_incident_rate: number;
+  difficulty_normal_bad_outcome: number;
+  difficulty_realistic_incident_rate: number;
+  difficulty_realistic_bad_outcome: number;
+  /** Migration 0156, 2026-08-05. The paid conformation evaluation. All three read at the point of
+   * purchase; the resulting words are then snapshotted onto the horse_evaluations row, so retuning
+   * these never rewrites an evaluation somebody already bought. */
+  evaluation_cost: number;
+  evaluation_max_spread_bands: number;
+  evaluation_certain_age_years: number;
+  /** Migration 0158, 2026-08-05. A horse younger than this costs nothing to keep at all - the
+   * operator's own call, since a foal can neither show nor breed and would otherwise just be
+   * parked at pasture to dodge the bill. Live, read by chargeUpkeep on every tick. 0 charges board
+   * from birth, as the game did before this landed. */
+  upkeep_free_until_age_game_days: number;
+  /** Migration 0159, 2026-08-05. The per-horse time warp: how much time one purchase buys, and what
+   * it costs on top of the one turn it also spends. Live, read at the point of purchase. The rules
+   * that are NOT numbers - capped at maturity, the horse really is that much older, the skipped
+   * months are not simulated - live in src/db/timeWarp.ts. */
+  time_warp_game_days: number;
+  time_warp_cost: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

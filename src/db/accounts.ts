@@ -20,6 +20,28 @@ export interface AccountRow {
   /** Slice 0016 §9.2. Nullable - null means the admin PIN gate is off for this account (§9.6),
    * never rendered anywhere but the security page and the unlock check. */
   pin_hash: string | null;
+  /** Migration 0153, 2026-08-05. 'gentle' / 'normal' / 'realistic', set only from /admin/accounts.
+   * Read by the two incident tick stages and nothing else - see
+   * src/engines/incidents/difficulty.ts for exactly what it does and does not touch. */
+  difficulty: string;
+}
+
+/**
+ * Every account's difficulty, keyed by id. The whole table is five rows in this game, so this loads
+ * all of them rather than filtering to the accounts a tick happens to need - the alternative is an
+ * IN clause rebuilt per stage for no measurable gain.
+ */
+export async function getAccountDifficulties(env: Env): Promise<Map<number, string>> {
+  const result = await env.DB.prepare('SELECT id, difficulty FROM accounts').all<{ id: number; difficulty: string }>();
+  const map = new Map<number, string>();
+  for (const row of result.results ?? []) map.set(row.id, row.difficulty);
+  return map;
+}
+
+/** Migration 0153. No validation here beyond the caller's own - the column has no CHECK on purpose,
+ * and an unrecognised value reads as neutral rather than breaking a tick. */
+export async function setAccountDifficulty(env: Env, accountId: number, difficulty: string): Promise<void> {
+  await env.DB.prepare('UPDATE accounts SET difficulty = ? WHERE id = ?').bind(difficulty, accountId).run();
 }
 
 export async function countAccounts(env: Env): Promise<number> {

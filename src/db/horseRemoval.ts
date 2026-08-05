@@ -117,6 +117,12 @@ export function buildDeleteHorseStatements(env: Env, horseId: number): D1Prepare
     // with it, same reasoning as horse_conditions right above.
     env.DB.prepare('DELETE FROM horse_incidents WHERE horse_id = ?').bind(horseId),
     env.DB.prepare('DELETE FROM horse_knowledge WHERE horse_id = ?').bind(horseId),
+    // 2026-08-05: horse_evaluations references horses (horse_id). A delete, not a keep-clause - an
+    // evaluation is a paid opinion about one horse and means nothing once that horse is gone, the
+    // same reasoning as horse_knowledge directly above. It is deliberately NOT added to
+    // deletableHorseSql: an evaluated horse must stay deletable, or a child evaluating a whole crop
+    // of foals would quietly make every one of them un-removable.
+    env.DB.prepare('DELETE FROM horse_evaluations WHERE horse_id = ?').bind(horseId),
     // Every listing this horse ever had, not just an open one - an earlier withdrawn or expired
     // listing points at it just as hard. None can be a 'sold' row: a sold horse belongs to whoever
     // bought it and is not in the seller's barn to be sent anywhere.

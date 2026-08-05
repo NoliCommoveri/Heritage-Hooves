@@ -88,6 +88,9 @@ const HORSE_TABLES = [
   'horse_knowledge',
   'horse_conditions',
   'horse_incidents',
+  // 2026-08-05: horse_evaluations references horses, same as the three above it - a paid opinion
+  // about a horse that no longer exists is not worth keeping.
+  'horse_evaluations',
   'horses',
 ] as const;
 
@@ -134,6 +137,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   horse_knowledge: 'What stables have paid to learn about horses',
   horse_conditions: 'Recorded health conditions',
   horse_incidents: 'Recorded incidents (colic, laminitis, and the rest)',
+  horse_evaluations: 'Paid conformation evaluations',
   horses: 'Horses',
   stable_prefix_history: 'Claimed prefixes',
   ledger: 'Money history',

@@ -247,13 +247,17 @@ describeWithSqlite('the Breed page can pair a mare with a stallion standing at a
     expect(previewHtml).toContain('Stud fee:');
     expect(previewHtml).toContain(`/market/stud/${studListingId}/book`);
     expect(previewHtml).toContain('Book for 900');
-    // Somebody else's stallion: his conformation is shown nowhere else in the game (not on
-    // /world/horses/:id, not on his stud page), so it is not quietly revealed here either. Both
-    // horses have shown, so the mare's column carries real words and every 'Unknown' in the table
-    // is his - one per conformation trait, and no more.
+    // 2026-08-05 (slice 0025 §5): this used to assert the opposite - that an outside stallion's
+    // conformation column read Unknown all the way down, because his conformation was shown nowhere
+    // else in the game. That reasoning expired when stud listings started printing those words for
+    // free: leaving it would have made this preview say Unknown next to a page showing the answer.
+    // Both horses have shown here, so both columns carry real words and nothing reads Unknown.
     const traitCount = (world.db.prepare('SELECT COUNT(*) AS n FROM quantitative_traits WHERE category = ? AND enabled = 1').get('conformation') as { n: number }).n;
     expect(traitCount).toBeGreaterThan(0);
-    expect((previewHtml.match(/<td>Unknown<\/td>/g) ?? []).length).toBe(traitCount);
+    expect((previewHtml.match(/<td>Unknown<\/td>/g) ?? []).length).toBe(0);
+    // And the third column exists, with a real predicted range in it rather than a placeholder.
+    expect(previewHtml).toContain('Likely foal');
+    expect(previewHtml).not.toContain('No single standard');
 
     // The mare who is already in foal gets the refusal in place of the button, on this page.
     const refused = await stableBreedRoute(

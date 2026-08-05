@@ -603,7 +603,11 @@ export interface BreedPreview {
   /** Slice 0022 §B5: one row per conformation trait, each parent's own plain-word verdict against
    * ITS OWN breed's ideal - already resolved to display text ('Unknown' included), gated per
    * parent by that horse's own show record. */
-  conformationRows: { name: string; mareLabel: string; stallionLabel: string }[];
+  /** 2026-08-05: foalRange is the honest prediction - the best and worst word covering about eight
+   * foals in ten from this exact pairing. "Unknown" when either parent's own label is unknown (a
+   * prediction built from values the player has not earned would be cheating, not helpfulness), and
+   * "No single standard" for a cross-breed pairing, whose foal has no one breed to be judged by. */
+  conformationRows: { name: string; mareLabel: string; stallionLabel: string; foalRange: string }[];
   /**
    * Set only when the stallion is standing at another ranch, in which case the booking is a stud
    * booking (slice 0017 Part D) rather than an ordinary same-stable covering - a fee, a commission,
@@ -735,10 +739,13 @@ export function renderBreedPage(params: {
     ? html`
       <h3>Conformation</h3>
       <table>
-        <thead><tr><th>Trait</th><th>Mare</th><th>Stallion</th></tr></thead>
-        <tbody>${preview.conformationRows.map((r) => html`<tr><td>${r.name}</td><td>${r.mareLabel}</td><td>${r.stallionLabel}</td></tr>`)}</tbody>
+        <thead><tr><th>Trait</th><th>Mare</th><th>Stallion</th><th>Likely foal</th></tr></thead>
+        <tbody>${preview.conformationRows.map((r) => html`<tr><td>${r.name}</td><td>${r.mareLabel}</td><td>${r.stallionLabel}</td><td><strong>${r.foalRange}</strong></td></tr>`)}</tbody>
       </table>
-      <p class="muted">Judged against each parent's own breed. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>`
+      <p class="muted">Judged against each parent's own breed. The last column is what about eight foals out of ten from this pairing would come out as - the other two land outside it, in either direction. A foal is not the average of its parents - two Outstanding parents can still throw one with a poor trait, and that's the genetics working as intended, not a mistake.</p>
+      ${preview.conformationRows.some((r) => r.foalRange === 'Unknown')
+        ? html`<p class="muted">Where the last column says Unknown, one of the parents has never been shown and never been evaluated, so there is nothing honest to predict from. Show them, or pay for an evaluation from the horse's own page.</p>`
+        : raw('')}`
     : raw('');
 
   // The one place the two kinds of booking differ on this page. An own-stallion pairing posts back
@@ -895,6 +902,7 @@ function conformationCard(params: {
   possessive: string;
   hasShown: boolean;
   breedName: string | null;
+  evaluation: EvaluationSectionView | null;
 }): SafeHtml {
   const closingLine = params.hasShown
     ? html`<p class="muted">These words are measured against ${params.breedName ?? "this horse's own breed"}'s own standard - a different breed would score the same horse differently.</p>`
@@ -907,7 +915,110 @@ function conformationCard(params: {
         : raw('')}
       ${params.conformation.map((row) => conformationRow(row, params.labels.get(row.code) ?? 'unknown'))}
       ${closingLine}
+      ${params.evaluation ? evaluationSection(params.evaluation, params.name) : raw('')}
     </div>`;
+}
+
+
+/**
+ * 2026-08-05: "Grow up" - the per-horse time warp. Placed on the horse's own page next to the other
+ * things an owner does to one horse, and rendered only while the horse is young enough for it to be
+ * possible at all, so a grown horse's page is not cluttered with a control it can never use.
+ *
+ * The card states all three costs before the press, because two of them are not money: a turn, and
+ * six months off the far end of the horse's life. A child should not discover the third one later.
+ */
+function growUpCard(view: TimeWarpCardView, name: string): SafeHtml {
+  return html`
+    <div class="card">
+      <h2>Grow up</h2>
+      ${errorBox(view.error)}
+      ${noticeBox(view.notice)}
+      <p>${name} is ${view.ageLabel} old and can't be shown or bred yet. You can pay to skip ahead - ${name} wakes up ${String(view.monthsLabel)} older, and everything else in the world stays where it is.</p>
+      <p class="muted">Costs ${String(view.cost)} and one turn. ${name} really is that much older afterwards, so ${name} will grow old that much sooner too - you are buying the time, not getting it free.${view.clamped ? ' This one takes ' + name + ' the rest of the way to grown, which is less than a full six months.' : ''}</p>
+      <form method="post" action="/horses/${String(view.horseId)}/warp">
+        <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>Grow up by ${String(view.days)} days (${String(view.cost)})</button>
+      </form>
+      ${view.affordable ? raw('') : html`<p class="muted">Not enough money for that right now.</p>`}
+    </div>`;
+}
+
+export interface TimeWarpCardView {
+  horseId: number;
+  days: number;
+  cost: number;
+  clamped: boolean;
+  affordable: boolean;
+  ageLabel: string;
+  monthsLabel: string;
+  error?: string;
+  notice?: string;
+}
+
+/** One trait's evaluated verdict, already turned into words by the caller. */
+export interface EvaluationVerdictRow {
+  name: string;
+  /** "Good", or "Weak to Good" when the evaluator is still hedging. */
+  text: string;
+}
+
+export interface EvaluationSectionView {
+  horseId: number;
+  cost: number;
+  /** Which of this account's stables pays, and where the POST returns to. */
+  payerStableId: number;
+  back: string;
+  /** The most recent evaluation this stable holds, or null if it has never bought one. */
+  current: { rows: EvaluationVerdictRow[]; ageYears: number; certain: boolean } | null;
+  /** False when buying again today would return the identical words - the spread only narrows as
+   * the horse ages, so this is the difference between a useful purchase and a wasted one. */
+  worthBuyingAgain: boolean;
+  /** False when the stable simply can't afford it; the button is still drawn, with the reason. */
+  affordable: boolean;
+  error?: string;
+  notice?: string;
+}
+
+/**
+ * The evaluation block inside the Conformation card, 2026-08-05. Deliberately part of that card
+ * rather than a card of its own: it is the same subject, and a child comparing the bars to the words
+ * should not have to scroll between them.
+ *
+ * The honest framing matters more than the words here. An evaluation is one person's opinion, given
+ * with hedging that narrows as the horse grows, and the page says so - a range is never presented as
+ * a measurement, and the "no sharper yet" line exists so a child does not spend the same money twice
+ * for the same sentence.
+ */
+function evaluationSection(view: EvaluationSectionView, horseName: string): SafeHtml {
+  const buyLabel = view.current ? 'Have another look' : 'Get an evaluation';
+  const buyForm = html`
+    <form method="post" action="/horses/${String(view.horseId)}/evaluate">
+      <input type="hidden" name="stable_id" value="${String(view.payerStableId)}">
+      <input type="hidden" name="back" value="${view.back}">
+      <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>${buyLabel} (${String(view.cost)})</button>
+    </form>`;
+
+  return html`
+    <details class="section-collapse" ${view.error ? raw('open') : raw('')}>
+      <summary>Evaluation${view.current ? '' : ' - not bought'}</summary>
+      ${errorBox(view.error)}
+      ${noticeBox(view.notice)}
+      <p class="muted">A judge looks ${horseName} over and says how ${horseName === 'this horse' ? 'it' : 'they'} measure${' '}up against the breed standard, without ever giving you a number. On a young foal the answer is deliberately vague - nobody can tell yet - and it narrows every year until it is a single word.</p>
+      ${view.current
+        ? html`
+          <table>
+            <tbody>${view.current.rows.map((row) => html`<tr><td>${row.name}</td><td><strong>${row.text}</strong></td></tr>`)}</tbody>
+          </table>
+          <p class="muted">Bought at age ${view.current.ageYears < 1 ? 'under a year' : `${String(Math.floor(view.current.ageYears))}`}. ${
+            view.current.certain
+              ? 'Old enough now that the verdict is a single word - another look would say the same thing.'
+              : view.worthBuyingAgain
+                ? 'Another look now would be sharper.'
+                : 'Another look would say exactly the same words until this horse is older - save the money.'
+          }</p>`
+        : raw('')}
+      ${view.affordable ? buyForm : html`${buyForm}<p class="muted">Not enough money for that right now.</p>`}
+    </details>`;
 }
 
 /** Slice 0006 §6.3: a compact one-line-per-horse comparison for the barn list, first word of each
@@ -1185,6 +1296,11 @@ export function renderHorsePage(params: {
   conformation: ConformationDisplayRow[];
   conformationLabels: Map<TraitCode, ConformationLabel>;
   conformationMaturityYears: number;
+  /** The paid evaluation block inside the Conformation card, 2026-08-05. Null for a viewer who
+   * cannot buy one for this horse (no stable of their own, or an ended horse). */
+  evaluation: EvaluationSectionView | null;
+  /** 2026-08-05: the "Grow up" card, or null for a horse already old enough that a warp is refused. */
+  timeWarp: TimeWarpCardView | null;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
   /** Slice 0008 §8.1/slice 0012 §9: the Show record card - starts, wins, best result, a few recent
@@ -1430,7 +1546,9 @@ export function renderHorsePage(params: {
       possessive,
       hasShown: (params.showSummary?.starts ?? 0) >= 1,
       breedName: params.breed?.name ?? null,
+      evaluation: params.evaluation,
     })}
+    ${params.canManage && params.timeWarp ? growUpCard(params.timeWarp, displayNameFor(h)) : raw('')}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${params.owner || params.isAdmin
       ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })

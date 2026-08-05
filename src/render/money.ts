@@ -26,6 +26,8 @@ const KIND_LABELS: Record<LedgerKind, string> = {
   stud_fee_paid: 'Stud fee paid',
   stud_fee_received: 'Stud fee received',
   pet_home_payout: 'Went to a pet home',
+  evaluation: 'Conformation evaluation',
+  time_warp: 'Grew a horse up',
 };
 
 export function renderMoneyPage(params: {

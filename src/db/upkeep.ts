@@ -40,15 +40,21 @@ export async function chargeUpkeep(env: Env, newGameDay: number, tickSeq: number
   // Counted by location in one pass per stable: the barn's horses carry feed and full board, the
   // pastured ones carry pasture_upkeep_multiplier (0 today). SUM over zero rows is NULL rather than
   // 0, which is why both are coalesced below.
+  // 2026-08-05: a horse younger than upkeep_free_until_age_game_days is excluded from BOTH counts,
+  // so it costs nothing wherever it is standing. The operator's reasoning: a foal can neither show
+  // nor breed, so charging board for one only teaches a child to park it at pasture to dodge the
+  // bill - a chore with no decision in it. Filtered in SQL rather than after the fact so the
+  // description sentence and the charge can never disagree about how many horses were billed.
+  const chargeableFromBornGameDay = newGameDay - config.values.upkeep_free_until_age_game_days;
   const countResults = await env.DB.batch<{ barn: number | null; pasture: number | null }>(
     stables.map((s) =>
       env.DB
         .prepare(
           `SELECT SUM(CASE WHEN location = 'barn' THEN 1 ELSE 0 END) AS barn,
                   SUM(CASE WHEN location = 'pasture' THEN 1 ELSE 0 END) AS pasture
-             FROM horses WHERE owner_stable_id = ? AND status = 'alive'`
+             FROM horses WHERE owner_stable_id = ? AND status = 'alive' AND born_game_day <= ?`
         )
-        .bind(s.id)
+        .bind(s.id, chargeableFromBornGameDay)
     )
   );
 

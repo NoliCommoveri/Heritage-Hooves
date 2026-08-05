@@ -36,7 +36,9 @@ import {
   updateAccountProfile,
   setAdminFlag,
   deleteAccountRow,
+  setAccountDifficulty,
 } from '../db/accounts';
+import { isDifficultyLevel } from '../engines/incidents/difficulty';
 import { countResetRows, resetWorld, type ResetScope } from '../db/reset';
 import { expireStableCookie, buildAdminUnlockCookie } from '../lib/session';
 import { setPinHash, recordPinAttempt, listRecentPinAttempts, listRecentPinAttemptsForDisplay } from '../db/pin';
@@ -159,6 +161,17 @@ export async function adminAccountsRoute(ctx: RequestContext, method: string): P
     if (startingPassword.length < minLen) return page(`Starting password must be at least ${minLen} characters.`);
     const passwordHash = await hashPassword(startingPassword);
     await updatePassword(ctx.env, accountId, passwordHash, true);
+    return redirect('/admin/accounts?saved=1');
+  }
+
+  // 2026-08-05. Validated here rather than trusted from the form: migration 0153 puts no CHECK on
+  // the column, so this is the only thing standing between a hand-crafted POST and a value every
+  // reader would then quietly treat as neutral.
+  if (form.action === 'set_difficulty') {
+    const accountId = Number(form.account_id);
+    const difficulty = form.difficulty ?? '';
+    if (!isDifficultyLevel(difficulty)) return page('Pick one of the difficulty levels.');
+    await setAccountDifficulty(ctx.env, accountId, difficulty);
     return redirect('/admin/accounts?saved=1');
   }
 
@@ -314,6 +327,12 @@ const NUMERIC_CONFIG_KEYS = [
   'conformation_label_weak_min',
   'npc_balance_floor_interval_game_days',
   'npc_buy_offer_min_balance',
+  'evaluation_cost',
+  'evaluation_max_spread_bands',
+  'evaluation_certain_age_years',
+  'upkeep_free_until_age_game_days',
+  'time_warp_game_days',
+  'time_warp_cost',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
@@ -349,6 +368,12 @@ const DECIMAL_CONFIG_KEYS = [
   'incident_probability_ceiling_per_game_day',
   'acute_incident_care_penalty',
   'pet_home_payout_fraction',
+  'difficulty_gentle_incident_rate',
+  'difficulty_gentle_bad_outcome',
+  'difficulty_normal_incident_rate',
+  'difficulty_normal_bad_outcome',
+  'difficulty_realistic_incident_rate',
+  'difficulty_realistic_bad_outcome',
 ] as const;
 
 export async function adminConfigRoute(ctx: RequestContext, method: string): Promise<Response> {

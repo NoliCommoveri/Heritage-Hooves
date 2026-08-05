@@ -1,0 +1,168 @@
+# Slice 0025 — Difficulty, foals, shows and evaluation
+
+**Commissioned 2026-08-05, from three days of real play by the operator's five children.** Every decision in this document was made by the operator, in answer to a question, in one sitting. Where a number was not specified it is named as a first guess below.
+
+This is one brief covering six pieces of work, shipped in four stages. **Stages one and two are built. Stages three and four are specified and not built.** Read the stage you are building; the rest is context.
+
+---
+
+## 1. What the children actually said
+
+Recorded close to verbatim, because the wording matters more than any summary of it:
+
+1. *"sickness and injury is coming too frequently for my youngest two children. a difficulty level selection that controls rate of how often their horses are dying or having career ending issues would be helpful."*
+2. *"I have one requesting a time warp on foals. they are absolutely useless for three game years and at ten 'wait six weeks and they'll be grown' isn't working, she's already talking about wanting a different game."*
+3. *"they want more shows to choose from. a single show per discipline means they have to pit their own horses against each other. and since we haven't designed shows to be progressive yet, it means their top horses just keep winning and their less stellar ones never get a chance to ribbon."*
+4. *"they need a way to 'evaluate' foals. since they can't show, the kids can't tell 'what's good' vs what's not."*
+5. *"they still say its too random whether babies born are good or not ... getting 3 subpar foals in a row from a pair that COULD throw a good baby but isnt is frustrating them."*
+6. *"my oldest daughter pointed out its ridiculous [that you] can't see anything about conformation on horses at stud. as she rightly points out, in real life, we would be able to look at a stud and get an idea how well they meet a breed standard. we should see a range, or even the labels given from the show evaluate. its not knowing the number or which side of the ideal it falls on, so it isn't cheating; its just giving a realistic way to evaluate before spending money."*
+
+Point 6 is the one to hold onto when in doubt: **a word, never a number, and never which side of the target the horse misses on.** That clause is what makes the whole disclosure fair rather than a cheat, and it constrains every screen this brief adds.
+
+---
+
+## 2. Build order
+
+The operator asked for stud previews and difficulty first, then the rest in the recommended order. Evaluations moved into stage one against that ordering, and deliberately: the breeding preview's foal range reads "Unknown" until a parent is known (§6.4), and that answer is only reachable if there is something to buy.
+
+| Stage | Contents | State |
+|---|---|---|
+| 1 | Difficulty levels · paid evaluations · conformation words on stud listings · the breeding preview's foal range | **built 2026-08-05** |
+| 2 | The per-horse time warp · free foal upkeep | **built 2026-08-05** |
+| 3 | Young-horse classes · ability tests | specified |
+| 4 | Two shows per cycle · the three-rank progression | specified |
+
+Stage 4 is the largest and the one most likely to need the paid Workers tier — see §7.6.
+
+---
+
+## 3. Stage 1a — Difficulty (built)
+
+**Decisions.** Per **account** (a person finds the game too harsh, not a barn), set **only by the operator** at `/admin/accounts`, with **three named levels whose numbers the operator can edit**. It scales two things and no others: **how often an acute incident starts**, and **how bad the outcome is when one does**.
+
+**What it deliberately does not touch**, because the operator's answer to "what should it turn down" was "a and b" and nothing else:
+
+- inherited disease and foals born affected by a lethal;
+- death from old age and the Failing period.
+
+The reasoning to keep: an inherited disease is a fact about a genotype. Softening it per account would make two children's horses genuinely different animals, and a foal sold from one barn to another would change its own biology on the way across. Incident risk has no such problem — it is a property of how the world treats a horse, and it re-reads the owner's setting on every check.
+
+**What landed.** `accounts.difficulty` (migration `0153`, no `CHECK` — an unrecognised value reads neutral rather than breaking a tick), six flat decimal config keys (`0154`), `src/engines/incidents/difficulty.ts`, and two call sites in `src/db/incidents.ts`: `rollAcuteIncidents` passes `difficultyRateMultiplier` into `onsetProbability`, and `resolveOneIncident` passes `badOutcomeMultiplier` into `rollOutcome`.
+
+Three properties the engine holds and the tests assert:
+
+- **`normal` is exactly 1.0/1.0** — today's game, unchanged. Moving it moves the baseline for the whole family at once.
+- **A scaled outcome table always sums to 1.** Slice 0020 shipped two tables that didn't and only its own test caught them; `scaleBadOutcomes` scales the death + degenerative pair, gives what that frees back to resolved and manageable in their existing ratio, and clamps rather than going negative.
+- **The rate multiplier is applied before the ceiling clamp**, so `incident_probability_ceiling_per_game_day` still means what it says at every level.
+- **An NPC stable always reads neutral.** It has no account, and difficulty must never make NPC horses harder or easier to beat.
+
+Seeded numbers, all first guesses: Gentle 0.35 / 0.3, Normal 1.0 / 1.0, Realistic 1.35 / 1.25.
+
+## 4. Stage 1b — Paid evaluations (built)
+
+**Decisions.** Per-trait labels, **vaguer on a young foal and sharpening as it grows** — *"enough to tell them whether continued investment is a good risk."* **Money only, no turn** (a child evaluating a whole crop of foals should not spend a day's actions looking rather than doing). **Repeatable at full price**, with the price configurable. Buyable **by the owner, and by anyone looking at a horse that is for sale or standing at stud**.
+
+**What landed.** `horse_evaluations` (migration `0155`), three config keys (`0156`), a new ledger kind (`0157`), `src/engines/conformation/evaluation.ts`, `src/db/evaluations.ts`, `POST /horses/:id/evaluate`, a collapsed Evaluation block inside the horse page's Conformation card, and an offer card on both the sale-listing and stud-listing pages.
+
+Three properties, in the order they matter:
+
+1. **It never lies.** The true label is always inside the range returned. A wide answer is vague, never wrong — *"Weak to Outstanding"* on a weanling is honest, and a child learns nothing false from it. The proof is in `verdictFor`: clamping the hedged centre into a range that already contains the truth cannot increase its distance from the truth.
+2. **It cannot be averaged away.** The offset is derived once from the horse's own `rng_seed`, not drawn per purchase, so five evaluations on the same foal on the same day return the same words five times. Independent noise per purchase would let a player average it out and read the exact answer off a weanling for the price of a few tests. The pages say so in as many words, so nobody spends the money to find out.
+3. **It sharpens smoothly.** The same underlying offset is scaled by a shrinking spread, so successive evaluations close in on the truth rather than jumping around it.
+
+**Deliberately not a `horse_knowledge` row.** That table's unique index exists precisely to stop a permanent result being bought twice, and an evaluation is the opposite.
+
+**The horse is judged at maturity, not at its current age.** A four-month-old's expressed conformation has barely realised, and the question a child is actually asking is what the foal will become.
+
+**Refused rather than sold** when the horse's breed has no `ideal_vector` — an evaluator who cannot judge should not take the money.
+
+## 5. Stage 1c — Conformation on stud listings (built)
+
+**Decision.** *"labels for stud, since we are only buying potential and pregnancy loss is high. but the labels on any horse, stud or own, should be TRUE labels on actual expressed traits, not the noisy ones from judge preferences."* Scope: **stud listings only** — not sale listings, not `/world`. *"they can pay for an 'evaluation' if they want to buy, and they dont need to see others who are not selling or studding."*
+
+**The labels were already true labels** and no change was needed to make them so. `src/engines/conformation/labels.ts` scores a trait against the breed ideal with the judge's weighting deliberately left out — its own comment says "a weight says how much a judge cares, not how good the horse is". What was missing was only that studs did not show them.
+
+**What landed.** `src/db/conformationLabelRowsFor` (`src/db/conformationLabels.ts`) — one shared builder, so an owner's words and a stranger's words cannot drift — rendered on `/market/stud/:id` behind the same gate the owner's own card uses (at least one show start, and a breed with a standard). A stallion who has never shown reads Unknown on every row, with a pointer to the paid evaluation.
+
+**One consequence, taken deliberately:** the Breed page's outside-stud preview now passes `stallionConformationKnown: true`. It used to be false on the reasoning that his conformation was shown nowhere else in the game; that reasoning expired the moment his own stud page started printing the words in full.
+
+## 6. Stage 1d — The foal range in the breeding preview (built)
+
+**Decisions.** Fix the **expectation**, not the maths (*"b"* to "change the maths or change the expectation"). Layout: *"the mare label next to stud label next to 'likely range for foal' (say what they'd get 80% of the time) for each trait."* When a parent's own label is unknown, the foal column reads **Unknown** and says to evaluate the parent — not a wider guess, and never a range computed from values the player has not earned.
+
+**What landed.** `src/engines/genetics/foalPrediction.ts` — an exact calculation, no simulation and no RNG. The foal's potential for a trait is a Poisson-binomial over twenty independent allele draws (ten from each parent), convolved exactly; environmental noise is enumerated over a grid rather than sampled; expression runs through the same `geneticValue → realization → expressedValue` chain the real birth pipeline uses. A test checks the exact distribution against ten thousand simulated foals drawn the way inheritance actually works.
+
+**The subtlety worth not losing:** a trait's label is **not monotonic** in its expressed value — too far above the breed's target is as bad as too far below — so the central 80% of values maps to a *set* of labels, and the honest summary is the best and worst word in that set, not the words at the two ends of the interval.
+
+**A cross-breed pairing reads "No single standard"** rather than quietly picking the dam's breed. A foal has no breed until it exists, and this is a real fact about the game rather than a gap.
+
+**Standing concern, stated when this was commissioned and worth revisiting after real play:** fixing the expectation alone may not fix the complaint. The honest range for a real pairing is often wide, so the preview may confirm the frustration rather than dissolve it. It was still worth building first — a calibrated expectation is worth having either way, and it is the instrument that will say whether the variance is genuinely too high before anybody touches the genetics.
+
+---
+
+## 7. Stages 2-4 — specified, not built
+
+### 7.1 The time warp (stage 2) — **built 2026-08-05**
+
+Not a world speed-up and not skipping ahead — *"a time warp on an individual horse ... she will pay to be able to take a month old foal and make it a year or two year old horse immediately."*
+
+- **Buys a fixed chunk of time: six months**, repeatable, rather than jumping to a named age.
+- **Costs money and a turn** (both).
+- **Capped at maturity.** A horse can be warped up to `min_breeding_age_game_days` and no further — never toward death, and never to rush a mare through her breeding years. **No per-day limit** on how many warps a horse may have; the turn cost is the limit.
+- **Warped time counts against the horse's life.** It is genuinely six months older and will die six months sooner. The operator chose this over compensating the lifespan: you bought time, and time costs time.
+- **The skipped period is not simulated.** No upkeep charged, no acquired incidents rolled, no care timers advanced. The one exception the operator named explicitly: **a lethal genetic condition that would have killed the foal in that window still kills it.** That is a fact about the horse, not a chance event, and difficulty (§3) does not touch it either.
+- The obvious implementation risk: everything that derives from `born_game_day`. Moving that value is the whole mechanism, and every timer keyed off it (care start, conformation realisation, show eligibility, ageing bands) must follow correctly. Prefer moving `born_game_day` backward over inventing an age offset column, and check `last_incident_check_game_day` does not then read as an enormous gap.
+
+**What landed** (migrations `0159`/`0160`, `src/db/timeWarp.ts`, `POST /horses/:id/warp`, a "Grow up" card on the horse's own page). `born_game_day` moves back, and with it every other absolute day anchored to this horse's own birth: `natural_death_game_day` (so it really does die sooner), and `horse_conditions.terminal_game_day` / `signs_game_day` (so a carried lethal still kills on schedule — the operator's one named exception). The care markers and `last_incident_check_game_day` are reset to today, so the horse arrives freshly cared-for rather than instantly overdue for months the warp explicitly did not simulate. **If a future slice adds another column anchored to a horse's birth date, it belongs in `buildTimeWarpStatements`** — nothing can enumerate that for you.
+
+Near the cap the last step is short: `planTimeWarp` clamps it to land exactly on maturity, the button names the real number of days, and the card says so. Full price for a short step is deliberate and stated, not hidden.
+
+### 7.2 Free foal upkeep (stage 2) — **built 2026-08-05**
+
+Raised by the operator mid-conversation: *"foals probably shouldn't cost upkeep. id throw them out in the pasture myself to avoid it since they cant be shown or bred anyways."*
+
+- **Nothing at all** until the horse is **one year old**, then full upkeep.
+- One year, not three, because stage 3 lets a yearling show — the cutoff is "old enough to do something", not "old enough to breed".
+
+### 7.3 Young-horse classes (stage 3)
+
+- **Conformation in-hand classes**, plus **ability tests** — *"a 'speed test,' 'agility test' etc. not relating to the whole discipline, just getting an idea about its ability traits."*
+- **Two age bands: yearling (1-2) and two-year-old (2-3).** Not three bands; smaller fields are the same problem as one show per discipline.
+- **Ribbons from these classes do not count toward progression in the adult classes** (§7.4).
+
+### 7.4 Ability tests (stage 3)
+
+Agreed shape, after the operator asked for a recommendation:
+
+- **A real class**, entered against other horses, placed and ribboned.
+- **And** the result permanently records a word about that ability trait for the owner — the first time anything in the game has ever shown an ability value to anyone.
+- **The word describes the horse's own result, not its rank.** "Fast" must mean fast, whether or not a faster horse turned up that day; otherwise a child learns her colt is slow when he is second-fastest in the world.
+
+### 7.5 More shows (stage 4)
+
+- **Two shows per cycle per discipline and per breed conformation class.**
+- **Two entries per stable per show**, and **the same horse may not enter both shows** in a cycle.
+- **A three-rank progression: Novice / Open / Champion**, tracked **independently per class type** — Open in barrel racing while still Novice in Quarter Horse conformation.
+- **Graduation is points-based**, and the operator offered an equivalent compound rule as an alternative: *"at least four ribbons 1-3 place and at least one must be 1st."* Points, tuned so that rule is roughly what it takes, is the implementation to aim at.
+- **NPC horses carry ranks and fill the classes properly** — *"let the npcs compete like real players."* The operator's own sizing: three player stables, three breeds, realistically four class types in play per day, nine NPC stables showing.
+
+### 7.6 The thing to watch in stage 4
+
+Two shows × three ranks × fourteen class types is 84 classes a cycle before young-horse classes, and judging happens inside one scheduled invocation against a 10ms CPU ceiling on the free tier. **Create classes only where an entry can actually exist** rather than minting all 84. If that is not enough, this is the stage that justifies the $5/month Workers tier — CLAUDE.md §3 anticipates exactly this, and the instruction there is to move tiers rather than contort the design.
+
+---
+
+## 8. Numbers that want checking against real play
+
+Every one of these is a first guess:
+
+| Key | Seeded | What to watch |
+|---|---|---|
+| `difficulty_gentle_incident_rate` / `_bad_outcome` | 0.35 / 0.3 | Whether the youngest two stop losing horses faster than they can enjoy them. `/admin/incidents` shows the real outcome split. |
+| `difficulty_realistic_incident_rate` / `_bad_outcome` | 1.35 / 1.25 | Whether it bites enough to be worth choosing. |
+| `evaluation_cost` | 200 | Low on purpose. A full breeding preview needs both parents known, so this is paid twice. |
+| `evaluation_max_spread_bands` | 2 | How useless a weanling verdict feels. Drop to 1 if "Weak to Outstanding" reads as no answer at all. |
+| `evaluation_certain_age_years` | 3 | Matches the age a horse could have shown for itself and earned the same words free. |
+| `upkeep_free_until_age_game_days` | 360 | One game year. Watch whether balances now drift up while a crop of foals is growing. |
+| `time_warp_cost` | 400 | The one number the children will push on hardest. Too cheap and nobody ever waits; too dear and the ten-year-old is back where she started. |
+| `time_warp_game_days` | 180 | Six months a purchase, so a newborn is six turns and 2,400 from grown. |

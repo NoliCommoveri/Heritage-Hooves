@@ -14,6 +14,9 @@
 // slice 0022 §A1 found dead for these twelve on the old `conditions` table.
 
 import type { Rng } from '../../lib/rng';
+// difficulty.ts imports OutcomeTable from here as a *type only*, so this is a one-way runtime
+// dependency, not a cycle.
+import { scaleBadOutcomes } from './difficulty';
 
 export interface OutcomeTable {
   resolved: number;
@@ -61,6 +64,11 @@ export interface OnsetInputs {
   /** 0-20, only consulted when trigger.robustnessTrait is set. Null is treated as the neutral
    * midpoint (10) rather than a missing-trait crash - see the no-op test for why this matters. */
   robustnessPotential: number | null;
+  /** The owning ACCOUNT's difficulty setting (src/engines/incidents/difficulty.ts), 2026-08-05.
+   * Optional and defaulting to 1 so every pre-existing caller and test is unaffected; an NPC stable
+   * has no account and always passes 1. Applied inside dailyProbability BEFORE the ceiling clamp,
+   * so incident_probability_ceiling_per_game_day still means what it says at every level. */
+  difficultyRateMultiplier?: number;
 }
 
 function clamp01(x: number): number {
@@ -83,6 +91,7 @@ function dailyProbability(trigger: IncidentRiskModel, input: OnsetInputs, ceilin
     const potential = input.robustnessPotential ?? 10;
     multiplier *= 1 + trigger.robustnessWeight * (1 - clamp01(potential / 20));
   }
+  multiplier *= Math.max(0, input.difficultyRateMultiplier ?? 1);
   const p = trigger.baseRatePerGameDay * multiplier;
   return Math.min(ceilingPerDay, Math.max(0, p));
 }
@@ -102,9 +111,15 @@ export function onsetProbability(trigger: IncidentRiskModel, input: OnsetInputs,
 
 /** A single draw against the cumulative distribution of the given outcome table - order matters
  * only in that it must be consistent, not in what it means (resolved / manageable / degenerative /
- * death, per §4.3). */
-export function rollOutcome(trigger: IncidentRiskModel, treated: boolean, rng: Rng): IncidentOutcome {
-  const table = treated ? trigger.outcomesTreated : trigger.outcomesUntreated;
+ * death, per §4.3).
+ *
+ * `badOutcomeMultiplier` is the owning account's difficulty (2026-08-05), defaulting to 1 so every
+ * pre-existing caller is unaffected. It reshapes the table before the draw rather than re-rolling or
+ * overriding the result afterwards, which is what keeps a horse's outcome reproducible from its own
+ * seed (CLAUDE.md §5.2) - the same roll against a kinder table, not a second roll. */
+export function rollOutcome(trigger: IncidentRiskModel, treated: boolean, rng: Rng, badOutcomeMultiplier = 1): IncidentOutcome {
+  const base = treated ? trigger.outcomesTreated : trigger.outcomesUntreated;
+  const table = scaleBadOutcomes(base, badOutcomeMultiplier);
   const roll = rng.next();
   let cumulative = 0;
   cumulative += table.resolved;

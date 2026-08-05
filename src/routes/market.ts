@@ -40,6 +40,9 @@ import {
 import { getListing, listOpenListings, listSoldListings, sellListing, withdrawListing, type OpenListingRow } from '../db/listings';
 import { getHorse, horseDisplayName, countAliveHorses, listStableHorses, type HorseRow } from '../db/horses';
 import { getStableById, listStablesForAccount } from '../db/stables';
+import { conformationLabelRowsFor } from '../db/conformationLabels';
+import { buildEvaluationSectionView } from './horses';
+import type { EvaluationSectionView } from '../render/horses';
 import { getBreeds, type BreedRow } from '../db/breeds';
 import { getDisciplines } from '../db/disciplines';
 import { getEnabledConditions, getKnowledgeForHorse, conditionsPanelForHorse } from '../db/health';
@@ -340,6 +343,11 @@ export async function listingPageRoute(ctx: RequestContext, listingId: number): 
       buyerOptions,
       selectedBuyerStableId: selected?.id ?? null,
       refusal,
+      // 2026-08-05: a buyer can pay to have this horse evaluated before committing. The listing
+      // itself still shows no conformation at all (§2.4, and the operator's own "they don't need to
+      // see others who are not selling or studding") - paying is the only way to an opinion here,
+      // unlike a stud listing, where the words are free.
+      evaluation: await evaluationOfferFor(ctx, horse, `/market/${String(listing.id)}`, params),
       error: params.get('error') ?? undefined,
     })
   );
@@ -650,9 +658,12 @@ export async function studIndexRoute(ctx: RequestContext): Promise<Response> {
 
 async function buildStudListingView(ctx: RequestContext, listing: OpenStudListingRow, stallion: HorseRow, isMine: boolean): Promise<StudListingDetailView> {
   const cfg = ctx.config.values;
-  const [breeds, conditions, summary, recentRaw, sire, dam, bookedThisSeason] = await Promise.all([
+  const [breeds, conditions, conformationLabels, summary, recentRaw, sire, dam, bookedThisSeason] = await Promise.all([
     getBreeds(ctx.env),
     disclosedConditionsFor(ctx, listing.stable_id, stallion.id),
+    // 2026-08-05: free and public on a stud listing, gated on his own show record - see
+    // src/db/conformationLabels.ts.
+    conformationLabelRowsFor(ctx.env, stallion, ctx.world.game_day, cfg),
     getShowSummary(ctx.env, stallion.id),
     listRecentResultsForHorse(ctx.env, stallion.id, SHOW_RESULT_FETCH_LIMIT),
     stallion.sire_id ? getHorse(ctx.env, stallion.sire_id) : Promise.resolve(null),
@@ -688,6 +699,7 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     seasonCap: listing.season_cap,
     bookedThisSeason,
     conditions,
+    conformationLabels,
     isMine,
   };
 }
@@ -782,9 +794,31 @@ export async function studDetailRoute(ctx: RequestContext, studListingId: number
       mareExclusions,
       selectedMareId: selected?.id ?? null,
       refusal,
+      evaluation: await evaluationOfferFor(ctx, stallion, `/market/stud/${String(listing.id)}`, params),
       error: params.get('error') ?? undefined,
     })
   );
+}
+
+/**
+ * The paid-evaluation offer on a market page, billed to whichever of the viewer's stables is
+ * currently active. Null when the viewer owns no stable, or when the horse's own owner is looking -
+ * an owner buys from the horse's own page, where the same block already lives.
+ */
+async function evaluationOfferFor(
+  ctx: RequestContext,
+  horse: HorseRow,
+  back: string,
+  params: URLSearchParams
+): Promise<EvaluationSectionView | null> {
+  const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
+  if (stables.length === 0) return null;
+  if (stables.some((s) => s.id === horse.owner_stable_id)) return null;
+  const payer = stables.find((s) => s.id === ctx.account!.last_active_stable_id) ?? stables[0];
+  return buildEvaluationSectionView(ctx, horse, payer, back, {
+    error: params.get('evaluation_error') ?? undefined,
+    notice: params.get('evaluated') ? 'Evaluation done.' : undefined,
+  });
 }
 
 export async function studBookRoute(ctx: RequestContext, studListingId: number): Promise<Response> {

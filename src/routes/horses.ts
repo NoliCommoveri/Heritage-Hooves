@@ -21,6 +21,7 @@ import {
   type ColourLocusOption,
   type ColourInferenceRow,
   type MareExclusion,
+  type EvaluationSectionView,
 } from '../render/horses';
 import { eligibilityMessage, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT } from '../render/shows';
 import {
@@ -61,7 +62,12 @@ import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE, buildImageLabelM
 import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
 import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
-import { parseIdealVector } from '../engines/showing/score';
+import { evaluateHorse, wouldSharpen, type StoredEvaluation } from '../engines/conformation/evaluation';
+import { bandForTraitScore } from '../engines/conformation/labels';
+import { foalExpressedDistribution, centralInterval } from '../engines/genetics/foalPrediction';
+import { buildEvaluationStatements, evaluationCost, getLatestEvaluation } from '../db/evaluations';
+import { planTimeWarp, buildTimeWarpStatements } from '../db/timeWarp';
+import { parseIdealVector, traitScoreFor } from '../engines/showing/score';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { ConfigValues } from '../lib/config-cache';
 import {
@@ -500,10 +506,12 @@ async function validateBooking(ctx: RequestContext, stable: StableRow, mare: Hor
  *  - `stallionKnowledgeStableId` - whose horse_knowledge stands for what is known about him. His
  *    own owner's, for a stud listing: that is the disclosure the market already makes on his stud
  *    page (slice 0017 §2.3), not a widening of it.
- *  - `stallionConformationKnown` - false for somebody else's stallion. His conformation is shown
- *    nowhere else in the game to anyone but his owner (not on /world/horses/:id, not on his stud
- *    page), so his column reads Unknown rather than quietly becoming the one screen that tells you.
- *    His show record, which IS public, is one link away on his stud page.
+ *  - `stallionConformationKnown` - **true since 2026-08-05 for a stallion standing at stud**, false
+ *    for anyone else's stallion. It used to be false everywhere, on the reasoning that his
+ *    conformation was shown nowhere else in the game to anyone but his owner. That reasoning expired
+ *    when stud listings started showing those words for free (src/db/conformationLabels.ts): the
+ *    preview would otherwise read Unknown down his column while his own stud page printed the same
+ *    words in full. A stallion who is neither at stud nor for sale still reads Unknown.
  */
 async function buildBreedPreview(
   ctx: RequestContext,
@@ -557,11 +565,37 @@ async function buildBreedPreview(
     stallionConformationKnown && (stallionShowSummary?.starts ?? 0) >= 1,
     ctx.config.values
   );
-  const conformationRows = mareConformation.map((row) => ({
-    name: row.name,
-    mareLabel: CONFORMATION_LABEL_TEXT[mareLabels.get(row.code) ?? 'unknown'],
-    stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabels.get(row.code) ?? 'unknown'],
-  }));
+  // 2026-08-05: the third column - what this pairing is actually likely to throw. The operator's
+  // decision was to fix the expectation rather than the genetics ("they still say it's too random
+  // whether babies born are good or not"), so nothing about inheritance changed; this is an exact
+  // calculation over the foal's own distribution (src/engines/genetics/foalPrediction.ts).
+  //
+  // A foal has no breed of its own until it exists, so the range is only computed for a same-breed
+  // pairing, judged against that breed's standard. A cross has no single standard to be judged
+  // against - which is a real fact about the game, not a gap, and the row says so rather than
+  // quietly picking the dam's breed.
+  const sameBreedIdeal = mare.breed_id !== null && mare.breed_id === stallion.breed_id && mareBreed?.ideal_vector ? parseIdealVector(mareBreed.ideal_vector) : null;
+  const mareGenotype = parseGenotype(mare.genotype);
+  const stallionGenotype = parseGenotype(stallion.genotype);
+
+  const conformationRows = mareConformation.map((row) => {
+    const mareLabel = mareLabels.get(row.code) ?? 'unknown';
+    const stallionLabel = stallionLabels.get(row.code) ?? 'unknown';
+    return {
+      name: row.name,
+      mareLabel: CONFORMATION_LABEL_TEXT[mareLabel],
+      stallionLabel: CONFORMATION_LABEL_TEXT[stallionLabel],
+      // The knowledge boundary the operator chose (Q27): the range is honest only if both parents
+      // are actually known, so an unknown parent makes the foal column Unknown too rather than
+      // handing over a prediction built from values this player has not earned the right to see.
+      foalRange:
+        mareLabel === 'unknown' || stallionLabel === 'unknown'
+          ? 'Unknown'
+          : sameBreedIdeal
+            ? foalRangeText(mareGenotype, stallionGenotype, row.code, coi, sameBreedIdeal, ctx.config.values)
+            : 'No single standard',
+    };
+  });
 
   return {
     mareId: mare.id,
@@ -743,9 +777,13 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), error: 'That stallion is not standing at stud anymore.' });
     }
 
+    // 2026-08-05: his conformation words are now public on his stud listing (the operator's oldest
+    // daughter's point - you can look a stud over before paying), so the preview shows them here
+    // too rather than reading Unknown down his column while /market/stud/:id prints them in full.
+    // Still the same gate: he must have started at least one show, or the words are Unknown anyway.
     const preview = await buildBreedPreview(ctx, stableId, mare, outsideStallion, describe, {
       stallionKnowledgeStableId: listing.stable_id,
-      stallionConformationKnown: false,
+      stallionConformationKnown: true,
     });
     // Shown in place of the Book button rather than after pressing it - the refusal is about this
     // mare, and a player with four of them needs to be able to try another without being bounced to
@@ -1000,6 +1038,38 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
         : { deletable: false, reason: 'it has foals, a pedigree, a show record or a stud booking behind it, and other records point at it.' }
       : null;
 
+  // 2026-08-05: the paid evaluation. The owner pays from the stable that owns the horse; anyone else
+  // looking at this page is not offered one here (the sale and stud listing pages are where a
+  // non-owner can buy one, and they pass their own paying stable).
+  const evaluation = owner
+    ? await buildEvaluationSectionView(ctx, horse, ownerStable, `/horses/${String(horse.id)}`, {
+        error: params.get('evaluation_error') ?? undefined,
+        notice: params.get('evaluated') ? 'Evaluation done.' : undefined,
+      })
+    : null;
+
+  // 2026-08-05: the "Grow up" card. Planned here so the button can name the real number of days -
+  // near the maturity cap the last warp is a short one, and saying "six months" would be a lie.
+  const warpPlan = owner ? planTimeWarp(horse, ctx.world.game_day, ctx.config.values) : null;
+  const timeWarp = warpPlan
+    ? {
+        horseId: horse.id,
+        days: warpPlan.days,
+        cost: warpPlan.cost,
+        clamped: warpPlan.clamped,
+        affordable: canTakeOnCost(ownerStable.balance) && ownerStable.balance >= warpPlan.cost,
+        // Months while it still reads as months - "0 years old" is not a thing anybody says about a
+        // foal, and this card is aimed squarely at a ten-year-old looking at one.
+        ageLabel:
+          ageYears < 1
+            ? `${String(Math.max(1, Math.round(ageYears * 12)))} months`
+            : `${String(Math.floor(ageYears))} year${Math.floor(ageYears) === 1 ? '' : 's'}`,
+        monthsLabel: `${String(Math.round((warpPlan.days / gameDaysPerYear) * 12))} months`,
+        error: params.get('warp_error') ?? undefined,
+        notice: params.get('warped') ? 'Grown up.' : undefined,
+      }
+    : null;
+
   const studListingRow = owner && horse.sex === 'stallion' ? await getActiveStudListingForHorse(ctx.env, horse.id) : null;
   const bookedThisSeason = studListingRow ? await bookingsThisSeasonCount(ctx.env, studListingRow.id, ctx.world.season_index) : 0;
   const suggestedStudFee = guideValue ? Math.max(10, Math.round((guideValue.value * ctx.config.values.npc_stud_fee_fraction) / 10) * 10) : null;
@@ -1040,6 +1110,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       conformation,
       conformationLabels,
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
+      evaluation,
+      timeWarp,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
       showSummary,
       recentShowResultGroups,
@@ -1995,6 +2067,222 @@ export async function horseTreatRoute(ctx: RequestContext, horseId: number): Pro
   });
   if (!treated) return redirect(`/horses/${String(horseId)}`);
   return redirect(`/horses/${String(horseId)}?incident_treated=1`);
+}
+
+/**
+ * /horses/:id/evaluate - the paid conformation evaluation, 2026-08-05. Money only, no turn (the
+ * operator's decision: a child evaluating a whole crop of foals should not spend a day's actions
+ * looking rather than doing).
+ *
+ * Who may buy, also the operator's decision: the owner, and anyone looking at a horse that is
+ * currently for sale or standing at stud. That second case is checked here against the live
+ * listing/stud rows rather than trusted from whichever page drew the button, the same discipline
+ * every other POST in this file keeps.
+ */
+export async function horseEvaluateRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const form = await parseForm(ctx.request);
+  // Where the button was pressed, so a buyer looking at a sale listing lands back on it rather than
+  // on a horse page they may not even be allowed to see. Only a same-site path is ever honoured.
+  const rawBack = typeof form.back === 'string' ? form.back : '';
+  const back = /^\/[A-Za-z0-9/_?=&-]*$/.test(rawBack) ? rawBack : `/horses/${String(horseId)}`;
+  const fail = (message: string) => redirect(`${back}${back.includes('?') ? '&' : '?'}evaluation_error=${encodeURIComponent(message)}`);
+
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  if (horse.status !== 'alive') return fail('That horse is no longer alive.');
+
+  const payerStable = await getStableById(ctx.env, Number(form.stable_id));
+  if (!payerStable || payerStable.account_id !== ctx.account!.id) return notFound();
+
+  if (payerStable.id !== horse.owner_stable_id) {
+    const [listing, studListing] = await Promise.all([getOpenListingForHorse(ctx.env, horse.id), getActiveStudListingForHorse(ctx.env, horse.id)]);
+    if (!listing && !studListing) return notFound();
+  }
+
+  const cost = evaluationCost(ctx.config);
+  if (!canTakeOnCost(payerStable.balance) || payerStable.balance < cost) {
+    return fail(`${payerStable.name} has ${String(payerStable.balance)} and an evaluation costs ${String(cost)}. Win a show, sell a horse, or ask a grown-up to add money first.`);
+  }
+
+  const built = await buildEvaluationFor(ctx, horse);
+  if (!built) {
+    return fail(`Nobody can judge ${displayNameFor(horse)} against a breed standard, so there is nothing worth paying for here.`);
+  }
+
+  await ctx.env.DB.batch(
+    buildEvaluationStatements(ctx.env, {
+      stableId: payerStable.id,
+      horseId: horse.id,
+      horseName: displayNameFor(horse),
+      gameDay: ctx.world.game_day,
+      ageGameDays: ctx.world.game_day - horse.born_game_day,
+      verdicts: built,
+      cost,
+    })
+  );
+
+  return redirect(`${back}${back.includes('?') ? '&' : '?'}evaluated=1`);
+}
+
+/** The share of foals a predicted range is drawn to cover. 0.8 is the operator's own number:
+ * "say what they'd get 80% of the time". */
+const FOAL_RANGE_COVERAGE = 0.8;
+
+/**
+ * The plain-words prediction for one trait: the best and worst label inside the central 80% of the
+ * foal distribution. Taking the extremes of the SET of labels rather than the labels at the two ends
+ * of the value interval is the whole subtlety here - a trait's label is not monotonic in its value
+ * (too far above the breed's target is as bad as too far below), so an interval that straddles the
+ * target contains its best word in the middle, not at an edge.
+ */
+function foalRangeText(
+  sire: Genotype,
+  dam: Genotype,
+  trait: TraitCode,
+  coi: number,
+  ideal: ReturnType<typeof parseIdealVector>,
+  cfg: ConfigValues
+): string {
+  const target = ideal[trait];
+  if (target === undefined) return 'Unknown';
+
+  const distribution = foalExpressedDistribution({ sire, dam, trait, coi, noiseSd: cfg.conformation_noise_sd, config: cfg });
+  const { low, high } = centralInterval(distribution, FOAL_RANGE_COVERAGE);
+  const bands = conformationLabelBands(cfg);
+
+  let best = -1;
+  let worst = LABEL_ORDER.length;
+  for (let value = low; value <= high; value++) {
+    const index = LABEL_ORDER.indexOf(bandForTraitScore(traitScoreFor(value, target.target, cfg.show_ideal_falloff), bands));
+    if (index > best) best = index;
+    if (index < worst) worst = index;
+  }
+  if (best < 0) return 'Unknown';
+
+  const worstText = CONFORMATION_LABEL_TEXT[LABEL_ORDER[worst]];
+  const bestText = CONFORMATION_LABEL_TEXT[LABEL_ORDER[best]];
+  return worstText === bestText ? worstText : `${worstText} to ${bestText}`;
+}
+
+const LABEL_ORDER: ConformationLabel[] = ['poor', 'weak', 'acceptable', 'good', 'outstanding'];
+
+/** "Good", or "Weak to Good" while the evaluator is still hedging. */
+function verdictText(verdict: { low: ConformationLabel; high: ConformationLabel }): string {
+  const low = CONFORMATION_LABEL_TEXT[verdict.low];
+  const high = CONFORMATION_LABEL_TEXT[verdict.high];
+  return low === high ? low : `${low} to ${high}`;
+}
+
+/**
+ * The Evaluation block's whole view, shared by the horse page, a sale listing and a stud listing -
+ * one builder, so the words a buyer sees and the words an owner sees can never drift apart.
+ *
+ * Returns null when there is nobody to bill (a viewer with no stable) or nothing to sell (an ended
+ * horse, or a breed with no standard to be judged against) - in every one of those cases the section
+ * simply does not render, rather than drawing a button that horseEvaluateRoute would refuse.
+ */
+export async function buildEvaluationSectionView(
+  ctx: RequestContext,
+  horse: HorseRow,
+  payerStable: StableRow | null,
+  back: string,
+  messages: { error?: string; notice?: string }
+): Promise<EvaluationSectionView | null> {
+  if (!payerStable || horse.status !== 'alive') return null;
+
+  const breed = horse.breed_id ? await getBreedById(ctx.env, horse.breed_id) : undefined;
+  if (!breed?.ideal_vector) return null;
+
+  const [traitRows, latest] = await Promise.all([getConformationTraits(ctx.env), getLatestEvaluation(ctx.env, payerStable.id, horse.id)]);
+  const traitName = new Map(traitRows.map((row) => [row.code, row.name]));
+  const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const ageYears = (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear;
+  const cost = evaluationCost(ctx.config);
+
+  const current = latest
+    ? {
+        rows: Object.entries(latest.verdicts.traits).flatMap(([code, verdict]) =>
+          verdict ? [{ name: traitName.get(code) ?? code, text: verdictText(verdict) }] : []
+        ),
+        ageYears: latest.row.age_game_days / gameDaysPerYear,
+        certain: Object.values(latest.verdicts.traits).every((v) => v && v.low === v.high),
+      }
+    : null;
+
+  return {
+    horseId: horse.id,
+    cost,
+    payerStableId: payerStable.id,
+    back,
+    current,
+    worthBuyingAgain: latest ? wouldSharpen(latest.row.age_game_days / gameDaysPerYear, ageYears, ctx.config.values) : true,
+    affordable: canTakeOnCost(payerStable.balance) && payerStable.balance >= cost,
+    error: messages.error,
+    notice: messages.notice,
+  };
+}
+
+/**
+ * The evaluation itself, for one horse, at today's age. Returns null when the horse's breed has no
+ * ideal_vector to be judged against - the caller refuses the purchase rather than charging for a
+ * page of Unknowns.
+ *
+ * The horse is judged on its MATURE conformation, not today's: a four-month-old's expressed values
+ * have barely realised, and the question a child is actually asking is what the foal will become.
+ * See src/engines/conformation/evaluation.ts for why the vagueness is derived from the horse's own
+ * seed rather than drawn per purchase.
+ */
+async function buildEvaluationFor(ctx: RequestContext, horse: HorseRow): Promise<StoredEvaluation | null> {
+  const [traitRows, breed] = await Promise.all([
+    getConformationTraits(ctx.env),
+    horse.breed_id ? getBreedById(ctx.env, horse.breed_id) : Promise.resolve(undefined),
+  ]);
+  const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  if (!ideal) return null;
+
+  const ageYears = (ctx.world.game_day - horse.born_game_day) / ctx.config.values.game_days_per_year;
+  const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
+
+  return evaluateHorse(
+    {
+      rngSeed: horse.rng_seed,
+      matureConformation: conformation.map((row) => ({ code: row.code, expressed: row.matureExpressed })),
+      ideal,
+      falloff: ctx.config.values.show_ideal_falloff,
+      bands: conformationLabelBands(ctx.config.values),
+      ageYears,
+    },
+    ctx.config.values
+  );
+}
+
+/**
+ * /horses/:id/warp - the per-horse time warp, 2026-08-05. Owner-only, money and one turn, capped at
+ * maturity. See src/db/timeWarp.ts for what it does and deliberately does not simulate.
+ */
+export async function horseWarpRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+
+  const fail = (message: string) => redirect(`/horses/${String(horseId)}?warp_error=${encodeURIComponent(message)}`);
+
+  // Re-planned here rather than trusted from the page that drew the button: a tick may have run
+  // since, and the horse may already be grown.
+  const plan = planTimeWarp(horse, ctx.world.game_day, ctx.config.values);
+  if (!plan) return fail(`${displayNameFor(horse)} is already grown up.`);
+
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.time_warp) return fail(turnsRefusalMessage(ctx));
+  if (!canTakeOnCost(ownerStable.balance) || ownerStable.balance < plan.cost) {
+    return fail(`${ownerStable.name} has ${String(ownerStable.balance)} and growing a horse up costs ${String(plan.cost)}. Win a show, sell a horse, or ask a grown-up to add money first.`);
+  }
+
+  await ctx.env.DB.batch(buildTimeWarpStatements(ctx.env, { horse, horseName: displayNameFor(horse), days: plan.days, cost: plan.cost, gameDay: ctx.world.game_day }));
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.time_warp);
+
+  return redirect(`/horses/${String(horseId)}?warped=1`);
 }
 
 /**

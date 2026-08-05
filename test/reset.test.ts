@@ -24,6 +24,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   horse_knowledge: ['stables', 'horses'],
   horse_conditions: ['horses', 'conditions'],
   horse_incidents: ['horses', 'incident_types'],
+  horse_evaluations: ['stables', 'horses'],
   horses: ['breeds', 'horses', 'stables'],
   stable_prefix_history: ['stables'],
   ledger: ['stables'],
