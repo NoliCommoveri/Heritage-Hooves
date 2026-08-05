@@ -17,6 +17,7 @@ import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 import {
   SHOW_BARN_PREFIX,
+  QH_VOLUME_BREEDER_PREFIX,
   QH_CONFORMATION_SPECIALIST_PREFIX,
   QH_DISCIPLINE_BARN_PREFIX,
   PF_CONFORMATION_SPECIALIST_PREFIX,
@@ -204,19 +205,22 @@ export interface ResetResult {
  * now gone.
  *
  * A full world reset's blanket `DELETE FROM stables` also removes every NPC stable - each is a
- * stable like any other, and the migrations that created them (0040, 0085, 0097, 0136, 0137, 0168)
- * only ever run once, so nothing would recreate them afterwards. All eleven (the three renamed
+ * stable like any other, and the migrations that created them (0040, 0085, 0097, 0136, 0137, 0168,
+ * 0172) only ever run once, so nothing would recreate them afterwards. All twelve (the three renamed
  * Quarter Horse personalities - Apples and Oats Ranch, Bronco Valley, Horseshoe Bay - the six Paso
  * Fino and German Warmblood personalities slice 0023 added, Dressur Stables (migration 0168, German
- * Warmblood's second discipline barn, targeting Dressage), and the Consignment Yard) are
- * re-inserted here, empty, in exactly the shape those migrations leave them in, along with all nine
- * real `npc_policy` rows - without the policy rows, every NPC stable comes back after a reset and
- * none of them ever breeds again. Apples and Oats Ranch is re-stocked from /admin/shows exactly as
- * before (via `stockShowBarn`); every other personality stable is real, empty, and stocked by hand
- * from `/admin/npc`'s outcross control (slice 0015 §7.3) - a reset simply leaves them in that same
- * unstocked state. The Consignment Yard gets no `npc_policy` row, deliberately matching migration
- * 0097 - it never breeds, shows or buys, and `runConsignments` mints its next batch on the tick
- * immediately following the reset (`nextConsignmentDueGameDay` treats "no listing yet" as due now).
+ * Warmblood's second discipline barn, targeting Dressage), the Consignment Yard, and the show barn
+ * itself (migration 0172, slice 0026 stage 4, split off Apples and Oats Ranch)) are re-inserted here,
+ * empty, in exactly the shape those migrations leave them in, along with all nine real `npc_policy`
+ * rows - without the policy rows, every breeding NPC stable comes back after a reset and none of them
+ * ever breeds again. Apples and Oats Ranch is a real, empty breeding stable like the rest, stocked by
+ * hand from `/admin/npc`'s outcross control (slice 0015 §7.3) or left to breed on its own - a reset
+ * simply leaves it in that same unstocked state. The show barn is re-stocked from /admin/shows'
+ * "Restock show barn to plan" button, or automatically by the tick's own top-up stage on whichever
+ * tick runs next (`topUpShowBarnToPlan`, idempotent the same way `stockShowBarn` used to be). The
+ * Consignment Yard gets no `npc_policy` row either, deliberately matching migration 0097 - it never
+ * breeds, shows or buys, and `runConsignments` mints its next batch on the tick immediately following
+ * the reset (`nextConsignmentDueGameDay` treats "no listing yet" as due now).
  */
 /**
  * One personality stable's three statements (stable, prefix history, policy) - slice 0023 grew the
@@ -335,7 +339,7 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
     statements.push(env.DB.prepare('UPDATE accounts SET last_active_stable_id = NULL'));
     statements.push(
       ...personalityStableStatements(env, {
-        prefix: SHOW_BARN_PREFIX,
+        prefix: QH_VOLUME_BREEDER_PREFIX,
         personalityCode: 'volume_breeder',
         target: { kind: 'conformation', breedCode: 'QH' },
         ...VOLUME_BREEDER_NUMBERS,
@@ -412,6 +416,26 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
         target: { kind: 'ability', disciplineCode: 'dressage' },
         ...DISCIPLINE_BARN_NUMBERS,
       })
+    );
+    // Slice 0026 stage 4 §4.2/§4.10: the show barn, split from the QH volume breeder above - no
+    // npc_policy row, same shape as the Consignment Yard right below, which is what keeps
+    // npcBreeding.ts's `SELECT * FROM npc_policy` from ever breeding it. Name and prefix are
+    // identical (see src/db/npc.ts's SHOW_BARN_PREFIX comment for why this isn't 'Fair Meadow').
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stables (account_id, name, prefix, prefix_set_game_day, prefix_locked, is_npc, balance, capacity, created_game_day, created_real_ts, active)
+           VALUES (NULL, ?, ?, 0, 1, 1, 0, 100, 0, ?, 1)`
+        )
+        .bind(SHOW_BARN_PREFIX, SHOW_BARN_PREFIX, nowUtcSeconds())
+    );
+    statements.push(
+      env.DB
+        .prepare(
+          `INSERT INTO stable_prefix_history (stable_id, prefix, from_game_day, to_game_day, claimed_by_account_id, created_real_ts)
+           VALUES ((SELECT id FROM stables WHERE prefix = ?), ?, 0, NULL, NULL, ?)`
+        )
+        .bind(SHOW_BARN_PREFIX, SHOW_BARN_PREFIX, nowUtcSeconds())
     );
     statements.push(
       env.DB

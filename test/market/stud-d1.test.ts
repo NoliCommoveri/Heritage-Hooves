@@ -90,10 +90,11 @@ async function readConfig(env: Env): Promise<Config> {
   return { version: row.version, values: JSON.parse(row.values), flags: JSON.parse(row.flags) };
 }
 
-// migrations 0085/0097/0136/0137/0168 seed eleven NPC stables (ids 1-11, slice 0023 grew this from
-// 4 to 10 and migration 0168 added an 11th), so the two player stables below are 12 and 13.
-const MARE_STABLE = 12;
-const STALLION_STABLE = 13;
+// migrations 0085/0097/0136/0137/0168/0172 seed twelve NPC stables (ids 1-12, slice 0023 grew this
+// from 4 to 10, migration 0168 added an 11th, and migration 0172 - slice 0026 stage 4's show barn,
+// split off Apples and Oats Ranch - a 12th), so the two player stables below are 13 and 14.
+const MARE_STABLE = 13;
+const STALLION_STABLE = 14;
 const MARE_ID = 1;
 const STALLION_ID = 2;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';

@@ -105,7 +105,7 @@ describeWithSqlite('resetWorld (full world scope) recreates the NPC stables', ()
     expect(listedCount).toBeGreaterThan(0);
   });
 
-  it('recreates the other ten NPC stables alongside it', async () => {
+  it('recreates the other eleven NPC stables alongside it', async () => {
     const db = freshDb();
     const env = makeEnv(db);
 
@@ -115,8 +115,9 @@ describeWithSqlite('resetWorld (full world scope) recreates the NPC stables', ()
     const npcStableCount = (db.prepare('SELECT COUNT(*) AS n FROM stables WHERE is_npc = 1').get() as { n: number }).n;
     // Slice 0023: three Quarter Horse personalities (Apples and Oats Ranch, Bronco Valley,
     // Horseshoe Bay) plus three each for Paso Fino and German Warmblood, plus Dressur Stables
-    // (migration 0168, German Warmblood's second discipline barn), plus the Consignment Yard.
-    expect(npcStableCount).toBe(11);
+    // (migration 0168, German Warmblood's second discipline barn), plus the Consignment Yard, plus
+    // the show barn itself (slice 0026 stage 4, split off Apples and Oats Ranch).
+    expect(npcStableCount).toBe(12);
   });
 });
 

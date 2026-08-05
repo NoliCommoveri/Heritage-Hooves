@@ -86,11 +86,12 @@ function freshDb(): DatabaseSync {
   return db;
 }
 
-// The migrations seed eleven NPC stables (ids 1-9 across three breeds' personalities, slice 0023,
-// the amendment 0017a consignment dealer at 10, and migration 0168's second German Warmblood
-// discipline barn at 11), so the two player stables below are 12 and 13.
-const SELLER = 12;
-const BUYER = 13;
+// The migrations seed twelve NPC stables (ids 1-9 across three breeds' personalities, slice 0023,
+// the amendment 0017a consignment dealer at 10, migration 0168's second German Warmblood discipline
+// barn at 11, and migration 0172's show barn - split off Apples and Oats Ranch, slice 0026 stage 4 -
+// at 12), so the two player stables below are 13 and 14.
+const SELLER = 13;
+const BUYER = 14;
 
 function seed(db: DatabaseSync, opts: { sameAccount?: boolean } = {}) {
   db.exec(`INSERT INTO accounts (username, display_name, password_hash, is_admin, active, must_change_password, created_real_ts) VALUES ('a','A','x',0,1,0,0), ('b','B','x',0,1,0,0)`);

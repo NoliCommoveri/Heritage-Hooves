@@ -26,7 +26,8 @@ import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
 import { getAbilityTraits } from './quantitativeTraits';
 import { buildAbilityWordUpsertStatement, type AbilityWordLabel } from './abilityTests';
-import { listNpcStableHorses } from './npc';
+import { listNpcStableHorses, getShowBarnStable } from './npc';
+import { listNpcPolicies } from './npcBreeding';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
@@ -1611,6 +1612,10 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     weakMin: config.values.conformation_label_weak_min,
   };
 
+  // Slice 0026 stage 4 §4.9/§4.5: fetched once, used both by the NPC top-up's tier 2 below and by
+  // the rank-freeze check further down - one row, no reason to ask twice in the same class judged.
+  const showBarn = await getShowBarnStable(env);
+
   const existingEntries = await getEntriesForClass(env, cls.id);
   const alreadyIn = new Set(existingEntries.map((e) => e.horse_id));
 
@@ -1628,16 +1633,45 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const npcHorses: HorseRow[] = [];
   if (shortfall > 0) {
     // Slice 0015 §7.1: every NPC stable's stock, not one hardcoded stable - everything else here
-    // (the shuffle, the is_npc flag on the resulting show_entries row, the never-top-up-an-empty-
-    // field rule above) is unchanged. Slice 0025 §7.5a.1: the eligibility check itself is now
+    // (the is_npc flag on the resulting show_entries row, the never-top-up-an-empty-field rule
+    // above) is unchanged. Slice 0025 §7.5a.1: the eligibility check itself is now
     // eligibleNpcHorsesForClass, which batches every query that used to run once per candidate
     // horse down to a handful for the whole pool - this loop is the dominant cost of a judged tick
     // (§7.6), and it is also where rank now has to be checked (§7.5: "let the npcs compete like real
-    // players" means an NPC's own current rank gates it exactly the way a player's does).
-    const candidates = await listNpcStableHorses(env);
+    // players" means an NPC's own current rank gates it exactly the way a player's does). One
+    // eligibility batch for the whole is_npc pool, same as before - the two-tier split below (slice
+    // 0026 stage 4 §4.9) partitions the already-computed eligible list rather than re-querying it, so
+    // this stays a single batch regardless of how many tiers the result gets split into.
+    const [candidates, policies] = await Promise.all([listNpcStableHorses(env), listNpcPolicies(env)]);
     const eligible = await eligibleNpcHorsesForClass(env, cls, candidates, alreadyIn, gameDay, gameDaysPerYear, config);
+
+    // §4.9: tier 1 is every breeding NPC stable (one with an npc_policy row), ordered so a stable
+    // scoped to this exact class draws before an unscoped one; tier 2 is the show barn, used only for
+    // whatever shortfall tier 1 leaves. Tier 1 is an ordering, not a filter - a hard "scoped barns
+    // only" filter would empty tier 1 for every class no barn targets and push everything straight to
+    // the show barn, which is not what "let the scoped barns go first" means. A stable that is
+    // neither a breeding stable nor the show barn (the Consignment Yard) never reaches either tier -
+    // its horses are for sale, not a competitive field's padding.
+    const scopedStableIds = new Set(
+      policies
+        .filter((p) =>
+          cls.class_type === 'breed_conformation'
+            ? p.target_kind === 'conformation' && p.target_breed_id === cls.breed_id
+            : p.target_kind === 'ability' && p.target_discipline_code === cls.discipline_code
+        )
+        .map((p) => p.stable_id)
+    );
+    const policyStableIds = new Set(policies.map((p) => p.stable_id));
+    const tier1Scoped = eligible.filter((h) => scopedStableIds.has(h.owner_stable_id));
+    const tier1Unscoped = eligible.filter((h) => policyStableIds.has(h.owner_stable_id) && !scopedStableIds.has(h.owner_stable_id));
+    const tier2 = eligible.filter((h) => showBarn !== null && h.owner_stable_id === showBarn.id);
+
     const rng = makeRng(deriveSeed(cls.rng_seed, 'npc_field'));
-    npcHorses.push(...rng.shuffle(eligible).slice(0, shortfall));
+    const tier1 = [...rng.shuffle(tier1Scoped), ...rng.shuffle(tier1Unscoped)];
+    npcHorses.push(...tier1.slice(0, shortfall));
+    if (npcHorses.length < shortfall) {
+      npcHorses.push(...rng.shuffle(tier2).slice(0, shortfall - npcHorses.length));
+    }
   }
   const allHorseIds = [...existingEntries.map((e) => e.horse_id), ...npcHorses.map((h) => h.id)];
   if (allHorseIds.length === 0) {
@@ -1969,38 +2003,50 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
 
   // Slice 0025 stage 4 §7.5: rank progression, only for the two rank-tracked class types - every
   // placed horse in a breed_conformation/discipline class advances its own counters, whether it's a
-  // player's horse or the show barn's own (NPCs carry ranks too - "let the npcs compete like real
-  // players"). young_conformation/ability_test never reach this block (branches on class_type, which
-  // is what horse_class_ranks itself is keyed by, not on cls.rank).
+  // player's horse or a breeding NPC stable's own ("let the npcs compete like real players").
+  // young_conformation/ability_test never reach this block (branches on class_type, which is what
+  // horse_class_ranks itself is keyed by, not on cls.rank).
+  //
+  // Slice 0026 stage 4 §4.5: the show barn's own horses are the one exception - their ranks are
+  // seeded at mint (src/db/npc.ts) and frozen, never updated here. Without this, the Champion field
+  // would slowly fill with computer horses that climbed there by winning, which is the NPC ceiling
+  // problem (CLAUDE.md §13) arriving through a side door: the barn exists to pad a field, not to
+  // out-compete the children for the rank they are trying to earn.
   if (cls.class_type === 'breed_conformation' || cls.class_type === 'discipline') {
     const rankType = cls.class_type;
-    const existingRankRows = await env.DB
-      .prepare(`SELECT * FROM horse_class_ranks WHERE class_key = ? AND horse_id IN (${allHorseIds.map(() => '?').join(',')})`)
-      .bind(cls.class_key, ...allHorseIds)
-      .all<HorseClassRankRow>();
-    const rankRowByHorseId = new Map((existingRankRows.results ?? []).map((r) => [r.horse_id, r]));
-    for (const horseId of allHorseIds) {
-      const placing = placingByHorseId.get(horseId);
-      if (placing === undefined) continue;
-      const next = nextRankProgressionRow(
-        rankRowByHorseId.get(horseId) ?? null,
-        placing,
-        config.values.show_rank_top3_required,
-        config.values.show_rank_win_required
-      );
-      statements.push(
-        buildRankProgressionUpsertStatement(env, {
-          horseId,
-          classType: rankType,
-          breedId: cls.breed_id,
-          disciplineCode: cls.discipline_code,
-          classKey: cls.class_key,
-          rank: next.rank,
-          top3: next.top3,
-          wins: next.wins,
-          gameDay,
-        })
-      );
+    const rankEligibleHorseIds = allHorseIds.filter((id) => {
+      const horse = horseById.get(id);
+      return horse !== undefined && (showBarn === null || horse.owner_stable_id !== showBarn.id);
+    });
+    if (rankEligibleHorseIds.length > 0) {
+      const existingRankRows = await env.DB
+        .prepare(`SELECT * FROM horse_class_ranks WHERE class_key = ? AND horse_id IN (${rankEligibleHorseIds.map(() => '?').join(',')})`)
+        .bind(cls.class_key, ...rankEligibleHorseIds)
+        .all<HorseClassRankRow>();
+      const rankRowByHorseId = new Map((existingRankRows.results ?? []).map((r) => [r.horse_id, r]));
+      for (const horseId of rankEligibleHorseIds) {
+        const placing = placingByHorseId.get(horseId);
+        if (placing === undefined) continue;
+        const next = nextRankProgressionRow(
+          rankRowByHorseId.get(horseId) ?? null,
+          placing,
+          config.values.show_rank_top3_required,
+          config.values.show_rank_win_required
+        );
+        statements.push(
+          buildRankProgressionUpsertStatement(env, {
+            horseId,
+            classType: rankType,
+            breedId: cls.breed_id,
+            disciplineCode: cls.discipline_code,
+            classKey: cls.class_key,
+            rank: next.rank,
+            top3: next.top3,
+            wins: next.wins,
+            gameDay,
+          })
+        );
+      }
     }
   }
 
