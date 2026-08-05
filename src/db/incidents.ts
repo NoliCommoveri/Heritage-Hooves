@@ -123,6 +123,7 @@ interface IncidentCheckHorseRow {
   last_incident_check_game_day: number;
   owner_stable_id: number;
   account_id: number | null;
+  account_paused: number | null;
   feed_level: string;
 }
 
@@ -140,6 +141,10 @@ function daysSinceLastIncidentCheck(lastCheckGameDay: number, gameDay: number): 
  * types it does not currently have an open episode for, and writes a horse_incidents row +
  * incident_onset event on a hit. Idempotent: a horse whose marker already equals gameDay is
  * excluded from the SELECT entirely, so a re-fired tick finds nothing left to check.
+ *
+ * Migration 0174: a horse owned by a paused account is still fetched (its marker still needs to
+ * advance so an unpause doesn't present a backlog of unrolled days) but is skipped in the incident
+ * type loop below - no new onset is rolled for it while its account stays paused.
  */
 export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: number, config: Config): Promise<void> {
   if (config.flags.acute_check_enabled === false) return;
@@ -148,8 +153,9 @@ export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: num
   const horsesResult = await env.DB.prepare(
     `SELECT h.id, h.sex, h.registered_name, h.barn_name, h.genotype, h.rng_seed, h.born_game_day,
             h.last_farrier_game_day, h.last_vet_game_day, h.location, h.last_incident_check_game_day,
-            h.owner_stable_id, s.account_id, s.feed_level
+            h.owner_stable_id, s.account_id, a.paused AS account_paused, s.feed_level
      FROM horses h JOIN stables s ON s.id = h.owner_stable_id
+     LEFT JOIN accounts a ON a.id = s.account_id
      WHERE h.status = 'alive' AND h.last_incident_check_game_day < ? AND h.born_game_day <= ?`
   )
     .bind(gameDay, gameDay - cfg.care_start_age_game_days)
@@ -192,6 +198,13 @@ export async function rollAcuteIncidents(env: Env, gameDay: number, tickSeq: num
   const statements: D1PreparedStatement[] = [];
 
   for (const horse of horses) {
+    // Migration 0174: advance the marker so no backlog of unrolled days builds up, but roll nothing
+    // - a paused account's horses draw no new illness or injury while paused.
+    if (horse.account_paused === 1) {
+      statements.push(env.DB.prepare('UPDATE horses SET last_incident_check_game_day = ? WHERE id = ? AND last_incident_check_game_day < ?').bind(gameDay, horse.id, gameDay));
+      continue;
+    }
+
     const daysSinceLastCheck = daysSinceLastIncidentCheck(horse.last_incident_check_game_day, gameDay);
     const alreadyOpen = openByHorse.get(horse.id) ?? new Set<string>();
     const farrier = timerState(

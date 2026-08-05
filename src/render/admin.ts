@@ -230,7 +230,7 @@ export function renderAccountsPage(params: {
       <td>${a.display_name}</td>
       <td>${a.is_admin ? 'admin' : 'player'}</td>
       <td>${DIFFICULTY_LABEL[difficultyLevel]}</td>
-      <td>${a.active ? 'active' : 'deactivated'}</td>
+      <td>${a.active ? 'active' : 'deactivated'}${a.paused ? html` <span class="badge badge-warning">paused</span>` : ''}</td>
       <td>${String(stableCount)}</td>
       <td>${a.last_login_real_ts !== null ? formatLocal(a.last_login_real_ts, params.world.tick_timezone) : raw('&mdash;')}</td>
       <td>${a.must_change_password ? html`<span class="badge badge-warning">must change password</span>` : ''}</td>
@@ -250,6 +250,12 @@ export function renderAccountsPage(params: {
           </form>
           ${difficultyForm}
           ${adminToggle}
+          <form method="post" action="/admin/accounts">
+            <input type="hidden" name="action" value="${a.paused ? 'unpause' : 'pause'}">
+            <input type="hidden" name="account_id" value="${String(a.id)}">
+            <button type="submit" class="secondary">${a.paused ? 'Unpause' : 'Pause'}</button>
+          </form>
+          <p class="muted">Pausing stops board charges and new illness/injury for this account's horses and blocks it from doing anything except unpausing itself. Horses still age, pregnancies still foal, listings still run to expiry, and show entries already made still get judged.</p>
           <form method="post" action="/admin/accounts">
             <input type="hidden" name="action" value="${a.active ? 'deactivate' : 'reactivate'}">
             <input type="hidden" name="account_id" value="${String(a.id)}">

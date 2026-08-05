@@ -24,6 +24,11 @@ export interface AccountRow {
    * Read by the two incident tick stages and nothing else - see
    * src/engines/incidents/difficulty.ts for exactly what it does and does not touch. */
   difficulty: string;
+  /** Migration 0174. Self-service (and admin-settable) pause, distinct from `active`. See
+   * src/db/accounts.ts's setPaused and router.ts's paused gate for what it does and does not stop. */
+  paused: number;
+  /** Audit trail only (when the pause began, wall clock) - never read to decide anything. */
+  paused_real_ts: number | null;
 }
 
 /**
@@ -97,6 +102,18 @@ export async function updatePassword(env: Env, accountId: number, passwordHash: 
 
 export async function setActive(env: Env, accountId: number, active: boolean): Promise<void> {
   await env.DB.prepare('UPDATE accounts SET active = ? WHERE id = ?').bind(active ? 1 : 0, accountId).run();
+}
+
+/**
+ * Self-service (or admin-driven) pause: distinct from `active` (which blocks login entirely). A
+ * paused account can still log in, but router.ts gates every page except /account/pause behind
+ * "This account is paused" until this is called again with paused = false. paused_real_ts is
+ * audit-trail only, cleared on unpause - nothing in game logic reads it (CLAUDE.md 5.3).
+ */
+export async function setAccountPaused(env: Env, accountId: number, paused: boolean): Promise<void> {
+  await env.DB.prepare('UPDATE accounts SET paused = ?, paused_real_ts = ? WHERE id = ?')
+    .bind(paused ? 1 : 0, paused ? nowUtcSeconds() : null, accountId)
+    .run();
 }
 
 export async function recordLogin(env: Env, accountId: number): Promise<void> {

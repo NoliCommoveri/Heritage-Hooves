@@ -78,3 +78,44 @@ export function renderPasswordChangePage(params: {
     body,
   });
 }
+
+/**
+ * Self-service pause. Reached from the nav's "Account" link, and it's the one page router.ts's
+ * paused gate always leaves open - so it renders correctly in both states rather than assuming
+ * the caller only reaches it while unpaused.
+ */
+export function renderAccountPausePage(params: {
+  world: WorldRow;
+  isAdmin: boolean;
+  actionsLeft: number | null;
+  gameDaysPerYear: number;
+  paused: boolean;
+}): SafeHtml {
+  const body = params.paused
+    ? html`
+      <h1>This account is paused</h1>
+      <p>Your horses keep ageing, any pregnancy still foals, any listing you have on the market still runs to its expiry, and any show entry you've made still gets judged. But nothing else on this account happens while it's paused - no board is charged, no new illness or injury is rolled, and no page lets you do anything except unpause.</p>
+      <form method="post" action="/account/pause">
+        <input type="hidden" name="action" value="unpause">
+        <button type="submit">Unpause my account</button>
+      </form>
+    `
+    : html`
+      <h1>Pause your account</h1>
+      <p>Use this before time away from the game. While paused: your horses keep ageing, a pregnancy still foals, a market listing still runs to its expiry, and a show entry you've already made still gets judged. But you won't be charged board, no new illness or injury will be rolled for your horses, and every page will send you back here until you unpause - which you can do any time.</p>
+      <form method="post" action="/account/pause">
+        <input type="hidden" name="action" value="pause">
+        <button type="submit" class="secondary">Pause my account</button>
+      </form>
+      <p><a href="/account/password">Change your password</a></p>
+    `;
+  return pageShell({
+    title: params.paused ? 'Account paused' : 'Pause account',
+    world: params.world,
+    loggedIn: true,
+    isAdmin: params.isAdmin,
+    actionsLeft: params.actionsLeft,
+    gameDaysPerYear: params.gameDaysPerYear,
+    body,
+  });
+}
