@@ -225,21 +225,18 @@ export function showResultGroupsHtml(groups: ShowResultGroup[]): SafeHtml {
   )}`;
 }
 
-function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: number): string {
-  // Slice 0012 §2.1: a discipline class has no breed_id and is always open to every breed and
-  // every cross - the "purebreds only" phrase never applies to one. Slice 0025 stage 3: an
-  // ability_test class is the same - it measures raw ability, not breed standard, so it has no
-  // breed_id either (migration 0161's own CHECK).
-  const isBreedOpen = cls.class_type === 'discipline' || cls.class_type === 'ability_test';
-  const parts = isBreedOpen ? ['Open to every breed'] : [`${breedName}`, cls.crosses_eligible ? 'purebreds and crosses' : 'purebreds only'];
-  let sentence = `${parts.join(' · ')} · at least ${String(minAgeYears)} years old`;
-  if (cls.max_age_game_days !== null) sentence += ` · no older than ${String(Math.round(cls.max_age_game_days / 360))} years`;
-  if (cls.sex_restriction) sentence += ` · ${cls.sex_restriction}s only`;
-  if (cls.requires_gait) sentence += ' · must be gaited';
+function classRulesSentence(cls: ShowClassRow, minAgeYears: number): string {
+  // The class's own title already names the breed (or says it's open to every breed), so restating
+  // that here is redundant - this line is just the age band, plus rank, plus whatever other
+  // restriction actually narrows the field (sex, gait).
+  const ageRange = cls.max_age_game_days !== null ? `${String(minAgeYears)}-${String(Math.round(cls.max_age_game_days / 360))} years` : `${String(minAgeYears)}+ years`;
+  const parts = [ageRange];
+  if (cls.sex_restriction) parts.push(`${cls.sex_restriction}s only`);
+  if (cls.requires_gait) parts.push('must be gaited');
   // Slice 0025 stage 4 §7.5: 'none' means young_conformation/ability_test, which are never
   // rank-bracketed - nothing to add there.
-  if (cls.rank !== 'none') sentence += ` · ${cls.rank[0].toUpperCase()}${cls.rank.slice(1)}`;
-  return sentence;
+  if (cls.rank !== 'none') parts.push(`${cls.rank[0].toUpperCase()}${cls.rank.slice(1)}`);
+  return parts.join(' · ');
 }
 
 /** Slice 0012 §5.5: "a class with fewer than three entries says so in words" - so a thin
@@ -353,7 +350,7 @@ export function renderShowsIndexPage(params: {
           (c) => html`
           <div class="card">
             <h3>${c.cls.name}</h3>
-            <p class="muted">${classRulesSentence(c.cls, c.breedName, c.minAgeYears)}</p>
+            <p class="muted">${classRulesSentence(c.cls, c.minAgeYears)}</p>
             <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
             <p class="muted">${String(c.entryCount)} horse${c.entryCount === 1 ? '' : 's'} entered so far.</p>
             ${thinFieldNote(c.cls, c.entryCount)}
@@ -459,7 +456,7 @@ export function renderShowPage(params: {
     return html`
       <div class="card">
         <h2>${c.cls.name}</h2>
-        <p class="muted">${classRulesSentence(c.cls, c.breedName, c.minAgeYears)}</p>
+        <p class="muted">${classRulesSentence(c.cls, c.minAgeYears)}</p>
         <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
         ${thinFieldNote(c.cls, c.entries.length)}
         <table>

@@ -17,7 +17,9 @@ export interface WorldStableListRow {
   /** Null for an NPC stable or a stable whose owning account was deleted. */
   ownerDisplayName: string | null;
   horseCount: number;
-  /** Ignored for an NPC stable - see the render function's own comment (§6.2.1). */
+  /** Shown for every stable, NPC included - the operator asked to see what an NPC stable is
+   * actually worth rather than the earlier "Run by the game" placeholder (§6.2.1's original
+   * reasoning still applies to how NPC balance behaves, just not to whether it's shown). */
   balance: number;
   isMine: boolean;
 }
@@ -34,10 +36,8 @@ export function renderWorldIndexPage(params: {
   stables: WorldStableListRow[];
 }): SafeHtml {
   const rows = params.stables.map((s) => {
-    const whoRunsIt = s.isNpc ? 'Run by the game' : (s.ownerDisplayName ?? 'a deleted account');
-    // §6.2.1: an NPC stable's balance is a one-way counter measuring nothing a player's balance
-    // measures (it earns prize money and pays no upkeep), so it is never shown as a number.
-    const moneyCell = s.isNpc ? 'Run by the game' : String(s.balance);
+    const whoRunsIt = s.isNpc ? 'NPC' : (s.ownerDisplayName ?? 'a deleted account');
+    const moneyCell = String(s.balance);
     const horseCell = s.horseCount === 0 ? 'no horses yet' : String(s.horseCount);
     return html`
       <tr>
@@ -77,7 +77,7 @@ export function renderWorldStablePage(params: {
   horses: WorldRosterHorse[];
 }): SafeHtml {
   const s = params.stable;
-  const moneyLine = s.isNpc ? 'Run by the game' : String(s.balance);
+  const moneyLine = String(s.balance);
 
   const cards = params.horses.length
     ? params.horses.map(
@@ -95,7 +95,7 @@ export function renderWorldStablePage(params: {
   const body = html`
     <h1>${s.name}</h1>
     <div class="card">
-      <p><strong>Prefix:</strong> ${s.prefix} &middot; <strong>Run by:</strong> ${s.isNpc ? 'the game' : 'a player'}</p>
+      <p><strong>Prefix:</strong> ${s.prefix} &middot; <strong>Run by:</strong> ${s.isNpc ? 'NPC' : 'a player'}</p>
       <p><strong>Money:</strong> ${moneyLine} &middot; <strong>Capacity:</strong> ${String(s.capacity)} &middot; <strong>Horses:</strong> ${String(s.aliveHorseCount)}</p>
     </div>
     ${cards}

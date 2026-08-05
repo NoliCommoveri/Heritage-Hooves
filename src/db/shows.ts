@@ -955,7 +955,7 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
            NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
          )`
       ).bind(
-        `${breed.name} Conformation`,
+        `Conformation- ${breed.name}`,
         breed.id,
         classKeyFor('breed_conformation', breed.id, null, null, null),
         config.values.show_conformation_min_age_game_days,
@@ -1038,7 +1038,7 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
              NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
            )`
         ).bind(
-          `${band.label} ${breed.name} Conformation`,
+          `${band.label} Conformation- ${breed.name}`,
           breed.id,
           band.band,
           classKeyFor('young_conformation', breed.id, null, null, band.band),
@@ -1157,7 +1157,7 @@ export async function buildShowCatalogue(env: Env, config: Config): Promise<Cata
   for (const breed of eligibleBreeds) {
     out.push({
       classType: 'breed_conformation',
-      name: `${breed.name} Conformation`,
+      name: `Conformation- ${breed.name}`,
       breedId: breed.id,
       disciplineCode: null,
       abilityTraitCode: null,
@@ -1198,7 +1198,7 @@ export async function buildShowCatalogue(env: Env, config: Config): Promise<Cata
     for (const band of bands) {
       out.push({
         classType: 'young_conformation',
-        name: `${band.label} ${breed.name} Conformation`,
+        name: `${band.label} Conformation- ${breed.name}`,
         breedId: breed.id,
         disciplineCode: null,
         abilityTraitCode: null,
