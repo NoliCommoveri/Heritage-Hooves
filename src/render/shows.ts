@@ -8,7 +8,7 @@ import type { WorldRow } from '../db/world';
 import type { ShowRow, ShowClassRow, ClassEntryDisplayRow, HorseResultRow } from '../db/shows';
 import type { JudgeRow } from '../db/judges';
 import { ribbonFor } from '../engines/showing/placing';
-import type { EligibilityReason } from '../engines/showing/eligibility';
+import type { EligibilityReason, ClassRank, ShowRank } from '../engines/showing/eligibility';
 import { formatCalendarDate } from '../lib/calendar';
 
 /** §8.1: "each refusal names the horse and says exactly which rule it failed" - the horse's own
@@ -83,6 +83,29 @@ export function placingText(placing: number | null): string {
   return color ? `${ordinal(placing)} - ${color} ribbon` : ordinal(placing);
 }
 
+const NEXT_RANK: Record<ShowRank, ShowRank | null> = { novice: 'open', open: 'champion', champion: null };
+
+/** Slice 0026 §3.1: the Show record card's per-class_key rank line - "Dressage — Open · 2 of 4
+ * top-three finishes and 1 of 1 wins toward Champion", with no progress clause once a horse is at
+ * Champion (RANK_ORDER has nothing after it). Pure - HorseRankProgressRow (src/db/shows.ts) already
+ * carries the label and counters, this only turns them into the sentence. */
+export function rankProgressSentence(row: { rank: ShowRank; top3SincePromotion: number; winsSincePromotion: number }, top3Required: number, winRequired: number): string {
+  const next = NEXT_RANK[row.rank];
+  if (!next) return '';
+  const nextWord = `${next[0].toUpperCase()}${next.slice(1)}`;
+  return `${String(row.top3SincePromotion)} of ${String(top3Required)} top-three finishes and ${String(row.winsSincePromotion)} of ${String(winRequired)} wins toward ${nextWord}`;
+}
+
+/** Slice 0026 §3.1: the one rank badge every screen that shows a horse's record uses - the barn
+ * list, a market listing, a stud listing, and /world/horses/:id. Named with the class it was
+ * earned in ("Champion (dressage)") so it can never be misread as a single global rank. Null input
+ * (no rank above novice) renders nothing, so a caller can drop it in unconditionally. */
+export function rankBadgeHtml(highest: { rank: ShowRank; label: string } | undefined): SafeHtml {
+  if (!highest) return raw('');
+  const rankWord = `${highest.rank[0].toUpperCase()}${highest.rank.slice(1)}`;
+  return html`<span class="badge badge-success">${rankWord} (${highest.label})</span>`;
+}
+
 // ---------------------------------------------------------------------------
 // The Show record card's grouped placings. One builder and one renderer, shared by every screen
 // that shows a horse's record - the owner's own horse page, a sale listing, a stud listing, and the
@@ -90,33 +113,55 @@ export function placingText(placing: number | null): string {
 // standing at stud is judged on exactly the display the owner sees, split by class type.
 // ---------------------------------------------------------------------------
 
-/** A Show record card group: one class type (Conformation, or a discipline's own name) the horse
- * has actually placed in, with its own most-recent-first placings. Groups themselves are ordered
- * most-recent-first too - both fall out of the single pass in buildShowResultGroups, not sorted
- * again afterwards. */
-export interface ShowResultGroup {
-  label: string;
+/** Slice 0026 §3.2: one rank's placings within a class-type group - 'none' for a
+ * young_conformation/ability_test result (never rank-bracketed, so it's the group's only
+ * sub-group and renders flat, exactly as before this slice). isCurrent marks the horse's own
+ * present-day rank in this class_key, the one sub-group rendered open rather than collapsed. */
+export interface ShowResultRankGroup {
+  rank: ClassRank;
   items: string[];
+  isCurrent: boolean;
 }
 
-/** How many placings each group shows. A horse with a long career in one discipline shouldn't push
- * every other class type off the bottom of the card, which is what a single flat cap would do. */
+/** A Show record card group: one class type (Conformation, or a discipline's own name) the horse
+ * has actually placed in, split into rank sub-groups (Novice/Open/Champion, or a single flat
+ * 'none' sub-group for young-horse/ability results). Groups themselves are ordered
+ * most-recent-first - falls out of the single pass in buildShowResultGroups, not sorted again
+ * afterwards. Sub-groups are always ordered Novice -> Open -> Champion regardless of recency
+ * (§3.2). */
+export interface ShowResultGroup {
+  label: string;
+  subgroups: ShowResultRankGroup[];
+}
+
+/** How many placings each sub-group shows. A horse with a long career in one discipline shouldn't
+ * push every other class type off the bottom of the card, which is what a single flat cap would
+ * do - and, since slice 0026 §3.2, a Champion's current record shouldn't be crowded out by her own
+ * Novice history either. */
 export const SHOW_RESULT_GROUP_CAP = 5;
 
 /** How many result rows a caller should ask listRecentResultsForHorse for before grouping. Well
- * above any real horse's career, because the cap applies per group and the rows have to be read
- * before it's known which group each one lands in. */
+ * above any real horse's career, because the cap applies per sub-group and the rows have to be
+ * read before it's known which sub-group each one lands in. */
 export const SHOW_RESULT_FETCH_LIMIT = 200;
 
-/** Groups a horse's placings by class type. Relies on listRecentResultsForHorse returning rows
- * newest-first: the first row seen for a not-yet-seen label is by definition that group's most
- * recent result, which is what puts the groups themselves in most-recent-activity order.
+const RANK_SUBGROUP_ORDER: ClassRank[] = ['novice', 'open', 'champion', 'none'];
+
+/** Groups a horse's placings by class type, then by rank within each class type. Relies on
+ * listRecentResultsForHorse returning rows newest-first: the first row seen for a not-yet-seen
+ * label is by definition that group's most recent result, which is what puts the groups
+ * themselves in most-recent-activity order (placings within a sub-group stay in that same
+ * newest-first order too).
+ *
+ * currentRanks (horseClassRanksMap) says which sub-group is the horse's present-day rank in that
+ * class_key - the one rendered open rather than collapsed behind a <details> (§3.2). A class_key
+ * with no row there reads 'novice', matching horse_class_ranks' own no-row-means-novice rule.
  *
  * The made-up show name isn't included - what a player wants to know is what kind of class a result
  * came from (Conformation, Dressage, ...), not which of several near-identical fictional show names
  * it happened at. */
-export function buildShowResultGroups(rows: HorseResultRow[], gameDaysPerYear: number): ShowResultGroup[] {
-  const byLabel = new Map<string, ShowResultGroup>();
+export function buildShowResultGroups(rows: HorseResultRow[], gameDaysPerYear: number, currentRanks: Map<string, ShowRank>): ShowResultGroup[] {
+  const byLabel = new Map<string, { group: ShowResultGroup; subMap: Map<ClassRank, ShowResultRankGroup> }>();
   const groups: ShowResultGroup[] = [];
   for (const r of rows) {
     // Slice 0025 stage 3: young_conformation and ability_test get their own labels, deliberately
@@ -131,23 +176,53 @@ export function buildShowResultGroups(rows: HorseResultRow[], gameDaysPerYear: n
           : r.class_type === 'ability_test'
             ? `${r.ability_trait_name ?? 'Ability'} Test`
             : (r.discipline_name ?? 'Discipline');
-    let group = byLabel.get(label);
-    if (!group) {
-      group = { label, items: [] };
-      byLabel.set(label, group);
+    let entry = byLabel.get(label);
+    if (!entry) {
+      const group: ShowResultGroup = { label, subgroups: [] };
+      entry = { group, subMap: new Map() };
+      byLabel.set(label, entry);
       groups.push(group);
     }
-    if (group.items.length < SHOW_RESULT_GROUP_CAP) {
-      group.items.push(`${placingText(r.placing)} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+    let sub = entry.subMap.get(r.rank);
+    if (!sub) {
+      const isCurrent = r.rank === 'none' ? true : r.rank === (currentRanks.get(r.class_key) ?? 'novice');
+      sub = { rank: r.rank, items: [], isCurrent };
+      entry.subMap.set(r.rank, sub);
+      entry.group.subgroups.push(sub);
     }
+    if (sub.items.length < SHOW_RESULT_GROUP_CAP) {
+      sub.items.push(`${placingText(r.placing)} (${formatCalendarDate(r.scheduled_game_day, gameDaysPerYear)})`);
+    }
+  }
+  for (const entry of byLabel.values()) {
+    entry.group.subgroups.sort((a, b) => RANK_SUBGROUP_ORDER.indexOf(a.rank) - RANK_SUBGROUP_ORDER.indexOf(b.rank));
   }
   return groups;
 }
 
-/** The grouped placings' markup - a heading per class type, its placings beneath. Empty for a horse
- * that has never placed, so a caller can drop it in unconditionally. */
+function rankGroupLabel(rank: ClassRank): string {
+  return `${rank[0].toUpperCase()}${rank.slice(1)}`;
+}
+
+/** The grouped placings' markup - a heading per class type, its rank sub-groups beneath. A 'none'
+ * sub-group (young-horse/ability results) renders flat, exactly as before this slice. Of the real
+ * ranks, the horse's own current one renders open; every lower rank is filed behind a collapsed
+ * <details> naming its own placing count, so a Champion's career doesn't bury her current record
+ * under her own Novice one. Empty for a horse that has never placed, so a caller can drop it in
+ * unconditionally. */
 export function showResultGroupsHtml(groups: ShowResultGroup[]): SafeHtml {
-  return html`${groups.map((g) => html`<h3>${g.label}</h3><ul>${g.items.map((r) => html`<li>${r}</li>`)}</ul>`)}`;
+  return html`${groups.map(
+    (g) => html`
+      <h3>${g.label}</h3>
+      ${g.subgroups.map((sg) => {
+        const list = html`<ul>${sg.items.map((r) => html`<li>${r}</li>`)}</ul>`;
+        if (sg.rank === 'none') return list;
+        // §3.1: rank is public, shown wherever this builder is used - not just the owner's own
+        // page - so the current sub-group is named too, not only the collapsed lower ones.
+        if (sg.isCurrent) return html`<h4>${rankGroupLabel(sg.rank)}</h4>${list}`;
+        return html`<details class="section-collapse"><summary>${rankGroupLabel(sg.rank)} record - ${String(sg.items.length)} placing${sg.items.length === 1 ? '' : 's'}</summary>${list}</details>`;
+      })}`
+  )}`;
 }
 
 function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: number): string {
@@ -170,13 +245,21 @@ function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: n
 /** Slice 0012 §5.5: "a class with fewer than three entries says so in words" - so a thin
  * Gaited Pleasure field (or, today, a thin Barrel Racing one before the barn is breed-aware and
  * before enough players have entered) reads as expected rather than as something broken. Slice
- * 0025 stage 3 widens this to young_conformation/ability_test too - both are new mechanisms a
+ * 0025 stage 3 widened this to young_conformation/ability_test too - both are new mechanisms a
  * young horse's owner has to discover before a field fills in, the same story a new discipline
- * has. Only the adult breed_conformation class is excluded; it already draws on a full
- * breed-specific NPC pool built up over the whole game. */
+ * has. Slice 0026 §3.5: breed_conformation is no longer excluded - rank brackets now split what
+ * used to be one full breed-specific NPC pool three ways (Novice/Open/Champion), so a thin
+ * Champion field is exactly as real as a thin field of any other class type. */
 function thinFieldNote(cls: ShowClassRow, entryCount: number): SafeHtml {
-  if (cls.class_type === 'breed_conformation' || entryCount >= 3) return raw('');
-  const noun = cls.class_type === 'discipline' ? 'a newer discipline' : cls.class_type === 'ability_test' ? 'a new kind of class' : 'a new young-horse class';
+  if (entryCount >= 3) return raw('');
+  const noun =
+    cls.class_type === 'discipline'
+      ? 'a newer discipline'
+      : cls.class_type === 'ability_test'
+        ? 'a new kind of class'
+        : cls.class_type === 'young_conformation'
+          ? 'a new young-horse class'
+          : 'a rank bracket that has not filled up yet';
   return html`<p class="muted">Only ${String(entryCount)} horse${entryCount === 1 ? ' has' : 's have'} entered so far - a thin field for ${noun}, not a bug.</p>`;
 }
 

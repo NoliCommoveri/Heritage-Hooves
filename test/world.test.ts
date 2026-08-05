@@ -34,6 +34,7 @@ describe('buildPublicHorseView', () => {
     dam: null,
     showSummary: { starts: 3, wins: 1, best_placing: 1 },
     recentResultGroups: [],
+    highestRank: undefined,
     // Slice 0017 §9: an asking price is public, so this is a field the public view is allowed to
     // carry - unlike coi/genotype/care state above, which this test asserts never survive.
     listing: null,

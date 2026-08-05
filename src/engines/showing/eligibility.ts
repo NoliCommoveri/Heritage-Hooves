@@ -38,6 +38,17 @@ export type EligibilityReason =
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: EligibilityReason };
 
+/** Slice 0026 §3.4: whether a catalogue row is worth showing this horse at all, given ONE refusal
+ * reason for it. A permanent fact about the horse (wrong breed, wrong sex, ...) means the row could
+ * never become enterable no matter what changes, so the catalogue drops it entirely rather than
+ * padding the page with 33 refusal lines that will never turn into a button. Everything else -
+ * age, location, an incident, a rank not yet earned, a cap already hit - is a fact about today, so
+ * the row stays and says why not. The one place this split lives, so the catalogue and any other
+ * future reader of EligibilityReason cannot invent a second list that drifts from this one. */
+export function isPermanentRefusal(reason: EligibilityReason): boolean {
+  return reason === 'wrong_breed' || reason === 'crossbred_not_eligible' || reason === 'wrong_sex' || reason === 'requires_gait';
+}
+
 /** The three earned ranks, plus the fixed sentinel a young_conformation/ability_test class always
  * carries (stage 4 does not rank-track either type - §7.3's own ribbons-don't-count-toward-adult-
  * progression rule extends to not tracking a rank of their own either). */

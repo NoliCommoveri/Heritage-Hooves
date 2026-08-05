@@ -26,6 +26,7 @@ import {
   type EvaluationSectionView,
 } from '../render/horses';
 import { eligibilityMessage, buildShowResultGroups, SHOW_RESULT_FETCH_LIMIT } from '../render/shows';
+import { isPermanentRefusal } from '../engines/showing/eligibility';
 import {
   listStableHorses,
   listStableHorsesWithDead,
@@ -80,7 +81,11 @@ import {
   buildCatalogueStatusForHorse,
   buildShowCatalogue,
   requestClassEntry,
+  type CatalogueClassSpec,
   listOpenEntriesForHorse,
+  horseClassRanksMap,
+  rankProgressRowsForHorse,
+  highestRanksForHorses,
 } from '../db/shows';
 import {
   getEnabledConditions,
@@ -304,21 +309,43 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
  * buildCatalogueStatusForHorse does the actual batching (§7.5a.1's required fix) - this function
  * only turns its EligibilityReason answers into the sentences a child reads, the same split
  * eligibilityMessage already draws elsewhere. */
+function catalogueGroupFor(classType: CatalogueClassSpec['classType']): EnterShowInfo['group'] {
+  if (classType === 'breed_conformation') return 'conformation';
+  if (classType === 'discipline') return 'discipline';
+  if (classType === 'young_conformation') return 'young';
+  return 'ability';
+}
+
+function catalogueGroupLabelFor(spec: CatalogueClassSpec): string {
+  const group = catalogueGroupFor(spec.classType);
+  if (group === 'conformation') return 'Conformation';
+  if (group === 'discipline') return spec.name;
+  if (group === 'young') return 'Young Horse';
+  return 'Ability Tests';
+}
+
 async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow): Promise<EnterShowInfo[]> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
-  const [rows, breeds] = await Promise.all([
+  const [allRows, breeds] = await Promise.all([
     buildCatalogueStatusForHorse(ctx.env, horse, ctx.world.game_day, gameDaysPerYear, ctx.config),
     getBreeds(ctx.env),
   ]);
+
+  // Slice 0026 §3.4: a row whose refusal is a permanent fact about the horse (wrong breed, wrong
+  // sex, ...) could never become enterable, so it is dropped from the catalogue entirely rather
+  // than padding the page with a refusal line that will never turn into a button.
+  const rows = allRows.filter((row) => row.result.ok || !isPermanentRefusal(row.result.reason));
 
   return rows.map((row) => {
     const statusSentence =
       row.liveClassId !== null
         ? `${String(row.entryCount)} entered, judged in ${String(row.judgedInDays)} days.`
         : `Nobody yet - starts a show, judged in ${String(row.judgedInDays)} days.`;
+    const group = catalogueGroupFor(row.spec.classType);
+    const groupLabel = catalogueGroupLabelFor(row.spec);
 
     if (row.result.ok) {
-      return { classKey: row.spec.classKey, className: row.spec.name, eligible: true, statusSentence };
+      return { classKey: row.spec.classKey, className: row.spec.name, eligible: true, targetRank: row.targetRank, group, groupLabel, statusSentence };
     }
 
     const breedName = breeds.find((b) => b.id === row.spec.breedId)?.name ?? 'that breed';
@@ -327,6 +354,9 @@ async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow): Promis
       classKey: row.spec.classKey,
       className: row.spec.name,
       eligible: false,
+      targetRank: row.targetRank,
+      group,
+      groupLabel,
       reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(row.result.reason, { breedName, minAgeYears })}`,
     };
   });
@@ -370,6 +400,8 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   // per horse - visibleAffectedConditions is truth, never panel-filtered, but now also needs to know
   // whether each affected condition's delay has actually elapsed.
   const signsMapsByHorse = signsGameDayMapsByHorse(await getHorseConditionSigns(ctx.env, horses.map((h) => h.id)));
+  // Slice 0026 §3.1: one query for the whole barn's highest ranks, not one per row.
+  const highestRanks = await highestRanksForHorses(ctx.env, horses.map((h) => h.id));
 
   const rows = await Promise.all(
     horses.map(async (horse) => ({
@@ -403,6 +435,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
       // kept anymore, and stableHorsesWithDead's rows never had their care columns written for one.
       care: horse.status === 'alive' ? careCardViewFor(horse, stable.feed_level, cfg, ctx.world.game_day) : null,
       listingPrice: openListings.get(horse.id)?.price ?? null,
+      highestRank: highestRanks.get(horse.id),
     }))
   );
 
@@ -1047,8 +1080,12 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const abilityRows = abilityRowsForHorse(abilityTraitRows, abilityWords);
   // Grouped by class type (Conformation vs. each discipline) rather than a single flat list: a
   // made-up show name tells a player nothing, but which kind of class a result came from does.
-  const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT);
-  const recentShowResultGroups = buildShowResultGroups(recentResultsRaw, gameDaysPerYear);
+  const [recentResultsRaw, currentRanks, rankProgress] = await Promise.all([
+    listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT),
+    horseClassRanksMap(ctx.env, horse.id),
+    rankProgressRowsForHorse(ctx.env, horse.id),
+  ]);
+  const recentShowResultGroups = buildShowResultGroups(recentResultsRaw, gameDaysPerYear, currentRanks);
   const enterShow = canManage ? await buildEnterShowInfos(ctx, horse) : [];
   const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
@@ -1184,6 +1221,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
       showSummary,
       recentShowResultGroups,
+      rankProgress,
+      rankTop3Required: ctx.config.values.show_rank_top3_required,
+      rankWinRequired: ctx.config.values.show_rank_win_required,
       enterShow,
       enterShowError,
       enterShowNotice,
