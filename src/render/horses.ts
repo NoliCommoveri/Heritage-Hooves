@@ -919,6 +919,35 @@ function conformationCard(params: {
     </div>`;
 }
 
+export interface AbilityDisplayRow {
+  code: TraitCode;
+  name: string;
+  label: ConformationLabel;
+}
+
+/**
+ * Slice 0025 stage 3 §7.4: the Ability card - "the first time anything in the game has ever shown
+ * an ability value to anyone" (the slice's own words). Deliberately word-only: no meter, no number,
+ * ever - unlike Conformation's bar-plus-word, an ability trait has never had a number on screen
+ * anywhere a player can see it, and this card does not start now. A row reads Unknown until this
+ * horse has actually placed in that trait's own ability_test class at least once; the word itself
+ * never moves again after that until a later test overwrites it (src/db/abilityTests.ts's own
+ * comment on why the upsert is deliberate).
+ */
+function abilityCard(rows: AbilityDisplayRow[], name: string): SafeHtml {
+  return html`
+    <div class="card">
+      <h2>Ability</h2>
+      <p class="muted">Ability can't be judged by looking - it's revealed by entering ${name} in an ability test, and the word only ever describes ${name}'s own result, never how ${name} placed against the field.</p>
+      <table>
+        <thead><tr><th>Trait</th><th>Result</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => html`<tr><td>${r.name}</td><td class="conformation-label-${r.label}">${CONFORMATION_LABEL_TEXT[r.label]}</td></tr>`)}
+        </tbody>
+      </table>
+    </div>`;
+}
+
 
 /**
  * 2026-08-05: "Grow up" - the per-horse time warp. Placed on the horse's own page next to the other
@@ -1296,6 +1325,9 @@ export function renderHorsePage(params: {
   conformation: ConformationDisplayRow[];
   conformationLabels: Map<TraitCode, ConformationLabel>;
   conformationMaturityYears: number;
+  /** Slice 0025 stage 3 §7.4: the Ability card - one row per ABILITY_TRAITS trait, 'unknown' until
+   * an ability_test class has judged this horse in it at least once. */
+  abilityRows: AbilityDisplayRow[];
   /** The paid evaluation block inside the Conformation card, 2026-08-05. Null for a viewer who
    * cannot buy one for this horse (no stable of their own, or an ended horse). */
   evaluation: EvaluationSectionView | null;
@@ -1548,6 +1580,7 @@ export function renderHorsePage(params: {
       breedName: params.breed?.name ?? null,
       evaluation: params.evaluation,
     })}
+    ${abilityCard(params.abilityRows, displayNameFor(h))}
     ${params.canManage && params.timeWarp ? growUpCard(params.timeWarp, displayNameFor(h)) : raw('')}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${params.owner || params.isAdmin

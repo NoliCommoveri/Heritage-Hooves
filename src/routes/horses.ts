@@ -59,13 +59,15 @@ import { hasWaitingFoundingOffer } from '../db/founding';
 import { canTakeOnCost } from '../lib/money';
 import { availabilityForHorse, turnOutToPasture, bringInFromPasture } from '../db/care';
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE, buildImageLabelMap } from '../lib/images';
-import { getConformationTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
+import { getConformationTraits, getAbilityTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import { ABILITY_TRAITS } from '../engines/conformation/traits';
 import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
 import { evaluateHorse, wouldSharpen, type StoredEvaluation } from '../engines/conformation/evaluation';
 import { bandForTraitScore } from '../engines/conformation/labels';
 import { foalExpressedDistribution, centralInterval } from '../engines/genetics/foalPrediction';
 import { buildEvaluationStatements, evaluationCost, getLatestEvaluation } from '../db/evaluations';
+import { getAbilityWordsForHorse } from '../db/abilityTests';
 import { planTimeWarp, buildTimeWarpStatements } from '../db/timeWarp';
 import { parseIdealVector, traitScoreFor } from '../engines/showing/score';
 import type { TraitCode } from '../engines/genetics/polygenic';
@@ -246,6 +248,29 @@ function conformationLabelsForHorse(
   return conformationLabelsFor(conformation, ideal, cfg.show_ideal_falloff, conformationLabelBands(cfg), eligible);
 }
 
+export interface AbilityDisplayRow {
+  code: TraitCode;
+  name: string;
+  label: ConformationLabel;
+}
+
+/**
+ * Slice 0025 stage 3 §7.4: the horse page's Ability card - every ABILITY_TRAITS trait, in order,
+ * with the word an ability_test class already earned (horse_ability_words) or 'unknown' for one
+ * never tested. Deliberately reads the STORED word rather than recomputing abilityValues() at
+ * request time: "the result permanently records a word" (the slice's own phrase) means the word a
+ * horse earned on the day it was judged, not a live re-read of its current (possibly since-matured)
+ * ability - the same distinction the paid evaluation draws between "judged now" and "judged at
+ * maturity", except here the class itself already did the judging.
+ */
+function abilityRowsForHorse(traitRows: QuantitativeTraitRow[], words: Map<TraitCode, ConformationLabel>): AbilityDisplayRow[] {
+  return ABILITY_TRAITS.map((trait) => ({
+    code: trait,
+    name: traitRows.find((t) => t.code === trait)?.name ?? trait,
+    label: words.get(trait) ?? 'unknown',
+  }));
+}
+
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
   const stable = await getStableById(ctx.env, stableId);
   if (!stable || stable.account_id !== ctx.account!.id) return notFound();
@@ -255,9 +280,15 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
 /** Slice 0008 §8.1/slice 0012 §9: the horse page's "Enter in a show" section - one line per open
  * class (a breed-conformation class and every open discipline class), each either a button or the
  * plain sentence saying why not. Before slice 0012 there was ever only one open class at once; now
- * there can be several, so every open class is checked rather than just the first. */
+ * there can be several, so every open class is checked rather than just the first.
+ *
+ * 2026-08-05: the limit was 10, which slice 0025 stage 3's young_conformation/ability_test classes
+ * (up to 26 more per show, created last and so carrying the highest ids) would have pushed clean
+ * off an ORDER BY id ASC LIMIT 10 read - exactly the classes a young horse's owner most needs to
+ * see. Raised well above any real per-show class count, the same margin SHOW_RESULT_FETCH_LIMIT
+ * already uses for the same reason. */
 async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow, breeds: BreedRow[]): Promise<EnterShowInfo[]> {
-  const openClasses = await getOpenClasses(ctx.env, 10);
+  const openClasses = await getOpenClasses(ctx.env, 200);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
 
   return Promise.all(
@@ -981,6 +1012,11 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // Slice 0022 §B3: gated on real show starts, not on the horse's status - a retired or dead horse
   // that showed in its life keeps its labels (the show record outlives the horse on purpose).
   const conformationLabels = conformationLabelsForHorse(conformation, breed, (showSummary?.starts ?? 0) >= 1, ctx.config.values);
+  // Slice 0025 stage 3 §7.4: the Ability card - only ever reads what an ability_test class has
+  // already earned this horse (never recomputed live - see abilityRowsForHorse's own comment).
+  const abilityTraitRows = await getAbilityTraits(ctx.env);
+  const abilityWords = await getAbilityWordsForHorse(ctx.env, horse.id);
+  const abilityRows = abilityRowsForHorse(abilityTraitRows, abilityWords);
   // Grouped by class type (Conformation vs. each discipline) rather than a single flat list: a
   // made-up show name tells a player nothing, but which kind of class a result came from does.
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT);
@@ -1110,6 +1146,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       conformation,
       conformationLabels,
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
+      abilityRows,
       evaluation,
       timeWarp,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
@@ -1398,7 +1435,7 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
 
   if (!result.ok) {
     const breeds = await getBreeds(ctx.env);
-    const cls = (await getOpenClasses(ctx.env, 10)).find((c) => c.id === classId);
+    const cls = (await getOpenClasses(ctx.env, 200)).find((c) => c.id === classId);
     const breedName = breeds.find((b) => b.id === cls?.breed_id)?.name ?? 'that breed';
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`;

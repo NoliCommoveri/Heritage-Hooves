@@ -355,6 +355,14 @@ export interface ConfigValues {
    * months are not simulated - live in src/db/timeWarp.ts. */
   time_warp_game_days: number;
   time_warp_cost: number;
+  /** Migration 0163, 2026-08-05. Slice 0025 stage 3: the two young-horse age bands' lower bounds.
+   * "Yearling" runs from the first key up to one day short of the second; "two-year-old" runs from
+   * the second up to one day short of show_conformation_min_age_game_days (the adult class's own
+   * min age) - see that migration's own comment for why there is no separate upper-bound key.
+   * Snapshotted onto each young_conformation/ability_test show_classes row at creation (CLAUDE.md
+   * §5.5), same as show_conformation_min_age_game_days already is. */
+  young_horse_yearling_min_age_game_days: number;
+  young_horse_two_year_old_min_age_game_days: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

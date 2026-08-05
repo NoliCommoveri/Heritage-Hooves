@@ -123,6 +123,12 @@ export function buildDeleteHorseStatements(env: Env, horseId: number): D1Prepare
     // deletableHorseSql: an evaluated horse must stay deletable, or a child evaluating a whole crop
     // of foals would quietly make every one of them un-removable.
     env.DB.prepare('DELETE FROM horse_evaluations WHERE horse_id = ?').bind(horseId),
+    // Slice 0025 stage 3: horse_ability_words references both horses and show_entries. In practice
+    // this always deletes zero rows for a horse deletableHorseSql actually passed - a row here can
+    // only exist alongside a show_entries row for this horse, and deletableHorseSql already requires
+    // none exist - but it is listed anyway, for the same reason horse_evaluations is: the invariant
+    // this file exists to hold is "named in one list or the other", not "actually reachable".
+    env.DB.prepare('DELETE FROM horse_ability_words WHERE horse_id = ?').bind(horseId),
     // Every listing this horse ever had, not just an open one - an earlier withdrawn or expired
     // listing points at it just as hard. None can be a 'sold' row: a sold horse belongs to whoever
     // bought it and is not in the seller's barn to be sent anywhere.

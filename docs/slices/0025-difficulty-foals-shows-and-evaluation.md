@@ -2,7 +2,7 @@
 
 **Commissioned 2026-08-05, from three days of real play by the operator's five children.** Every decision in this document was made by the operator, in answer to a question, in one sitting. Where a number was not specified it is named as a first guess below.
 
-This is one brief covering six pieces of work, shipped in four stages. **Stages one and two are built. Stages three and four are specified and not built.** Read the stage you are building; the rest is context.
+This is one brief covering six pieces of work, shipped in four stages. **Stages one through three are built. Stage four is specified and not built.** Read the stage you are building; the rest is context.
 
 ---
 
@@ -29,7 +29,7 @@ The operator asked for stud previews and difficulty first, then the rest in the 
 |---|---|---|
 | 1 | Difficulty levels · paid evaluations · conformation words on stud listings · the breeding preview's foal range | **built 2026-08-05** |
 | 2 | The per-horse time warp · free foal upkeep | **built 2026-08-05** |
-| 3 | Young-horse classes · ability tests | specified |
+| 3 | Young-horse classes · ability tests | **built 2026-08-05** |
 | 4 | Two shows per cycle · the three-rank progression | specified |
 
 Stage 4 is the largest and the one most likely to need the paid Workers tier — see §7.6.
@@ -100,7 +100,7 @@ Three properties, in the order they matter:
 
 ---
 
-## 7. Stages 2-4 — specified, not built
+## 7. Stages 2-4
 
 ### 7.1 The time warp (stage 2) — **built 2026-08-05**
 
@@ -124,19 +124,29 @@ Raised by the operator mid-conversation: *"foals probably shouldn't cost upkeep.
 - **Nothing at all** until the horse is **one year old**, then full upkeep.
 - One year, not three, because stage 3 lets a yearling show — the cutoff is "old enough to do something", not "old enough to breed".
 
-### 7.3 Young-horse classes (stage 3)
+### 7.3 Young-horse classes (stage 3) — **built 2026-08-05**
 
 - **Conformation in-hand classes**, plus **ability tests** — *"a 'speed test,' 'agility test' etc. not relating to the whole discipline, just getting an idea about its ability traits."*
 - **Two age bands: yearling (1-2) and two-year-old (2-3).** Not three bands; smaller fields are the same problem as one show per discipline.
 - **Ribbons from these classes do not count toward progression in the adult classes** (§7.4).
 
-### 7.4 Ability tests (stage 3)
+**What landed** (migration `0161` rebuilds `show_classes` — SQLite can't `ALTER` a `CHECK`, the same mechanics migration `0064` used to add `discipline` — adding `class_type` values `young_conformation`/`ability_test` and two new columns, `ability_trait_code` and `age_band`; migration `0163` adds the two band-boundary config keys). `createShowIfMissing` (`src/db/shows.ts`) now mints, every cycle: one `young_conformation` class per breed with an `ideal_vector` per age band (16 today, at 8 breeds), and one `ability_test` class per `ABILITY_TRAITS` trait per age band (10 today, at 5 traits) — regardless of which disciplines happen to be enabled, since an ability test measures raw ability, not suitability for a specific discipline. Both reuse everything an adult class already has: `young_conformation` is scored exactly like `breed_conformation` (same `conformationValues`/`scoreEntry`, same conformation-judge pool, same breed `ideal_vector`) and `ability_test` exactly like `discipline` (same `abilityValues`/`scoreAbilityEntry`, same discipline-judge pool), via a single `classUsesAbilityScoring(class_type)` discriminant rather than a second scoring path — the one thing `ability_test` does NOT get is a breed-aptitude modifier, since that multiplier means "how suited is this breed to this *discipline*" and an ability test has no `discipline_code` to mean that against.
+
+The two age bands are derived, not hand-typed twice: `youngHorseAgeBands()` computes yearling as `[young_horse_yearling_min_age_game_days, young_horse_two_year_old_min_age_game_days - 1]` and two-year-old as `[young_horse_two_year_old_min_age_game_days, show_conformation_min_age_game_days - 1]` — the adult class's own min age is the two-year-old band's ceiling, so a horse ages out of "young" on exactly the day it becomes eligible for the class it graduates into, with no gap and no day double-eligible. Seeded at 360/720 game days (one and two game years) against `show_conformation_min_age_game_days`'s existing 1080 (three years).
+
+The `/shows` filter picks up one more tab, "Young Horse", matching `young_conformation` and `ability_test` together (`classMatchesShowsFilter`'s `'young'` case) — one tab, not a breed picker plus five trait tabs, since a horse only ever matches one age band regardless of which of the two class types it entered. The Show record card gives them their own groups too, "Young Horse Conformation" and "`<Trait>` Test", deliberately distinct from the adult "Conformation" group they resemble — visible proof today of the promise in the bullet above, not a claim about code that doesn't exist yet.
+
+**One bug this surfaced, fixed alongside it:** the horse page's "Enter in a show" card and its own entry-refusal message both called `getOpenClasses(ctx.env, 10)` — a hardcoded limit that was already tight against 8 breed + 6 discipline classes, and would have silently dropped every `young_conformation`/`ability_test` class (created last, carrying the highest `id`s, sorted `ORDER BY id ASC LIMIT 10`) off the exact card a young horse's owner needs it on. Raised to 200, the same margin `SHOW_RESULT_FETCH_LIMIT` already uses for the same reason.
+
+### 7.4 Ability tests (stage 3) — **built 2026-08-05**
 
 Agreed shape, after the operator asked for a recommendation:
 
 - **A real class**, entered against other horses, placed and ribboned.
 - **And** the result permanently records a word about that ability trait for the owner — the first time anything in the game has ever shown an ability value to anyone.
 - **The word describes the horse's own result, not its rank.** "Fast" must mean fast, whether or not a faster horse turned up that day; otherwise a child learns her colt is slow when he is second-fastest in the world.
+
+**What landed.** A new table, `horse_ability_words` (migration `0162`) — one row per (horse, trait), upserted the same way `horse_show_summary` already is, not append-only. At judging time, `judgeOneClass` bands the horse's own true expressed value for that one trait (before noise, care or age modifiers — those describe the judge's day and the horse's upkeep, not its raw ability) into the same Poor/Weak/Acceptable/Good/Outstanding vocabulary the Conformation card already uses (`abilityLabelFor`, reusing `bandForTraitScore` directly — an ability trait has no breed target to measure distance from, so the raw value **is** the band input) and writes it to that row. The horse page's new Ability card (word-only, deliberately no meter and no number — ability has never had one on screen anywhere a player can see it, and this card does not start now) reads that stored word back, never recomputing live from the horse's current age — the word describes what happened in the class it was earned in, the same way a real placing does, not a running re-read that would quietly improve as the horse matures without another test. A trait with no row reads **Untested**. Reuses the same `conformation_label_*` band-edge config keys as the Conformation card — one vocabulary, not a second set of tunables to keep in step.
 
 ### 7.5 More shows (stage 4)
 
@@ -149,6 +159,8 @@ Agreed shape, after the operator asked for a recommendation:
 ### 7.6 The thing to watch in stage 4
 
 Two shows × three ranks × fourteen class types is 84 classes a cycle before young-horse classes, and judging happens inside one scheduled invocation against a 10ms CPU ceiling on the free tier. **Create classes only where an entry can actually exist** rather than minting all 84. If that is not enough, this is the stage that justifies the $5/month Workers tier — CLAUDE.md §3 anticipates exactly this, and the instruction there is to move tiers rather than contort the design.
+
+**Stage 3 already sits at 40 classes a cycle** (8 breed + 6 discipline + 16 young_conformation + 10 ability_test), created and judged the same way stage 1's single-class-per-breed always was — no CPU trouble observed building it, but stage 4's own multiplier lands on top of this number, not a smaller one, so the 84 above is an underestimate of what stage 4 would add if it followed §7.3's own pattern of "mint every combination regardless of demand" for the young-horse classes too. Worth deciding explicitly whether stage 4's two-shows/three-ranks multiplier applies to young-horse classes at all before building it.
 
 ---
 
@@ -165,4 +177,6 @@ Every one of these is a first guess:
 | `evaluation_certain_age_years` | 3 | Matches the age a horse could have shown for itself and earned the same words free. |
 | `upkeep_free_until_age_game_days` | 360 | One game year. Watch whether balances now drift up while a crop of foals is growing. |
 | `time_warp_cost` | 400 | The one number the children will push on hardest. Too cheap and nobody ever waits; too dear and the ten-year-old is back where she started. |
+| `young_horse_yearling_min_age_game_days` | 360 | Not really a guess about the number itself (it's exactly one game year) - watch whether a one-year-old's conformation has realised enough for the class to feel meaningful rather than noisy (`conformation_realization_at_birth`/`conformation_maturity_years` govern that curve). |
+| `young_horse_two_year_old_min_age_game_days` | 720 | Same watch as above, one band up. |
 | `time_warp_game_days` | 180 | Six months a purchase, so a newborn is six turns and 2,400 from grown. |

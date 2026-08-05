@@ -111,7 +111,18 @@ export function buildShowResultGroups(rows: HorseResultRow[], gameDaysPerYear: n
   const byLabel = new Map<string, ShowResultGroup>();
   const groups: ShowResultGroup[] = [];
   for (const r of rows) {
-    const label = r.class_type === 'breed_conformation' ? 'Conformation' : (r.discipline_name ?? 'Discipline');
+    // Slice 0025 stage 3: young_conformation and ability_test get their own labels, deliberately
+    // distinct from the adult groups they resemble - "ribbons from these classes do not count
+    // toward progression in the adult classes" (§7.3) is a fact about a future stage 4, but
+    // keeping them visually separate here is true today already, not a promise about later.
+    const label =
+      r.class_type === 'breed_conformation'
+        ? 'Conformation'
+        : r.class_type === 'young_conformation'
+          ? 'Young Horse Conformation'
+          : r.class_type === 'ability_test'
+            ? `${r.ability_trait_name ?? 'Ability'} Test`
+            : (r.discipline_name ?? 'Discipline');
     let group = byLabel.get(label);
     if (!group) {
       group = { label, items: [] };
@@ -133,9 +144,11 @@ export function showResultGroupsHtml(groups: ShowResultGroup[]): SafeHtml {
 
 function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: number): string {
   // Slice 0012 §2.1: a discipline class has no breed_id and is always open to every breed and
-  // every cross - the "purebreds only" phrase never applies to one.
-  const parts =
-    cls.class_type === 'discipline' ? ['Open to every breed'] : [`${breedName}`, cls.crosses_eligible ? 'purebreds and crosses' : 'purebreds only'];
+  // every cross - the "purebreds only" phrase never applies to one. Slice 0025 stage 3: an
+  // ability_test class is the same - it measures raw ability, not breed standard, so it has no
+  // breed_id either (migration 0161's own CHECK).
+  const isBreedOpen = cls.class_type === 'discipline' || cls.class_type === 'ability_test';
+  const parts = isBreedOpen ? ['Open to every breed'] : [`${breedName}`, cls.crosses_eligible ? 'purebreds and crosses' : 'purebreds only'];
   let sentence = `${parts.join(' · ')} · at least ${String(minAgeYears)} years old`;
   if (cls.max_age_game_days !== null) sentence += ` · no older than ${String(Math.round(cls.max_age_game_days / 360))} years`;
   if (cls.sex_restriction) sentence += ` · ${cls.sex_restriction}s only`;
@@ -145,12 +158,15 @@ function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: n
 
 /** Slice 0012 §5.5: "a class with fewer than three entries says so in words" - so a thin
  * Gaited Pleasure field (or, today, a thin Barrel Racing one before the barn is breed-aware and
- * before enough players have entered) reads as expected rather than as something broken. Only
- * discipline classes carry this note; a breed_conformation class already draws on a full
- * breed-specific NPC pool. */
+ * before enough players have entered) reads as expected rather than as something broken. Slice
+ * 0025 stage 3 widens this to young_conformation/ability_test too - both are new mechanisms a
+ * young horse's owner has to discover before a field fills in, the same story a new discipline
+ * has. Only the adult breed_conformation class is excluded; it already draws on a full
+ * breed-specific NPC pool built up over the whole game. */
 function thinFieldNote(cls: ShowClassRow, entryCount: number): SafeHtml {
-  if (cls.class_type !== 'discipline' || entryCount >= 3) return raw('');
-  return html`<p class="muted">Only ${String(entryCount)} horse${entryCount === 1 ? ' has' : 's have'} entered so far - a thin field for a newer discipline, not a bug.</p>`;
+  if (cls.class_type === 'breed_conformation' || entryCount >= 3) return raw('');
+  const noun = cls.class_type === 'discipline' ? 'a newer discipline' : cls.class_type === 'ability_test' ? 'a new kind of class' : 'a new young-horse class';
+  return html`<p class="muted">Only ${String(entryCount)} horse${entryCount === 1 ? ' has' : 's have'} entered so far - a thin field for ${noun}, not a bug.</p>`;
 }
 
 export interface ShowsIndexNextClass {
@@ -189,6 +205,9 @@ function showsFilterControls(params: {
     { key: 'all', label: 'All' },
     { key: 'conformation', label: 'Conformation' },
     ...params.disciplines.map((d) => ({ key: d.code, label: d.name })),
+    // Slice 0025 stage 3: young_conformation and ability_test share one tab, since a horse only
+    // ever matches one age band at a time regardless of which of the two it entered.
+    { key: 'young', label: 'Young Horse' },
   ];
 
   const tabNav = html`

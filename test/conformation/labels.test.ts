@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { bandForTraitScore, conformationLabelFor, conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabelBands } from '../../src/engines/conformation/labels';
+import {
+  bandForTraitScore,
+  conformationLabelFor,
+  conformationLabelsFor,
+  abilityLabelFor,
+  CONFORMATION_LABEL_TEXT,
+  type ConformationLabelBands,
+} from '../../src/engines/conformation/labels';
 import type { IdealVector } from '../../src/engines/showing/score';
 
 const BANDS: ConformationLabelBands = { outstandingMin: 90, goodMin: 75, acceptableMin: 55, weakMin: 30 };
@@ -53,5 +60,20 @@ describe('conformationLabelsFor', () => {
       expect(typeof CONFORMATION_LABEL_TEXT[label]).toBe('string');
       expect(CONFORMATION_LABEL_TEXT[label].length).toBeGreaterThan(0);
     }
+  });
+});
+
+// Slice 0025 stage 3 §7.4: the ability-test word. No target/falloff involved - an ability trait has
+// no breed standard, so the raw expressed value IS the band input, reusing bandForTraitScore
+// directly (CLAUDE.md §13's no-second-scoring-path rule applied here too).
+describe('abilityLabelFor', () => {
+  it('reads unknown when not eligible (this trait has never been tested), regardless of the value', () => {
+    expect(abilityLabelFor(95, BANDS, false)).toBe('unknown');
+  });
+
+  it('bands the raw expressed value directly once eligible, with no target to measure distance from', () => {
+    expect(abilityLabelFor(95, BANDS, true)).toBe('outstanding');
+    expect(abilityLabelFor(40, BANDS, true)).toBe('weak');
+    expect(abilityLabelFor(0, BANDS, true)).toBe('poor');
   });
 });

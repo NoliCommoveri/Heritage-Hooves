@@ -35,6 +35,7 @@
     "test/npc/pet-home-d1.test.ts",
     "test/market/breed-and-stud-pickers-d1.test.ts",
     "test/health/pedigree-panel-d1.test.ts",
+    "test/showing/young-and-ability-classes-d1.test.ts",
     // Not a database test, but the same reason: it reads src/router.ts off disk (node:fs) so that
     // the two halves of the routing table are compared against each other rather than against a
     // hand-copied list in the test.

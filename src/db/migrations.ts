@@ -158,6 +158,9 @@ import m0157 from '../../migrations/0157_ledger_add_evaluation_kind.sql';
 import m0158 from '../../migrations/0158_config_foal_upkeep.sql';
 import m0159 from '../../migrations/0159_config_time_warp.sql';
 import m0160 from '../../migrations/0160_ledger_add_time_warp_kind.sql';
+import m0161 from '../../migrations/0161_show_classes_young_and_ability.sql';
+import m0162 from '../../migrations/0162_horse_ability_words.sql';
+import m0163 from '../../migrations/0163_config_young_horse_classes.sql';
 
 export interface MigrationFile {
   name: string;
@@ -332,6 +335,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0158_config_foal_upkeep.sql', sql: m0158 },
   { name: '0159_config_time_warp.sql', sql: m0159 },
   { name: '0160_ledger_add_time_warp_kind.sql', sql: m0160 },
+  { name: '0161_show_classes_young_and_ability.sql', sql: m0161 },
+  { name: '0162_horse_ability_words.sql', sql: m0162 },
+  { name: '0163_config_young_horse_classes.sql', sql: m0163 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

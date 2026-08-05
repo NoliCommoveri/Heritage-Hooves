@@ -46,6 +46,22 @@ export function conformationLabelFor(expressed: number, target: number, falloff:
 }
 
 /**
+ * Slice 0025 stage 3 (docs/slices/0025-...md §7.4): an ability trait has no breed target - "higher
+ * is better" all the way, unlike a bidirectional conformation trait - so there is no distance-from-
+ * target to run through traitScoreFor first. The horse's own raw expressed ability value (already
+ * 0-100-ish, geneticValue * realization) IS the traitScore, so bandForTraitScore is reused directly
+ * rather than restated (CLAUDE.md §13). One vocabulary for both cards on purpose: an owner reading
+ * "Outstanding" already knows what it means from the Conformation card. `eligible` is per TRAIT here,
+ * not per horse - a horse that has taken a speed test but never an agility one reads Unknown for
+ * agility alone, unlike conformationLabelFor's whole-horse gate (a single class judges every
+ * conformation trait at once; an ability test measures exactly one).
+ */
+export function abilityLabelFor(expressed: number, bands: ConformationLabelBands, eligible: boolean): ConformationLabel {
+  if (!eligible) return 'unknown';
+  return bandForTraitScore(expressed, bands);
+}
+
+/**
  * §B3/§B5: one word per trait this horse has an expressed value for, against one breed's own ideal
  * vector - never a shared or foal's-breed vector (§B5's own warning). `eligible` is a single flag
  * for the whole horse (has it shown; does its breed have an ideal_vector), matching §B3's gate.

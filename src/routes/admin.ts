@@ -333,6 +333,8 @@ const NUMERIC_CONFIG_KEYS = [
   'upkeep_free_until_age_game_days',
   'time_warp_game_days',
   'time_warp_cost',
+  'young_horse_yearling_min_age_game_days',
+  'young_horse_two_year_old_min_age_game_days',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice

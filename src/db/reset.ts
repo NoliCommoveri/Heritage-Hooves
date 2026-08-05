@@ -77,6 +77,11 @@ const HORSE_TABLES = [
   'listings',
   'import_candidates',
   'import_offers',
+  // Slice 0025 stage 3: horse_ability_words references BOTH horses and show_entries (entry_id), so
+  // it must be emptied before either of them, not merely before horses - it goes first among the
+  // show-record tables for exactly that reason, even though it is otherwise the same shape of row
+  // as horse_show_summary right below it (a permanent fact a judged class leaves behind).
+  'horse_ability_words',
   'show_entries',
   'horse_show_summary',
   'show_classes',
@@ -126,6 +131,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   listings: 'Horses for sale, and past sales',
   import_candidates: 'Horses offered in a batch',
   import_offers: 'Founding-stock batches',
+  horse_ability_words: 'Ability test results',
   show_entries: 'Show entries',
   horse_show_summary: 'Horses\' show records',
   show_classes: 'Show classes',
