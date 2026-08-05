@@ -45,3 +45,23 @@ export function calendarEntryFor(scheduledGameDay: number, intervalGameDays: num
   const venue = VENUES[monthIndex];
   return { venue, name: `${venue} ${season} Show, Year ${String(year)}` };
 }
+
+/**
+ * Slice 0025 stage 4 §7.5a: the on-demand equivalent of calendarEntryFor, for a show minted the
+ * moment a player asks to enter a class rather than on a fixed calendar. An on-demand show's
+ * scheduled_game_day is `gameDay + show_entry_window_game_days`, which is not generally an exact
+ * multiple of show_interval_game_days - calendarEntryFor's own documented precondition - so this
+ * cannot reuse it directly. Purely cosmetic (a venue and a made-up name, never read by any rule),
+ * keyed off a fixed 30-day "month" so it stays deterministic and always defined no matter what the
+ * interval is configured to; the cost is that it no longer recurs at the same calendar position
+ * every real year the way the interval-driven calendar does, which does not matter for a show that
+ * was never on a calendar to begin with.
+ */
+export function onDemandCalendarEntryFor(scheduledGameDay: number): ShowCalendarEntry {
+  const ordinal = Math.floor(scheduledGameDay / 30) + 1;
+  const monthIndex = (ordinal - 1) % VENUES.length;
+  const year = Math.floor((ordinal - 1) / VENUES.length) + 1;
+  const season = SEASONS[Math.floor(monthIndex / 3)];
+  const venue = VENUES[monthIndex];
+  return { venue, name: `${venue} ${season} Show, Year ${String(year)}` };
+}

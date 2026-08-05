@@ -23,9 +23,23 @@ export type EligibilityReason =
   // Slice 0020 §5.4. Two reasons, not one, because they call for different sentences and different
   // futures: an open incident clears the moment it resolves, a degenerative outcome never does.
   | 'acute_incident'
-  | 'degenerative_incident';
+  | 'degenerative_incident'
+  // Slice 0025 stage 4 §7.5: a breed_conformation/discipline class is now bracketed by rank, and
+  // the horse's own current rank in that class type (§7.5a: "the rank is decided by the horse's own
+  // rank in that class type") has to match the class's own rank to enter. The normal path (the horse
+  // page's on-demand request) can never produce this refusal, since it always targets the horse's
+  // own rank when it joins or mints a class - this reason exists for /shows/:id's browse-and-join
+  // form, which lists every open class by id and would otherwise let a Novice horse into a Champion
+  // field it never earned a place in.
+  | 'wrong_rank';
 
 export type EligibilityResult = { ok: true } | { ok: false; reason: EligibilityReason };
+
+/** The three earned ranks, plus the fixed sentinel a young_conformation/ability_test class always
+ * carries (stage 4 does not rank-track either type - §7.3's own ribbons-don't-count-toward-adult-
+ * progression rule extends to not tracking a rank of their own either). */
+export type ShowRank = 'novice' | 'open' | 'champion';
+export type ClassRank = ShowRank | 'none';
 
 export interface EligibilityHorse {
   breedId: number | null;
@@ -54,6 +68,11 @@ export interface EligibilityHorse {
    * implementation of the settling rule in the codebase - breeding, which is not a show and never
    * comes through this file, shares that same function rather than a copy of the arithmetic. */
   availability: WorkAvailability;
+  /** Slice 0025 stage 4 §7.5: this horse's own current rank in the class's class type (breed or
+   * discipline), from horse_class_ranks - 'novice' when it has never been tracked yet (a horse
+   * starts at the bottom, not unranked). Ignored entirely when cls.rank is 'none' (a
+   * young_conformation/ability_test class, which never rank-gates). */
+  rank: ShowRank;
 }
 
 export interface EligibilityClass {
@@ -64,6 +83,8 @@ export interface EligibilityClass {
   crossesEligible: boolean;
   requiresGait: boolean;
   maxEntriesPerStable: number;
+  /** Slice 0025 stage 4 §7.5. 'none' for young_conformation/ability_test - see ClassRank's comment. */
+  rank: ClassRank;
 }
 
 /**
@@ -97,6 +118,8 @@ export function checkEligibility(horse: EligibilityHorse, cls: EligibilityClass,
   if (cls.sexRestriction !== null && horse.sex !== cls.sexRestriction) return { ok: false, reason: 'wrong_sex' };
 
   if (cls.requiresGait && !horse.gaited) return { ok: false, reason: 'requires_gait' };
+
+  if (cls.rank !== 'none' && horse.rank !== cls.rank) return { ok: false, reason: 'wrong_rank' };
 
   if (stableEntryCountInClass >= cls.maxEntriesPerStable) return { ok: false, reason: 'entry_cap_reached' };
 

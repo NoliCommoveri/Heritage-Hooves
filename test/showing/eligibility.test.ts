@@ -9,6 +9,7 @@ const QH_CLASS: EligibilityClass = {
   crossesEligible: false,
   requiresGait: false,
   maxEntriesPerStable: 3,
+  rank: 'novice',
 };
 
 const ELIGIBLE_HORSE: EligibilityHorse = {
@@ -23,6 +24,7 @@ const ELIGIBLE_HORSE: EligibilityHorse = {
   hasDegenerativeIncident: false,
   // The location flag: the baseline horse is in the barn and settled.
   availability: { available: true },
+  rank: 'novice',
 };
 
 describe('checkEligibility', () => {
@@ -116,5 +118,18 @@ describe('checkEligibility', () => {
 
   it('refuses a horse barred by a condition (slice 0010 §7.4, e.g. HERDA)', () => {
     expect(checkEligibility({ ...ELIGIBLE_HORSE, barredByCondition: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'barred_by_condition' });
+  });
+
+  // Slice 0025 stage 4 §7.5.
+  it('refuses a horse whose own rank does not match a rank-bracketed class', () => {
+    const cls: EligibilityClass = { ...QH_CLASS, rank: 'open' };
+    expect(checkEligibility(ELIGIBLE_HORSE, cls, 0)).toEqual({ ok: false, reason: 'wrong_rank' });
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, rank: 'open' }, cls, 0)).toEqual({ ok: true });
+  });
+
+  it('never rank-gates a class whose own rank is "none" (young_conformation/ability_test)', () => {
+    const cls: EligibilityClass = { ...QH_CLASS, rank: 'none' };
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, rank: 'novice' }, cls, 0)).toEqual({ ok: true });
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, rank: 'champion' }, cls, 0)).toEqual({ ok: true });
   });
 });

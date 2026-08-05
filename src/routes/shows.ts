@@ -13,7 +13,7 @@ import {
 } from '../render/shows';
 import { displayNameFor } from '../render/horses';
 import {
-  getNextShow,
+  listOpenShows,
   getShow,
   getShowClass,
   getShowClassesForShow,
@@ -99,21 +99,31 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const filter = await resolveShowsFilter(ctx);
 
-  const nextShowRow = await getNextShow(ctx.env);
-  const nextShowVisibleClasses = nextShowRow ? await loadVisibleClasses(ctx, nextShowRow.id, filter) : [];
-  const nextShow =
-    nextShowRow && nextShowVisibleClasses.length > 0
-      ? {
-          show: nextShowRow,
-          classes: nextShowVisibleClasses.map(({ cls, judge, entries }) => ({
-            cls,
-            judge,
-            breedName: breedNameFor(breeds, cls.breed_id),
-            entryCount: entries.length,
-            minAgeYears: Math.round(cls.min_age_game_days / gameDaysPerYear),
-          })),
-        }
-      : null;
+  // Slice 0025 stage 4 §7.5a: classes are minted on demand now, so more than one show can be open
+  // for entries at once (a family showing in Barrels and in Dressage the same week gets two open
+  // shows, not one that happens to hold both). openShows lists every one of them rather than
+  // assuming there is only ever "the next show" - a show with no class matching the current filter
+  // is dropped, same as the old single-nextShow card was skipped entirely in that case.
+  const openShowRows = await listOpenShows(ctx.env, 50);
+  const openShows = (
+    await Promise.all(
+      openShowRows.map(async (show) => {
+        const visibleClasses = await loadVisibleClasses(ctx, show.id, filter);
+        return { show, visibleClasses };
+      })
+    )
+  )
+    .filter(({ visibleClasses }) => visibleClasses.length > 0)
+    .map(({ show, visibleClasses }) => ({
+      show,
+      classes: visibleClasses.map(({ cls, judge, entries }) => ({
+        cls,
+        judge,
+        breedName: breedNameFor(breeds, cls.breed_id),
+        entryCount: entries.length,
+        minAgeYears: Math.round(cls.min_age_game_days / gameDaysPerYear),
+      })),
+    }));
 
   const recentShowRows = await listRecentJudgedShowsFiltered(ctx.env, ctx.config.values.shows_recent_count, filter);
   const recentShows = await Promise.all(
@@ -134,7 +144,7 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
       isAdmin: ctx.account!.is_admin === 1,
       actionsLeft: actionsLeftFor(ctx),
       gameDaysPerYear,
-      nextShow,
+      openShows,
       recentShows,
       classType: filter.classType,
       breedId: filter.breedId,

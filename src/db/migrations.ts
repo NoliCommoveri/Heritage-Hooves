@@ -162,6 +162,9 @@ import m0161 from '../../migrations/0161_show_classes_young_and_ability.sql';
 import m0162 from '../../migrations/0162_horse_ability_words.sql';
 import m0163 from '../../migrations/0163_config_young_horse_classes.sql';
 import m0164 from '../../migrations/0164_barn_hides_ended_horses.sql';
+import m0165 from '../../migrations/0165_show_classes_rank_and_key.sql';
+import m0166 from '../../migrations/0166_horse_class_ranks.sql';
+import m0167 from '../../migrations/0167_config_show_progression.sql';
 
 export interface MigrationFile {
   name: string;
@@ -340,6 +343,9 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0162_horse_ability_words.sql', sql: m0162 },
   { name: '0163_config_young_horse_classes.sql', sql: m0163 },
   { name: '0164_barn_hides_ended_horses.sql', sql: m0164 },
+  { name: '0165_show_classes_rank_and_key.sql', sql: m0165 },
+  { name: '0166_horse_class_ranks.sql', sql: m0166 },
+  { name: '0167_config_show_progression.sql', sql: m0167 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

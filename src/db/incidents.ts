@@ -494,14 +494,37 @@ export async function openIncidentHorseIds(env: Env, horseIds: number[]): Promis
 
 /** §5.4's two eligibility facts, computed from horse_incidents truth - no knowledge boundary. */
 export async function acquiredBarringFlags(env: Env, horseId: number): Promise<{ hasOpenAcuteIncident: boolean; hasDegenerativeIncident: boolean }> {
-  const row = await env.DB.prepare(
-    `SELECT
-       EXISTS(SELECT 1 FROM horse_incidents WHERE horse_id = ? AND state = 'acute') AS acute,
-       EXISTS(SELECT 1 FROM horse_incidents WHERE horse_id = ? AND outcome = 'degenerative') AS degenerative`
+  const map = await acquiredBarringFlagsMap(env, [horseId]);
+  return map.get(horseId) ?? { hasOpenAcuteIncident: false, hasDegenerativeIncident: false };
+}
+
+/**
+ * Slice 0025 stage 4 §7.5a.1: the batched sibling of acquiredBarringFlags - one query for every
+ * horse given, rather than one two-EXISTS-subquery call per horse. acquiredBarringFlags is now just
+ * this map with a one-element input (and, as a side effect, drops from two subqueries to one grouped
+ * query even for that single-horse case).
+ */
+export async function acquiredBarringFlagsMap(
+  env: Env,
+  horseIds: number[]
+): Promise<Map<number, { hasOpenAcuteIncident: boolean; hasDegenerativeIncident: boolean }>> {
+  const map = new Map<number, { hasOpenAcuteIncident: boolean; hasDegenerativeIncident: boolean }>();
+  if (horseIds.length === 0) return map;
+  for (const id of horseIds) map.set(id, { hasOpenAcuteIncident: false, hasDegenerativeIncident: false });
+
+  const placeholders = horseIds.map(() => '?').join(',');
+  const result = await env.DB.prepare(
+    `SELECT horse_id,
+            MAX(CASE WHEN state = 'acute' THEN 1 ELSE 0 END) AS acute,
+            MAX(CASE WHEN outcome = 'degenerative' THEN 1 ELSE 0 END) AS degenerative
+     FROM horse_incidents WHERE horse_id IN (${placeholders}) GROUP BY horse_id`
   )
-    .bind(horseId, horseId)
-    .first<{ acute: number; degenerative: number }>();
-  return { hasOpenAcuteIncident: (row?.acute ?? 0) === 1, hasDegenerativeIncident: (row?.degenerative ?? 0) === 1 };
+    .bind(...horseIds)
+    .all<{ horse_id: number; acute: number; degenerative: number }>();
+  for (const row of result.results ?? []) {
+    map.set(row.horse_id, { hasOpenAcuteIncident: row.acute === 1, hasDegenerativeIncident: row.degenerative === 1 });
+  }
+  return map;
 }
 
 /** §8.1: "Call the vet" - one incident, paid once. Refuses (returns false, no statements run) if

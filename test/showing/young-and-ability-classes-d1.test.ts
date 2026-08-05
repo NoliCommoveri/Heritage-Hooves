@@ -76,7 +76,12 @@ function freshDb(): DatabaseSync {
 
 async function readConfig(env: Env): Promise<Config> {
   const row = (await env.DB.prepare('SELECT version, "values", flags FROM config WHERE id = 1').first()) as { version: number; values: string; flags: string };
-  return { version: row.version, values: JSON.parse(row.values), flags: JSON.parse(row.flags) };
+  const flags = JSON.parse(row.flags) as Record<string, boolean>;
+  // Slice 0025 stage 4 (migration 0167): createDueShows' calendar minting is off by default now that
+  // classes mint on demand (§7.5a) - this file exercises createDueShows directly, so it opts back in
+  // exactly the way /admin/config would.
+  flags.show_auto_create_enabled = true;
+  return { version: row.version, values: JSON.parse(row.values), flags };
 }
 
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';

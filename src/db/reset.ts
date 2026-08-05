@@ -64,7 +64,10 @@ export type ResetScope = 'horses' | 'world';
  * **This list is not the whole answer to "what references horses".** `consignment_injections` also
  * has a `REFERENCES horses (id)` column and is deliberately absent here, because the two scopes
  * treat it differently - see the comment at the top of resetWorld(). If you are checking this file
- * against src/db/horseRemoval.ts's fifteen-table rule, that is the sixteenth place to look.
+ * against src/db/horseRemoval.ts's sixteen-table rule, that is the seventeenth place to look.
+ *
+ * Slice 0025 stage 4 adds `horse_class_ranks`, beside `horse_ability_words` for the same reason - a
+ * real foreign key into `horses` (horse_id).
  *
  * Slice 0017 Part D adds `stud_bookings` and `stud_listings`, before `listings` - `stud_bookings`
  * has real foreign keys into `stud_listings`, `coverings`, `horses` and `stables`, so it must go
@@ -82,6 +85,7 @@ const HORSE_TABLES = [
   // show-record tables for exactly that reason, even though it is otherwise the same shape of row
   // as horse_show_summary right below it (a permanent fact a judged class leaves behind).
   'horse_ability_words',
+  'horse_class_ranks',
   'show_entries',
   'horse_show_summary',
   'show_classes',
@@ -132,6 +136,7 @@ export const RESET_TABLE_LABELS: Record<ResetTable, string> = {
   import_candidates: 'Horses offered in a batch',
   import_offers: 'Founding-stock batches',
   horse_ability_words: 'Ability test results',
+  horse_class_ranks: 'Show rank progress',
   show_entries: 'Show entries',
   horse_show_summary: 'Horses\' show records',
   show_classes: 'Show classes',

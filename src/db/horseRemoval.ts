@@ -23,11 +23,12 @@ import { buildEndHorseParticipationStatements } from './ageing';
  *
  * Every clause here is doing two jobs at once, and that is why the list is longer than the phrase
  * suggests. It is the operator's rule, *and* it is the proof that deleting the row cannot break a
- * foreign key: every one of the fifteen tables with a `REFERENCES horses (id)` column is either
+ * foreign key: every one of the sixteen tables with a `REFERENCES horses (id)` column is either
  * named below (so the horse is kept) or cleaned up by buildDeleteHorseStatements (so the reference
- * goes with it) - horse_incidents (slice 0022 §A4) is the fifteenth, and it is in the second list.
- * If a future migration adds a sixteenth, it belongs in one list or the other, and the delete will
- * start failing inside a batch if it is in neither.
+ * goes with it) - horse_incidents (slice 0022 §A4) is the fifteenth, and horse_class_ranks (slice
+ * 0025 stage 4) is the sixteenth; both are in the second list. If a future migration adds a
+ * seventeenth, it belongs in one list or the other, and the delete will start failing inside a batch
+ * if it is in neither.
  *
  * The two stud clauses are deliberately stricter than the operator's rule. A stud booking is a
  * cross-stable transaction with a player's money in it, and deleting a horse that appears in one
@@ -129,6 +130,12 @@ export function buildDeleteHorseStatements(env: Env, horseId: number): D1Prepare
     // none exist - but it is listed anyway, for the same reason horse_evaluations is: the invariant
     // this file exists to hold is "named in one list or the other", not "actually reachable".
     env.DB.prepare('DELETE FROM horse_ability_words WHERE horse_id = ?').bind(horseId),
+    // Slice 0025 stage 4: horse_class_ranks references horses (horse_id). Same reasoning as
+    // horse_ability_words directly above - a row here is only ever written alongside a
+    // horse_show_summary row for the same horse (both land in the same judgeOneClass batch), and
+    // deletableHorseSql already requires no horse_show_summary row exists, so this always deletes
+    // zero rows in practice. Listed anyway, for the same "named in one list or the other" invariant.
+    env.DB.prepare('DELETE FROM horse_class_ranks WHERE horse_id = ?').bind(horseId),
     // Every listing this horse ever had, not just an open one - an earlier withdrawn or expired
     // listing points at it just as hard. None can be a 'sold' row: a sold horse belongs to whoever
     // bought it and is not in the seller's barn to be sent anywhere.

@@ -1240,25 +1240,33 @@ function showBadge(summary: HorseShowSummaryRow | null): SafeHtml {
 }
 
 export interface EnterShowInfo {
-  classId: number;
+  /** A CatalogueClassSpec.classKey (src/db/shows.ts) - identifies which catalogue row this is, not
+   * a live show_classes id, since one may not exist yet (slice 0025 stage 4 §7.5a). */
+  classKey: string;
   className: string;
   eligible: boolean;
   /** Present when !eligible - "isn't old enough yet - this class needs a horse at least..." etc,
    * from render/shows.ts's eligibilityMessage, with this horse's own name already prepended. */
   reasonSentence?: string;
+  /** Present when eligible - "3 entered, judged in 6 days." or "Nobody yet - starts a show, judged
+   * in 14 days." (§7.5a's own example rows), so pressing Enter never surprises about which of the
+   * two it does. */
+  statusSentence?: string;
 }
 
-/** Slice 0012 §9: one line per open class the horse either can or can't enter, instead of the
- * single class this rendered before there was ever more than one open at once. */
+/** Slice 0012 §9, widened by slice 0025 stage 4 §7.5a: one line per catalogue row the horse either
+ * can or can't enter - the whole catalogue now, not only classes that happen to already be open,
+ * since on demand there is no calendar to have pre-minted one. */
 function enterShowBlock(horseId: number, infos: EnterShowInfo[]): SafeHtml {
   if (infos.length === 0) return raw('');
   return html`${infos.map((info) =>
     info.eligible
       ? html`
         <form method="post" action="/horses/${String(horseId)}/enter-show">
-          <input type="hidden" name="class_id" value="${String(info.classId)}">
+          <input type="hidden" name="class_key" value="${info.classKey}">
           <button type="submit">Enter in ${info.className}</button>
-        </form>`
+        </form>
+        <p class="muted">${info.statusSentence}</p>`
       : html`<p class="muted">${info.reasonSentence}</p>`
   )}`;
 }

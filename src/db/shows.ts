@@ -7,8 +7,8 @@ import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
 import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
-import { calendarEntryFor } from '../engines/showing/calendar';
-import { checkEligibility, type EligibilityReason } from '../engines/showing/eligibility';
+import { calendarEntryFor, onDemandCalendarEntryFor } from '../engines/showing/calendar';
+import { checkEligibility, type EligibilityReason, type ShowRank, type ClassRank } from '../engines/showing/eligibility';
 import { scoreEntry, parseIdealVector, parseJudgeWeights } from '../engines/showing/score';
 import { scoreAbilityEntry, parseAbilityWeights } from '../engines/showing/abilityScore';
 import { parseDisciplineAptitudes, aptitudeFor } from '../engines/breeds/identity';
@@ -30,13 +30,40 @@ import { listNpcStableHorses } from './npc';
 import { getStableById } from './stables';
 import { buildLedgerStatements, type LedgerEntry } from './ledger';
 import { buildEventStatement } from './events';
-import { isBarredFromShowing, getEnabledConditions, conditionDeltaMapForHorses } from './health';
-import { acquiredBarringFlags, acuteCarePenaltyMapForHorses } from './incidents';
+import { isBarredFromShowing, isBarredFromShowingMap, getEnabledConditions, conditionDeltaMapForHorses } from './health';
+import { acquiredBarringFlags, acquiredBarringFlagsMap, acuteCarePenaltyMapForHorses } from './incidents';
 import { careModifierForHorse, availabilityForHorse } from './care';
 import { ageModifierForHorse } from './ageing';
 
 function isUniqueConstraintError(err: unknown): boolean {
   return err instanceof Error && /unique constraint failed/i.test(err.message);
+}
+
+/**
+ * Slice 0025 stage 4 (migration 0165's own comment): the single always-populated identity a
+ * show_classes row's (class_type, breed_id, discipline_code, ability_trait_code, age_band) tuple
+ * folds down to - what the partial unique index on (class_key, rank) actually indexes, and what the
+ * on-demand join-or-create lookup (§7.5a) matches an incoming request against. The same prefixes the
+ * migration's own backfill SQL uses; horse_class_ranks reuses the 'bc:'/'disc:' prefixes for its own
+ * class_key, since those are the only two rank-tracked class types.
+ */
+export function classKeyFor(
+  classType: ShowClassRow['class_type'],
+  breedId: number | null,
+  disciplineCode: string | null,
+  abilityTraitCode: string | null,
+  ageBand: string | null
+): string {
+  switch (classType) {
+    case 'breed_conformation':
+      return `bc:${String(breedId)}`;
+    case 'discipline':
+      return `disc:${String(disciplineCode)}`;
+    case 'young_conformation':
+      return `yc:${String(breedId)}:${String(ageBand)}`;
+    case 'ability_test':
+      return `at:${String(abilityTraitCode)}:${String(ageBand)}`;
+  }
 }
 
 export interface ShowRow {
@@ -68,6 +95,11 @@ export interface ShowClassRow {
   /** Non-null for exactly 'young_conformation'/'ability_test' - display/grouping metadata only;
    * min_age_game_days/max_age_game_days are what eligibility and judging actually read. */
   age_band: 'yearling' | 'two_year_old' | null;
+  /** Slice 0025 stage 4 (migration 0165). Always populated - see classKeyFor's own comment for why
+   * this exists (a raw multi-column NULL-bearing tuple can't be indexed uniquely in SQLite). */
+  class_key: string;
+  /** Slice 0025 stage 4 §7.5. 'none' for young_conformation/ability_test - neither is rank-tracked. */
+  rank: ClassRank;
   min_age_game_days: number;
   max_age_game_days: number | null;
   sex_restriction: 'mare' | 'stallion' | 'gelding' | null;
@@ -194,10 +226,13 @@ export async function getShowClass(env: Env, id: number): Promise<ShowClassRow |
   return env.DB.prepare('SELECT * FROM show_classes WHERE id = ?').bind(id).first<ShowClassRow>();
 }
 
-/** The earliest show still open for entries - normally at most one exists at a time, since the
- * default entry window matches the show interval (§2.1). */
-export async function getNextShow(env: Env): Promise<ShowRow | null> {
-  return env.DB.prepare(`SELECT * FROM shows WHERE status = 'entries_open' ORDER BY scheduled_game_day ASC LIMIT 1`).first<ShowRow>();
+/** Every show still open for entries, earliest deadline first. Before slice 0025 stage 4, at most
+ * one of these ever existed at a time (the calendar minted one show interval at a time - §2.1); on
+ * demand (§7.5a), a class is minted the moment somebody asks, so several can be open in parallel -
+ * /shows' own index lists all of them rather than assuming there is only ever "the next show". */
+export async function listOpenShows(env: Env, limit: number): Promise<ShowRow[]> {
+  const result = await env.DB.prepare(`SELECT * FROM shows WHERE status = 'entries_open' ORDER BY scheduled_game_day ASC LIMIT ?`).bind(limit).all<ShowRow>();
+  return result.results ?? [];
 }
 
 export async function listRecentJudgedShows(env: Env, limit: number): Promise<ShowRow[]> {
@@ -280,12 +315,6 @@ export async function listRecentJudgedShowsFiltered(env: Env, limit: number, fil
   return result.results ?? [];
 }
 
-/** Every class still waiting to be judged, oldest first - what the horse page's "Enter in a show"
- * button and /shows/:id's entry form both check a horse's eligibility against. */
-export async function getOpenClasses(env: Env, limit = 10): Promise<ShowClassRow[]> {
-  const result = await env.DB.prepare(`SELECT * FROM show_classes WHERE status = 'scheduled' ORDER BY id ASC LIMIT ?`).bind(limit).all<ShowClassRow>();
-  return result.results ?? [];
-}
 
 export async function getEntriesForClass(env: Env, classId: number): Promise<ShowEntryRow[]> {
   const result = await env.DB.prepare('SELECT * FROM show_entries WHERE class_id = ?').bind(classId).all<ShowEntryRow>();
@@ -420,6 +449,87 @@ export async function listShowsForAdmin(env: Env, limit: number): Promise<AdminS
 }
 
 // ---------------------------------------------------------------------------
+// Rank progression (slice 0025 stage 4 §7.5). One row per (horse, class_key) in horse_class_ranks
+// - only ever written for breed_conformation/discipline classes (migration 0166's own comment).
+// ---------------------------------------------------------------------------
+
+export interface HorseClassRankRow {
+  horse_id: number;
+  class_key: string;
+  rank: ShowRank;
+  top3_since_promotion: number;
+  wins_since_promotion: number;
+}
+
+/** This horse's current rank in one specific class_key - 'novice' when there is no row yet (a horse
+ * starts at the bottom of every class type the first time it's checked, not "unranked"). */
+async function horseRankForClass(env: Env, horseId: number, classKey: string): Promise<ShowRank> {
+  const row = await env.DB.prepare('SELECT rank FROM horse_class_ranks WHERE horse_id = ? AND class_key = ?').bind(horseId, classKey).first<{ rank: ShowRank }>();
+  return row?.rank ?? 'novice';
+}
+
+/** The batched sibling of horseRankForClass - every rank this horse has ever earned, across every
+ * class_key, in one query. Used by the horse page's catalogue (one horse, many catalogue rows) so
+ * checking rank eligibility for the whole "Enter in a show" card costs one query, not one per row. */
+export async function horseClassRanksMap(env: Env, horseId: number): Promise<Map<string, ShowRank>> {
+  const result = await env.DB.prepare('SELECT class_key, rank FROM horse_class_ranks WHERE horse_id = ?').bind(horseId).all<{ class_key: string; rank: ShowRank }>();
+  const map = new Map<string, ShowRank>();
+  for (const row of result.results ?? []) map.set(row.class_key, row.rank);
+  return map;
+}
+
+/** The NPC top-up's own batching axis: every candidate horse's rank for ONE class_key, in one
+ * query, rather than one horseRankForClass call per candidate (§7.5a.1's required hoist-and-batch,
+ * applied to the dimension that loop actually iterates over). */
+async function rankMapForHorsesInClassKey(env: Env, horseIds: number[], classKey: string): Promise<Map<number, ShowRank>> {
+  const map = new Map<number, ShowRank>();
+  if (horseIds.length === 0) return map;
+  const placeholders = horseIds.map(() => '?').join(',');
+  const result = await env.DB
+    .prepare(`SELECT horse_id, rank FROM horse_class_ranks WHERE class_key = ? AND horse_id IN (${placeholders})`)
+    .bind(classKey, ...horseIds)
+    .all<{ horse_id: number; rank: ShowRank }>();
+  for (const row of result.results ?? []) map.set(row.horse_id, row.rank);
+  return map;
+}
+
+const RANK_ORDER: ShowRank[] = ['novice', 'open', 'champion'];
+
+/**
+ * The graduation rule (migration 0166's own comment): every placed entry in a rank-tracked class
+ * (breed_conformation/discipline - young_conformation/ability_test never call this) advances its
+ * counters, and a horse holding both show_rank_top3_required top-3s and show_rank_win_required wins
+ * since its last promotion moves up one rank, counters reset to 0. A horse already at 'champion'
+ * still has its counters updated (so /admin can see how a champion is actually doing) but never
+ * promotes further - RANK_ORDER has no rank after it.
+ */
+function nextRankProgressionRow(
+  existing: HorseClassRankRow | null,
+  placing: number,
+  top3Required: number,
+  winRequired: number
+): { rank: ShowRank; top3: number; wins: number } {
+  const rank = existing?.rank ?? 'novice';
+  const top3 = (existing?.top3_since_promotion ?? 0) + (placing <= 3 ? 1 : 0);
+  const wins = (existing?.wins_since_promotion ?? 0) + (placing === 1 ? 1 : 0);
+  const promotes = top3 >= top3Required && wins >= winRequired && rank !== 'champion';
+  return promotes ? { rank: RANK_ORDER[RANK_ORDER.indexOf(rank) + 1], top3: 0, wins: 0 } : { rank, top3, wins };
+}
+
+function buildRankProgressionUpsertStatement(
+  env: Env,
+  params: { horseId: number; classType: 'breed_conformation' | 'discipline'; breedId: number | null; disciplineCode: string | null; classKey: string; rank: ShowRank; top3: number; wins: number; gameDay: number }
+): D1PreparedStatement {
+  return env.DB.prepare(
+    `INSERT INTO horse_class_ranks (horse_id, class_type, breed_id, discipline_code, class_key, rank, top3_since_promotion, wins_since_promotion, updated_game_day)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (horse_id, class_key) DO UPDATE SET
+       rank = excluded.rank, top3_since_promotion = excluded.top3_since_promotion,
+       wins_since_promotion = excluded.wins_since_promotion, updated_game_day = excluded.updated_game_day`
+  ).bind(params.horseId, params.classType, params.breedId, params.disciplineCode, params.classKey, params.rank, params.top3, params.wins, params.gameDay);
+}
+
+// ---------------------------------------------------------------------------
 // Entering a horse
 // ---------------------------------------------------------------------------
 
@@ -464,9 +574,13 @@ export async function checkHorseEligibilityForClass(
   gameDaysPerYear: number,
   config: Config
 ): Promise<{ ok: true } | { ok: false; reason: EligibilityReason }> {
-  const [existing, stableCount] = await Promise.all([
+  const [existing, stableCount, rank] = await Promise.all([
     getEntryByClassAndHorse(env, cls.id, horse.id),
     countStableEntriesInClass(env, cls.id, horse.owner_stable_id),
+    // Slice 0025 stage 4 §7.5: only breed_conformation/discipline classes rank-gate at all
+    // (cls.rank is 'none' for young_conformation/ability_test, which checkEligibility never
+    // compares against) - skip the extra query for the two class types that can never need it.
+    cls.rank === 'none' ? Promise.resolve<ShowRank>('novice') : horseRankForClass(env, horse.id, cls.class_key),
   ]);
   const genotype = parseGenotype(horse.genotype);
   const ageGameDays = gameDay - horse.born_game_day;
@@ -489,6 +603,7 @@ export async function checkHorseEligibilityForClass(
       // The location flag: needs pasture_settle_game_days, which is why this function now takes the
       // live config rather than the two loose numbers it used to.
       availability: availabilityForHorse(horse, config.values, gameDay),
+      rank,
     },
     {
       breedId: cls.breed_id,
@@ -498,6 +613,7 @@ export async function checkHorseEligibilityForClass(
       crossesEligible: cls.crosses_eligible === 1,
       requiresGait: cls.requires_gait === 1,
       maxEntriesPerStable: cls.max_entries_per_stable,
+      rank: cls.rank,
     },
     stableCount
   );
@@ -554,6 +670,10 @@ export async function enterHorseInClass(
  * correct game day.
  */
 export async function createDueShows(env: Env, gameDay: number, config: Config): Promise<void> {
+  // Slice 0025 stage 4 §7.5a: off by default (migration 0167). Classes are minted on demand now
+  // (requestClassEntry, below) - this calendar path is left in place, unused, as the operator's
+  // named "way back" if an empty /shows page ever reads as broken rather than quiet.
+  if (config.flags.show_auto_create_enabled !== true) return;
   const interval = config.values.show_interval_game_days;
   const window = config.values.show_entry_window_game_days;
   if (interval <= 0) return;
@@ -642,16 +762,17 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
     statements.push(
       env.DB.prepare(
         `INSERT INTO show_classes (
-           show_id, name, class_type, breed_id, discipline_code, min_age_game_days, max_age_game_days,
+           show_id, name, class_type, breed_id, discipline_code, class_key, rank, min_age_game_days, max_age_game_days,
            sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
            judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
          ) VALUES (
-           (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'breed_conformation', ?, NULL, ?, NULL,
+           (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'breed_conformation', ?, NULL, ?, 'novice', ?, NULL,
            NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
          )`
       ).bind(
         `${breed.name} Conformation`,
         breed.id,
+        classKeyFor('breed_conformation', breed.id, null, null, null),
         config.values.show_conformation_min_age_game_days,
         config.values.show_target_field_size,
         config.values.show_max_entries_per_stable,
@@ -679,16 +800,17 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
     statements.push(
       env.DB.prepare(
         `INSERT INTO show_classes (
-           show_id, name, class_type, breed_id, discipline_code, min_age_game_days, max_age_game_days,
+           show_id, name, class_type, breed_id, discipline_code, class_key, rank, min_age_game_days, max_age_game_days,
            sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
            judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
          ) VALUES (
-           (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'discipline', NULL, ?, ?, NULL,
+           (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'discipline', NULL, ?, ?, 'novice', ?, NULL,
            NULL, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'scheduled', NULL, ?, ?
          )`
       ).bind(
         discipline.name,
         discipline.code,
+        classKeyFor('discipline', null, discipline.code, null, null),
         discipline.min_age_game_days,
         discipline.crosses_eligible,
         discipline.requires_gait,
@@ -723,17 +845,18 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
       statements.push(
         env.DB.prepare(
           `INSERT INTO show_classes (
-             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, min_age_game_days, max_age_game_days,
+             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, class_key, rank, min_age_game_days, max_age_game_days,
              sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
              judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
            ) VALUES (
-             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'young_conformation', ?, NULL, NULL, ?, ?, ?,
+             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'young_conformation', ?, NULL, NULL, ?, ?, 'none', ?, ?,
              NULL, 0, 0, ?, ?, ?, ?, NULL, ?, ?, 'scheduled', NULL, ?, ?
            )`
         ).bind(
           `${band.label} ${breed.name} Conformation`,
           breed.id,
           band.band,
+          classKeyFor('young_conformation', breed.id, null, null, band.band),
           band.min,
           band.max,
           config.values.show_target_field_size,
@@ -764,17 +887,18 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
       statements.push(
         env.DB.prepare(
           `INSERT INTO show_classes (
-             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, min_age_game_days, max_age_game_days,
+             show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, class_key, rank, min_age_game_days, max_age_game_days,
              sex_restriction, crosses_eligible, requires_gait, target_field_size, max_entries_per_stable,
              judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
            ) VALUES (
-             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'ability_test', NULL, NULL, ?, ?, ?, ?,
+             (SELECT id FROM shows ORDER BY id DESC LIMIT 1), ?, 'ability_test', NULL, NULL, ?, ?, ?, 'none', ?, ?,
              NULL, 1, 0, ?, ?, ?, NULL, ?, ?, ?, 'scheduled', NULL, ?, ?
            )`
         ).bind(
           `${band.label} ${traitName} Test`,
           trait,
           band.band,
+          classKeyFor('ability_test', null, null, trait, band.band),
           band.min,
           band.max,
           config.values.show_target_field_size,
@@ -801,6 +925,400 @@ async function createShowIfMissing(env: Env, scheduledGameDay: number, gameDay: 
 }
 
 // ---------------------------------------------------------------------------
+// The on-demand catalogue and join-or-create (slice 0025 stage 4 §7.5a). A class exists because
+// somebody entered a horse in it - the catalogue below is the full list of class types that COULD
+// exist for a given horse, whether or not a live show_classes row currently does. requestClassEntry
+// is the horse page's "Enter in Show Jumping" button: it joins a live class matching the catalogue
+// entry and the horse's own current rank if one is open, or mints exactly one new class otherwise.
+// ---------------------------------------------------------------------------
+
+/** One entry in the full catalogue - what a class of this type WOULD look like if minted right now,
+ * independent of whether one is currently open. Everything here is what createShowIfMissing already
+ * computes per class; this is the same computation, just not yet written to a row. */
+export interface CatalogueClassSpec {
+  classType: ShowClassRow['class_type'];
+  name: string;
+  breedId: number | null;
+  disciplineCode: string | null;
+  abilityTraitCode: TraitCode | null;
+  ageBand: 'yearling' | 'two_year_old' | null;
+  classKey: string;
+  teachingText: string | null;
+  minAgeGameDays: number;
+  maxAgeGameDays: number | null;
+  crossesEligible: number;
+  requiresGait: number;
+  idealVector: string | null;
+  abilityWeights: string | null;
+  noiseSd: number;
+}
+
+/** §7.5a: "built from the disciplines rows plus the breeds carrying an ideal_vector plus the two
+ * young-horse class types" - every catalogue row a mature horse of some breed could conceivably
+ * enter, in the same order createShowIfMissing used to mint them (breed conformation, discipline,
+ * young conformation, ability test) so the picker reads the same way the old calendar page did. */
+export async function buildShowCatalogue(env: Env, config: Config): Promise<CatalogueClassSpec[]> {
+  const eligibleBreeds = (await getBreedsInPlay(env)).filter((b) => b.ideal_vector !== null);
+  const enabledDisciplines = await getEnabledDisciplines(env);
+  const abilityTraitNames = await getAbilityTraits(env);
+  const ageBands = youngHorseAgeBands(config.values);
+  const bands: { band: 'yearling' | 'two_year_old'; label: string; min: number; max: number }[] = [
+    { band: 'yearling', label: 'Yearling', min: ageBands.yearling.min, max: ageBands.yearling.max },
+    { band: 'two_year_old', label: 'Two-Year-Old', min: ageBands.twoYearOld.min, max: ageBands.twoYearOld.max },
+  ];
+
+  const out: CatalogueClassSpec[] = [];
+
+  for (const breed of eligibleBreeds) {
+    out.push({
+      classType: 'breed_conformation',
+      name: `${breed.name} Conformation`,
+      breedId: breed.id,
+      disciplineCode: null,
+      abilityTraitCode: null,
+      ageBand: null,
+      classKey: classKeyFor('breed_conformation', breed.id, null, null, null),
+      teachingText: null,
+      minAgeGameDays: config.values.show_conformation_min_age_game_days,
+      maxAgeGameDays: null,
+      crossesEligible: 0,
+      requiresGait: 0,
+      idealVector: breed.ideal_vector,
+      abilityWeights: null,
+      noiseSd: config.values.show_noise_sd,
+    });
+  }
+
+  for (const discipline of enabledDisciplines) {
+    out.push({
+      classType: 'discipline',
+      name: discipline.name,
+      breedId: null,
+      disciplineCode: discipline.code,
+      abilityTraitCode: null,
+      ageBand: null,
+      classKey: classKeyFor('discipline', null, discipline.code, null, null),
+      teachingText: discipline.teaching_text,
+      minAgeGameDays: discipline.min_age_game_days,
+      maxAgeGameDays: null,
+      crossesEligible: discipline.crosses_eligible,
+      requiresGait: discipline.requires_gait,
+      idealVector: null,
+      abilityWeights: discipline.ability_weights,
+      noiseSd: discipline.default_noise_sd,
+    });
+  }
+
+  for (const breed of eligibleBreeds) {
+    for (const band of bands) {
+      out.push({
+        classType: 'young_conformation',
+        name: `${band.label} ${breed.name} Conformation`,
+        breedId: breed.id,
+        disciplineCode: null,
+        abilityTraitCode: null,
+        ageBand: band.band,
+        classKey: classKeyFor('young_conformation', breed.id, null, null, band.band),
+        teachingText: null,
+        minAgeGameDays: band.min,
+        maxAgeGameDays: band.max,
+        crossesEligible: 0,
+        requiresGait: 0,
+        idealVector: breed.ideal_vector,
+        abilityWeights: null,
+        noiseSd: config.values.show_noise_sd,
+      });
+    }
+  }
+
+  for (const trait of ABILITY_TRAITS) {
+    const traitName = abilityTraitNames.find((t) => t.code === trait)?.name ?? trait;
+    for (const band of bands) {
+      out.push({
+        classType: 'ability_test',
+        name: `${band.label} ${traitName} Test`,
+        breedId: null,
+        disciplineCode: null,
+        abilityTraitCode: trait,
+        ageBand: band.band,
+        classKey: classKeyFor('ability_test', null, null, trait, band.band),
+        teachingText: null,
+        minAgeGameDays: band.min,
+        maxAgeGameDays: band.max,
+        crossesEligible: 1,
+        requiresGait: 0,
+        idealVector: null,
+        abilityWeights: JSON.stringify({ v: 1, traits: { [trait]: 1 } }),
+        noiseSd: config.values.show_noise_sd,
+      });
+    }
+  }
+
+  return out;
+}
+
+export interface CatalogueRowStatus {
+  spec: CatalogueClassSpec;
+  /** Non-null when a live class matching this catalogue entry and the horse's own current rank is
+   * already open - the "join" case. Null means entering would mint a new class - the "start" case. */
+  liveClassId: number | null;
+  entryCount: number;
+  /** Days from now until judging - either the live class's real deadline, or the window a freshly
+   * minted one would use (show_entry_window_game_days, unchanged from the calendar system by the
+   * operator's own decision, 2026-08-05: "30 game days. that's one real day."). */
+  judgedInDays: number;
+  result: { ok: true } | { ok: false; reason: EligibilityReason };
+}
+
+/**
+ * §7.5a.1's required fix, applied to the catalogue rather than to a list of already-existing open
+ * classes: every per-horse fact (genotype, phenotype, barring, incidents, availability) is computed
+ * once, and every per-catalogue-row fact (which live class matches, its entry count and deadline,
+ * this stable's own count in it) is fetched in a handful of batched queries rather than one round
+ * trip per row - the horse page's "Enter in a show" card now costs a small constant number of
+ * queries regardless of how large the catalogue grows, closing the O(classes) cost the fix names.
+ */
+export async function buildCatalogueStatusForHorse(
+  env: Env,
+  horse: HorseRow,
+  gameDay: number,
+  gameDaysPerYear: number,
+  config: Config
+): Promise<CatalogueRowStatus[]> {
+  const catalogue = await buildShowCatalogue(env, config);
+
+  const genotype = parseGenotype(horse.genotype);
+  const ageGameDays = gameDay - horse.born_game_day;
+  const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+  const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear, patternSeed, config.values.pattern_penetrance);
+  const [barredByCondition, barringFlags, ranks, openEntries] = await Promise.all([
+    isBarredFromShowing(env, horse.id, genotype, gameDay),
+    acquiredBarringFlags(env, horse.id),
+    horseClassRanksMap(env, horse.id),
+    listOpenEntriesForHorse(env, horse.id),
+  ]);
+  const openEntryClassIds = new Set(openEntries.map((e) => e.classId));
+
+  // Every currently-open class in the game, in one query - matched against the catalogue in memory
+  // below rather than one WHERE lookup per row.
+  const liveRows = await env.DB.prepare(
+    `SELECT sc.id, sc.class_key, sc.rank, sc.max_entries_per_stable, s.scheduled_game_day,
+            (SELECT COUNT(*) FROM show_entries se WHERE se.class_id = sc.id) AS entry_count
+     FROM show_classes sc JOIN shows s ON s.id = sc.show_id
+     WHERE sc.status = 'scheduled'`
+  ).all<{ id: number; class_key: string; rank: ClassRank; max_entries_per_stable: number; scheduled_game_day: number; entry_count: number }>();
+  const liveByKey = new Map((liveRows.results ?? []).map((r) => [`${r.class_key}:${r.rank}`, r]));
+
+  const liveClassIds = (liveRows.results ?? []).map((r) => r.id);
+  const stableCountByClassId = new Map<number, number>();
+  if (liveClassIds.length > 0) {
+    const stableCountRows = await env.DB
+      .prepare(
+        `SELECT class_id, COUNT(*) AS n FROM show_entries WHERE entered_by_stable_id = ? AND class_id IN (${liveClassIds.map(() => '?').join(',')}) GROUP BY class_id`
+      )
+      .bind(horse.owner_stable_id, ...liveClassIds)
+      .all<{ class_id: number; n: number }>();
+    for (const row of stableCountRows.results ?? []) stableCountByClassId.set(row.class_id, row.n);
+  }
+
+  return catalogue.map((spec) => {
+    const targetRank: ShowRank = spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? (ranks.get(spec.classKey) ?? 'novice') : 'novice';
+    const liveRankKey = spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? targetRank : 'none';
+    const live = liveByKey.get(`${spec.classKey}:${liveRankKey}`) ?? null;
+
+    const stableCount = live ? (stableCountByClassId.get(live.id) ?? 0) : 0;
+    const alreadyEntered = live ? openEntryClassIds.has(live.id) : false;
+    const maxEntriesPerStable = live ? live.max_entries_per_stable : config.values.show_max_entries_per_stable;
+
+    const result = checkEligibility(
+      {
+        breedId: horse.breed_id,
+        isCross: horse.is_cross === 1,
+        ageGameDays,
+        sex: horse.sex,
+        gaited: phenotype.gaited,
+        alreadyEntered,
+        barredByCondition,
+        hasOpenAcuteIncident: barringFlags.hasOpenAcuteIncident,
+        hasDegenerativeIncident: barringFlags.hasDegenerativeIncident,
+        availability: availabilityForHorse(horse, config.values, gameDay),
+        rank: targetRank,
+      },
+      {
+        breedId: spec.breedId,
+        minAgeGameDays: spec.minAgeGameDays,
+        maxAgeGameDays: spec.maxAgeGameDays,
+        sexRestriction: null,
+        crossesEligible: spec.crossesEligible === 1,
+        requiresGait: spec.requiresGait === 1,
+        maxEntriesPerStable,
+        // Catalogue-level eligibility never rank-gates on its own - a request always targets the
+        // horse's OWN current rank (targetRank above), so a mismatch can only ever be reported by
+        // /shows/:id's browse-any-open-class form, never by this card (§7.5's own reasoning,
+        // engines/showing/eligibility.ts's EligibilityReason.wrong_rank comment).
+        rank: 'none',
+      },
+      stableCount
+    );
+
+    return {
+      spec,
+      liveClassId: live?.id ?? null,
+      entryCount: live?.entry_count ?? 0,
+      judgedInDays: live ? live.scheduled_game_day - gameDay : config.values.show_entry_window_game_days,
+      result,
+    };
+  });
+}
+
+/** Finds (or, on a first request, mints) the one `shows` row every on-demand class created for the
+ * same deadline day shares - the calendar system's own "one show, many classes" shape, reused so a
+ * flurry of same-day requests land together rather than each getting its own single-class show. The
+ * shows table's own UNIQUE(scheduled_game_day, tier) index is what makes this race-safe: two
+ * concurrent requests either both see the row after one of them inserts it, or one insert wins and
+ * the loser's catch reads back the winner's row. */
+async function getOrCreateShowForDay(env: Env, scheduledGameDay: number, gameDay: number): Promise<ShowRow> {
+  const existing = await env.DB.prepare('SELECT * FROM shows WHERE scheduled_game_day = ? AND tier = \'local\'').bind(scheduledGameDay).first<ShowRow>();
+  if (existing) return existing;
+
+  const { venue, name } = onDemandCalendarEntryFor(scheduledGameDay);
+  const seed = randomSeed();
+  const nowSeconds = nowUtcSeconds();
+  try {
+    const result = await env.DB
+      .prepare(
+        `INSERT INTO shows (name, tier, venue, scheduled_game_day, entry_deadline_game_day, status, rng_seed, created_game_day, created_real_ts)
+         VALUES (?, 'local', ?, ?, ?, 'entries_open', ?, ?, ?)`
+      )
+      .bind(name, venue, scheduledGameDay, scheduledGameDay, seed, gameDay, nowSeconds)
+      .run();
+    const created = await env.DB.prepare('SELECT * FROM shows WHERE id = ?').bind(result.meta.last_row_id).first<ShowRow>();
+    if (!created) throw new Error('getOrCreateShowForDay: insert succeeded but the new row could not be read back');
+    return created;
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) throw err;
+    const raced = await env.DB.prepare('SELECT * FROM shows WHERE scheduled_game_day = ? AND tier = \'local\'').bind(scheduledGameDay).first<ShowRow>();
+    if (raced) return raced;
+    throw err;
+  }
+}
+
+/** Mints exactly one new class for this catalogue spec and rank, in its own (found-or-created)
+ * show. Returns null on a unique-index collision (idx_show_classes_open_key, migration 0165) -
+ * another request minted the identical (class_key, rank) between requestClassEntry's own lookup and
+ * this insert - the caller re-reads and joins what won the race rather than erroring. */
+async function mintClassForSpec(env: Env, spec: CatalogueClassSpec, rank: ClassRank, gameDay: number, config: Config): Promise<number | null> {
+  const scheduledGameDay = gameDay + config.values.show_entry_window_game_days;
+  const show = await getOrCreateShowForDay(env, scheduledGameDay, gameDay);
+
+  const needsConformationJudges = spec.classType === 'breed_conformation' || spec.classType === 'young_conformation';
+  const judgePool = needsConformationJudges ? await getJudges(env, 'conformation') : await getJudges(env, 'discipline');
+  if (judgePool.length === 0) {
+    throw new Error(`mintClassForSpec: no active ${needsConformationJudges ? 'conformation' : 'discipline'} judges are seeded`);
+  }
+  const seed = randomSeed();
+  const judge = judgePool[makeRng(deriveSeed(seed, 'judge')).int(judgePool.length)];
+  const prizeSchedule = JSON.stringify(config.values.show_prize_schedule);
+
+  try {
+    const result = await env.DB
+      .prepare(
+        `INSERT INTO show_classes (
+           show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, class_key, rank,
+           min_age_game_days, max_age_game_days, sex_restriction, crosses_eligible, requires_gait, target_field_size,
+           max_entries_per_stable, judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?, ?)`
+      )
+      .bind(
+        show.id,
+        spec.name,
+        spec.classType,
+        spec.breedId,
+        spec.disciplineCode,
+        spec.abilityTraitCode,
+        spec.ageBand,
+        spec.classKey,
+        rank,
+        spec.minAgeGameDays,
+        spec.maxAgeGameDays,
+        spec.crossesEligible,
+        spec.requiresGait,
+        config.values.show_target_field_size,
+        config.values.show_max_entries_per_stable,
+        judge.id,
+        spec.idealVector,
+        spec.abilityWeights,
+        config.values.show_ideal_falloff,
+        spec.noiseSd,
+        deriveSeed(seed, 'class'),
+        prizeSchedule
+      )
+      .run();
+    return result.meta.last_row_id;
+  } catch (err) {
+    if (isUniqueConstraintError(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * The horse page's "Enter in Show Jumping" button (§7.5a). Joins the live class matching this
+ * catalogue entry and the horse's own current rank if one is open and this stable has room in it;
+ * mints exactly one new class otherwise. `classKey` is a CatalogueClassSpec.classKey (also the value
+ * the picker's hidden form field carries) - identical to what buildCatalogueStatusForHorse already
+ * returned this same horse for this same row, so a stale page can never target the wrong catalogue
+ * entry, only a now-stale eligibility answer (re-checked here exactly as enterHorseInClass always
+ * has, "never trust the submitted value").
+ */
+export async function requestClassEntry(
+  env: Env,
+  params: { classKey: string; horseId: number; gameDay: number; gameDaysPerYear: number; conformationConfig: RealizationConfig; config: Config }
+): Promise<EnterHorseResult> {
+  const horse = await getHorse(env, params.horseId);
+  if (!horse) return { ok: false, reason: 'not_found' };
+
+  const catalogue = await buildShowCatalogue(env, params.config);
+  const spec = catalogue.find((c) => c.classKey === params.classKey);
+  if (!spec) return { ok: false, reason: 'not_found' };
+
+  // §7.5a: "there is no way to create one without an entry landing in it" - checked here, against
+  // exactly the same live-class-aware answer the horse page's own catalogue card already gave this
+  // horse for this row (buildCatalogueStatusForHorse), before any write happens. A stale or forged
+  // request that could never actually enter (too young, already barred, its stable already at the
+  // cap, ...) is refused here and never mints an empty class - "never trust the submitted value"
+  // (CLAUDE.md §11) applied to a class that might not exist yet, not only to one that already does.
+  const status = await buildCatalogueStatusForHorse(env, horse, params.gameDay, params.gameDaysPerYear, params.config);
+  const row = status.find((r) => r.spec.classKey === params.classKey);
+  if (!row || !row.result.ok) return row ? row.result : { ok: false, reason: 'not_found' };
+
+  const targetRank: ClassRank =
+    spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? await horseRankForClass(env, horse.id, spec.classKey) : 'none';
+
+  // At most two passes: the first either joins the live class the check above already found, or
+  // mints one (it found none because there wasn't one). If the mint loses a race (mintClassForSpec
+  // returns null - another request minted the identical class_key+rank first), the second pass
+  // re-reads and joins whatever the winner created.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const live = await env.DB
+      .prepare(`SELECT id FROM show_classes WHERE class_key = ? AND rank = ? AND status = 'scheduled'`)
+      .bind(spec.classKey, targetRank)
+      .first<{ id: number }>();
+    const classId = live ? live.id : await mintClassForSpec(env, spec, targetRank, params.gameDay, params.config);
+    if (classId === null) continue;
+
+    return enterHorseInClass(env, {
+      classId,
+      horseId: horse.id,
+      gameDay: params.gameDay,
+      gameDaysPerYear: params.gameDaysPerYear,
+      conformationConfig: params.conformationConfig,
+      config: params.config,
+    });
+  }
+  return { ok: false, reason: 'class_closed' };
+}
+
+// ---------------------------------------------------------------------------
 // Tick stage two: judge shows whose day has arrived (§6.2)
 // ---------------------------------------------------------------------------
 
@@ -814,6 +1332,79 @@ export async function judgeDueShowClasses(env: Env, gameDay: number, config: Con
   for (const cls of due.results ?? []) {
     await judgeOneClass(env, cls, gameDay, config);
   }
+}
+
+/**
+ * Slice 0025 stage 4 §7.5a.1: the NPC top-up's own batched eligibility check - every query
+ * checkHorseEligibilityForClass would otherwise make once per candidate horse (barredByCondition,
+ * acquiredBarringFlags, this class's own rank, and how many of each candidate's stable's horses are
+ * already in) collapses to a handful of queries for the whole candidate pool, mirroring
+ * checkHorseEligibilityForClass's own rule-check exactly (both end at the same checkEligibility
+ * call) so there is still exactly one place these rules are evaluated - only how the inputs are
+ * gathered differs.
+ */
+async function eligibleNpcHorsesForClass(
+  env: Env,
+  cls: ShowClassRow,
+  candidates: HorseRow[],
+  alreadyIn: Set<number>,
+  gameDay: number,
+  gameDaysPerYear: number,
+  config: Config
+): Promise<HorseRow[]> {
+  const pool = candidates.filter((h) => !alreadyIn.has(h.id));
+  if (pool.length === 0) return [];
+
+  const genotypeByHorseId = new Map(pool.map((h) => [h.id, parseGenotype(h.genotype)]));
+  const [barredMap, barringFlagsMap, rankMap, countRows] = await Promise.all([
+    isBarredFromShowingMap(env, genotypeByHorseId, gameDay),
+    acquiredBarringFlagsMap(env, pool.map((h) => h.id)),
+    cls.rank === 'none' ? Promise.resolve(new Map<number, ShowRank>()) : rankMapForHorsesInClassKey(env, pool.map((h) => h.id), cls.class_key),
+    env.DB.prepare('SELECT entered_by_stable_id, COUNT(*) AS n FROM show_entries WHERE class_id = ? GROUP BY entered_by_stable_id').bind(cls.id).all<{
+      entered_by_stable_id: number;
+      n: number;
+    }>(),
+  ]);
+  const stableCountMap = new Map((countRows.results ?? []).map((r) => [r.entered_by_stable_id, r.n]));
+
+  const eligible: HorseRow[] = [];
+  for (const horse of pool) {
+    const genotype = genotypeByHorseId.get(horse.id)!;
+    const ageGameDays = gameDay - horse.born_game_day;
+    const patternSeed = deriveSeed(horse.rng_seed, 'pattern_expression');
+    const phenotype = expressPhenotype(genotype, ageGameDays, gameDaysPerYear, patternSeed, config.values.pattern_penetrance);
+    const flags = barringFlagsMap.get(horse.id) ?? { hasOpenAcuteIncident: false, hasDegenerativeIncident: false };
+    const result = checkEligibility(
+      {
+        breedId: horse.breed_id,
+        isCross: horse.is_cross === 1,
+        ageGameDays,
+        sex: horse.sex,
+        gaited: phenotype.gaited,
+        // Already excluded from `pool` above - the same rule checkHorseEligibilityForClass enforces
+        // with a live getEntryByClassAndHorse query, just pre-filtered here instead.
+        alreadyEntered: false,
+        barredByCondition: barredMap.get(horse.id) ?? false,
+        hasOpenAcuteIncident: flags.hasOpenAcuteIncident,
+        hasDegenerativeIncident: flags.hasDegenerativeIncident,
+        availability: availabilityForHorse(horse, config.values, gameDay),
+        rank: rankMap.get(horse.id) ?? 'novice',
+      },
+      {
+        breedId: cls.breed_id,
+        minAgeGameDays: cls.min_age_game_days,
+        maxAgeGameDays: cls.max_age_game_days,
+        sexRestriction: cls.sex_restriction,
+        crossesEligible: cls.crosses_eligible === 1,
+        requiresGait: cls.requires_gait === 1,
+        maxEntriesPerStable: cls.max_entries_per_stable,
+        rank: cls.rank,
+      },
+      stableCountMap.get(horse.owner_stable_id) ?? 0
+    );
+    if (result.ok) eligible.push(horse);
+  }
+  return eligible;
 }
 
 async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, config: Config): Promise<void> {
@@ -845,15 +1436,14 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const npcHorses: HorseRow[] = [];
   if (shortfall > 0) {
     // Slice 0015 §7.1: every NPC stable's stock, not one hardcoded stable - everything else here
-    // (the shuffle, the eligibility check, the is_npc flag on the resulting show_entries row, the
-    // never-top-up-an-empty-field rule above) is unchanged.
+    // (the shuffle, the is_npc flag on the resulting show_entries row, the never-top-up-an-empty-
+    // field rule above) is unchanged. Slice 0025 §7.5a.1: the eligibility check itself is now
+    // eligibleNpcHorsesForClass, which batches every query that used to run once per candidate
+    // horse down to a handful for the whole pool - this loop is the dominant cost of a judged tick
+    // (§7.6), and it is also where rank now has to be checked (§7.5: "let the npcs compete like real
+    // players" means an NPC's own current rank gates it exactly the way a player's does).
     const candidates = await listNpcStableHorses(env);
-    const eligible: HorseRow[] = [];
-    for (const horse of candidates) {
-      if (alreadyIn.has(horse.id)) continue;
-      const result = await checkHorseEligibilityForClass(env, cls, horse, gameDay, gameDaysPerYear, config);
-      if (result.ok) eligible.push(horse);
-    }
+    const eligible = await eligibleNpcHorsesForClass(env, cls, candidates, alreadyIn, gameDay, gameDaysPerYear, config);
     const rng = makeRng(deriveSeed(cls.rng_seed, 'npc_field'));
     npcHorses.push(...rng.shuffle(eligible).slice(0, shortfall));
   }
@@ -1176,6 +1766,43 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
         gameDay,
       })
     );
+  }
+
+  // Slice 0025 stage 4 §7.5: rank progression, only for the two rank-tracked class types - every
+  // placed horse in a breed_conformation/discipline class advances its own counters, whether it's a
+  // player's horse or the show barn's own (NPCs carry ranks too - "let the npcs compete like real
+  // players"). young_conformation/ability_test never reach this block (branches on class_type, which
+  // is what horse_class_ranks itself is keyed by, not on cls.rank).
+  if (cls.class_type === 'breed_conformation' || cls.class_type === 'discipline') {
+    const rankType = cls.class_type;
+    const existingRankRows = await env.DB
+      .prepare(`SELECT * FROM horse_class_ranks WHERE class_key = ? AND horse_id IN (${allHorseIds.map(() => '?').join(',')})`)
+      .bind(cls.class_key, ...allHorseIds)
+      .all<HorseClassRankRow>();
+    const rankRowByHorseId = new Map((existingRankRows.results ?? []).map((r) => [r.horse_id, r]));
+    for (const horseId of allHorseIds) {
+      const placing = placingByHorseId.get(horseId);
+      if (placing === undefined) continue;
+      const next = nextRankProgressionRow(
+        rankRowByHorseId.get(horseId) ?? null,
+        placing,
+        config.values.show_rank_top3_required,
+        config.values.show_rank_win_required
+      );
+      statements.push(
+        buildRankProgressionUpsertStatement(env, {
+          horseId,
+          classType: rankType,
+          breedId: cls.breed_id,
+          disciplineCode: cls.discipline_code,
+          classKey: cls.class_key,
+          rank: next.rank,
+          top3: next.top3,
+          wins: next.wins,
+          gameDay,
+        })
+      );
+    }
   }
 
   // Slice 0009 §4.4: pays to show_entries.entered_by_stable_id, which is the show barn's own stable

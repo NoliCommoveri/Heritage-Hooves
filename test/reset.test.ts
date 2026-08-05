@@ -14,6 +14,7 @@ const REFERENCES: Record<ResetTable, string[]> = {
   import_candidates: ['import_offers', 'horses'],
   import_offers: ['stables', 'accounts', 'breeds'],
   horse_ability_words: ['horses', 'show_entries'],
+  horse_class_ranks: ['horses', 'breeds', 'disciplines'],
   show_entries: ['show_classes', 'horses', 'stables'],
   horse_show_summary: ['horses'],
   show_classes: ['shows', 'breeds', 'judges'],
