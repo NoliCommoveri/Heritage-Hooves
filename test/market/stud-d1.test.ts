@@ -90,10 +90,10 @@ async function readConfig(env: Env): Promise<Config> {
   return { version: row.version, values: JSON.parse(row.values), flags: JSON.parse(row.flags) };
 }
 
-// migrations 0085/0097/0136/0137 seed ten NPC stables (ids 1-10, slice 0023 grew this from 4 to 10),
-// so the two player stables below are 11 and 12.
-const MARE_STABLE = 11;
-const STALLION_STABLE = 12;
+// migrations 0085/0097/0136/0137/0168 seed eleven NPC stables (ids 1-11, slice 0023 grew this from
+// 4 to 10 and migration 0168 added an 11th), so the two player stables below are 12 and 13.
+const MARE_STABLE = 12;
+const STALLION_STABLE = 13;
 const MARE_ID = 1;
 const STALLION_ID = 2;
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';

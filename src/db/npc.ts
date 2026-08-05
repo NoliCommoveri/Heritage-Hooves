@@ -45,6 +45,13 @@ export const GW_CONFORMATION_SPECIALIST_PREFIX = 'Queens Palace';
 export const GW_DISCIPLINE_BARN_PREFIX = 'Springen Stables';
 export const GW_VOLUME_BREEDER_PREFIX = 'Suchon Acres';
 
+/** A second German Warmblood discipline barn, targeting Dressage rather than Show Jumping, seeded
+ * by migrations/0168_npc_stable_gw_dressage.sql - the breed's own discipline_aptitudes row
+ * (migration 0144) rates it nearly as well suited to dressage (1.04) as to jumping (1.05), so a
+ * second discipline barn is a real competitor rather than a padded one. Named here for the same
+ * reason as the pairs above - a full world reset has to recreate it. */
+export const GW_DRESSAGE_BARN_PREFIX = 'Dressur Stables';
+
 export async function getShowBarnStable(env: Env): Promise<StableRow | null> {
   return env.DB.prepare('SELECT * FROM stables WHERE prefix = ? AND is_npc = 1').bind(SHOW_BARN_PREFIX).first<StableRow>();
 }

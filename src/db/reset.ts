@@ -25,6 +25,7 @@ import {
   GW_CONFORMATION_SPECIALIST_PREFIX,
   GW_DISCIPLINE_BARN_PREFIX,
   GW_VOLUME_BREEDER_PREFIX,
+  GW_DRESSAGE_BARN_PREFIX,
 } from './npc';
 import { CONSIGNMENT_DEALER_PREFIX } from './consignment';
 
@@ -203,13 +204,14 @@ export interface ResetResult {
  * now gone.
  *
  * A full world reset's blanket `DELETE FROM stables` also removes every NPC stable - each is a
- * stable like any other, and the migrations that created them (0040, 0085, 0097, 0136, 0137) only
- * ever run once, so nothing would recreate them afterwards. All ten (the three renamed Quarter
- * Horse personalities - Apples and Oats Ranch, Bronco Valley, Horseshoe Bay - the six Paso Fino and
- * German Warmblood personalities slice 0023 added, and the Consignment Yard) are re-inserted here,
- * empty, in exactly the shape those migrations leave them in, along with all eight real
- * `npc_policy` rows - without the policy rows, every NPC stable comes back after a reset and none
- * of them ever breeds again. Apples and Oats Ranch is re-stocked from /admin/shows exactly as
+ * stable like any other, and the migrations that created them (0040, 0085, 0097, 0136, 0137, 0168)
+ * only ever run once, so nothing would recreate them afterwards. All eleven (the three renamed
+ * Quarter Horse personalities - Apples and Oats Ranch, Bronco Valley, Horseshoe Bay - the six Paso
+ * Fino and German Warmblood personalities slice 0023 added, Dressur Stables (migration 0168, German
+ * Warmblood's second discipline barn, targeting Dressage), and the Consignment Yard) are
+ * re-inserted here, empty, in exactly the shape those migrations leave them in, along with all nine
+ * real `npc_policy` rows - without the policy rows, every NPC stable comes back after a reset and
+ * none of them ever breeds again. Apples and Oats Ranch is re-stocked from /admin/shows exactly as
  * before (via `stockShowBarn`); every other personality stable is real, empty, and stocked by hand
  * from `/admin/npc`'s outcross control (slice 0015 §7.3) - a reset simply leaves them in that same
  * unstocked state. The Consignment Yard gets no `npc_policy` row, deliberately matching migration
@@ -401,6 +403,14 @@ export async function resetWorld(env: Env, scope: ResetScope): Promise<ResetResu
         personalityCode: 'volume_breeder',
         target: { kind: 'conformation', breedCode: 'GW' },
         ...VOLUME_BREEDER_NUMBERS,
+      })
+    );
+    statements.push(
+      ...personalityStableStatements(env, {
+        prefix: GW_DRESSAGE_BARN_PREFIX,
+        personalityCode: 'discipline_barn',
+        target: { kind: 'ability', disciplineCode: 'dressage' },
+        ...DISCIPLINE_BARN_NUMBERS,
       })
     );
     statements.push(

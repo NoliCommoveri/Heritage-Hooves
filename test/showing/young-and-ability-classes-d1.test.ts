@@ -85,7 +85,7 @@ async function readConfig(env: Env): Promise<Config> {
 }
 
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
-const PLAYER_STABLE = 11; // 10 NPC stables seeded (ids 1-10, see test/npc/buying-d1.test.ts's own comment)
+const PLAYER_STABLE = 12; // 11 NPC stables seeded (ids 1-11, see test/npc/buying-d1.test.ts's own comment)
 const QH = 1;
 
 function seedPlayer(db: DatabaseSync): void {

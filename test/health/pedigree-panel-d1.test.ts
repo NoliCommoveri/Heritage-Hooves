@@ -73,8 +73,9 @@ function freshDb(): DatabaseSync {
 }
 
 const MINIMAL_GENOTYPE = '{"v":1,"mendelian":{},"polygenic":{}}';
-// migrations seed ten NPC stables (ids 1-10), so a player stable is 11.
-const STABLE = 11;
+// migrations seed eleven NPC stables (ids 1-11, migration 0168 added a second German Warmblood
+// discipline barn), so a player stable is 12.
+const STABLE = 12;
 // breed ids: QH=1 (0014), AR=2, TB=3, PF=4, IC=5, GW=6, FR=7, NOK=8 (0024, insertion order).
 const QH_BREED_ID = 1;
 const AR_BREED_ID = 2;
