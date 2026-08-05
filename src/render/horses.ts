@@ -919,6 +919,42 @@ function conformationCard(params: {
     </div>`;
 }
 
+
+/**
+ * 2026-08-05: "Grow up" - the per-horse time warp. Placed on the horse's own page next to the other
+ * things an owner does to one horse, and rendered only while the horse is young enough for it to be
+ * possible at all, so a grown horse's page is not cluttered with a control it can never use.
+ *
+ * The card states all three costs before the press, because two of them are not money: a turn, and
+ * six months off the far end of the horse's life. A child should not discover the third one later.
+ */
+function growUpCard(view: TimeWarpCardView, name: string): SafeHtml {
+  return html`
+    <div class="card">
+      <h2>Grow up</h2>
+      ${errorBox(view.error)}
+      ${noticeBox(view.notice)}
+      <p>${name} is ${view.ageLabel} old and can't be shown or bred yet. You can pay to skip ahead - ${name} wakes up ${String(view.monthsLabel)} older, and everything else in the world stays where it is.</p>
+      <p class="muted">Costs ${String(view.cost)} and one turn. ${name} really is that much older afterwards, so ${name} will grow old that much sooner too - you are buying the time, not getting it free.${view.clamped ? ' This one takes ' + name + ' the rest of the way to grown, which is less than a full six months.' : ''}</p>
+      <form method="post" action="/horses/${String(view.horseId)}/warp">
+        <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>Grow up by ${String(view.days)} days (${String(view.cost)})</button>
+      </form>
+      ${view.affordable ? raw('') : html`<p class="muted">Not enough money for that right now.</p>`}
+    </div>`;
+}
+
+export interface TimeWarpCardView {
+  horseId: number;
+  days: number;
+  cost: number;
+  clamped: boolean;
+  affordable: boolean;
+  ageLabel: string;
+  monthsLabel: string;
+  error?: string;
+  notice?: string;
+}
+
 /** One trait's evaluated verdict, already turned into words by the caller. */
 export interface EvaluationVerdictRow {
   name: string;
@@ -1263,6 +1299,8 @@ export function renderHorsePage(params: {
   /** The paid evaluation block inside the Conformation card, 2026-08-05. Null for a viewer who
    * cannot buy one for this horse (no stable of their own, or an ended horse). */
   evaluation: EvaluationSectionView | null;
+  /** 2026-08-05: the "Grow up" card, or null for a horse already old enough that a warp is refused. */
+  timeWarp: TimeWarpCardView | null;
   /** True when horse.coi is at or above the existing coi_warn_threshold (slice 0006 §6.1). */
   showInbreedingNote: boolean;
   /** Slice 0008 §8.1/slice 0012 §9: the Show record card - starts, wins, best result, a few recent
@@ -1510,6 +1548,7 @@ export function renderHorsePage(params: {
       breedName: params.breed?.name ?? null,
       evaluation: params.evaluation,
     })}
+    ${params.canManage && params.timeWarp ? growUpCard(params.timeWarp, displayNameFor(h)) : raw('')}
     ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
     ${params.owner || params.isAdmin
       ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })

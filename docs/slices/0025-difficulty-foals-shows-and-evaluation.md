@@ -2,7 +2,7 @@
 
 **Commissioned 2026-08-05, from three days of real play by the operator's five children.** Every decision in this document was made by the operator, in answer to a question, in one sitting. Where a number was not specified it is named as a first guess below.
 
-This is one brief covering six pieces of work, shipped in four stages. **Stage one is built. Stages two to four are specified and not built.** Read the stage you are building; the rest is context.
+This is one brief covering six pieces of work, shipped in four stages. **Stages one and two are built. Stages three and four are specified and not built.** Read the stage you are building; the rest is context.
 
 ---
 
@@ -28,7 +28,7 @@ The operator asked for stud previews and difficulty first, then the rest in the 
 | Stage | Contents | State |
 |---|---|---|
 | 1 | Difficulty levels · paid evaluations · conformation words on stud listings · the breeding preview's foal range | **built 2026-08-05** |
-| 2 | The per-horse time warp · free foal upkeep | specified |
+| 2 | The per-horse time warp · free foal upkeep | **built 2026-08-05** |
 | 3 | Young-horse classes · ability tests | specified |
 | 4 | Two shows per cycle · the three-rank progression | specified |
 
@@ -102,7 +102,7 @@ Three properties, in the order they matter:
 
 ## 7. Stages 2-4 — specified, not built
 
-### 7.1 The time warp (stage 2)
+### 7.1 The time warp (stage 2) — **built 2026-08-05**
 
 Not a world speed-up and not skipping ahead — *"a time warp on an individual horse ... she will pay to be able to take a month old foal and make it a year or two year old horse immediately."*
 
@@ -113,7 +113,11 @@ Not a world speed-up and not skipping ahead — *"a time warp on an individual h
 - **The skipped period is not simulated.** No upkeep charged, no acquired incidents rolled, no care timers advanced. The one exception the operator named explicitly: **a lethal genetic condition that would have killed the foal in that window still kills it.** That is a fact about the horse, not a chance event, and difficulty (§3) does not touch it either.
 - The obvious implementation risk: everything that derives from `born_game_day`. Moving that value is the whole mechanism, and every timer keyed off it (care start, conformation realisation, show eligibility, ageing bands) must follow correctly. Prefer moving `born_game_day` backward over inventing an age offset column, and check `last_incident_check_game_day` does not then read as an enormous gap.
 
-### 7.2 Free foal upkeep (stage 2)
+**What landed** (migrations `0159`/`0160`, `src/db/timeWarp.ts`, `POST /horses/:id/warp`, a "Grow up" card on the horse's own page). `born_game_day` moves back, and with it every other absolute day anchored to this horse's own birth: `natural_death_game_day` (so it really does die sooner), and `horse_conditions.terminal_game_day` / `signs_game_day` (so a carried lethal still kills on schedule — the operator's one named exception). The care markers and `last_incident_check_game_day` are reset to today, so the horse arrives freshly cared-for rather than instantly overdue for months the warp explicitly did not simulate. **If a future slice adds another column anchored to a horse's birth date, it belongs in `buildTimeWarpStatements`** — nothing can enumerate that for you.
+
+Near the cap the last step is short: `planTimeWarp` clamps it to land exactly on maturity, the button names the real number of days, and the card says so. Full price for a short step is deliberate and stated, not hidden.
+
+### 7.2 Free foal upkeep (stage 2) — **built 2026-08-05**
 
 Raised by the operator mid-conversation: *"foals probably shouldn't cost upkeep. id throw them out in the pasture myself to avoid it since they cant be shown or bred anyways."*
 
@@ -159,3 +163,6 @@ Every one of these is a first guess:
 | `evaluation_cost` | 200 | Low on purpose. A full breeding preview needs both parents known, so this is paid twice. |
 | `evaluation_max_spread_bands` | 2 | How useless a weanling verdict feels. Drop to 1 if "Weak to Outstanding" reads as no answer at all. |
 | `evaluation_certain_age_years` | 3 | Matches the age a horse could have shown for itself and earned the same words free. |
+| `upkeep_free_until_age_game_days` | 360 | One game year. Watch whether balances now drift up while a crop of foals is growing. |
+| `time_warp_cost` | 400 | The one number the children will push on hardest. Too cheap and nobody ever waits; too dear and the ten-year-old is back where she started. |
+| `time_warp_game_days` | 180 | Six months a purchase, so a newborn is six turns and 2,400 from grown. |

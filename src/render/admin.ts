@@ -435,6 +435,14 @@ function configSections(v: Config['values']): { name: string; body: SafeHtml }[]
         <input type="text" inputmode="numeric" name="upkeep_per_horse_per_game_day" value="${String(v.upkeep_per_horse_per_game_day)}">
       </label>
       <p class="muted">Kept deliberately gentle - prize money from one show a real day is the only income in the game until the market stage lands. Worth revisiting once selling a horse becomes a second way to earn.</p>
+      <label>Young horses are free to keep until (game days old)
+        <input type="text" inputmode="numeric" name="upkeep_free_until_age_game_days" value="${String(v.upkeep_free_until_age_game_days)}">
+      </label>
+      <p class="muted">A horse younger than this costs nothing to keep, wherever it is standing. 360 is one game year - old enough to enter a yearling class. Set to 0 to charge board from birth, as the game did before.</p>
+      <label>Time warp, cost per six months
+        <input type="text" inputmode="numeric" name="time_warp_cost" value="${String(v.time_warp_cost)}">
+      </label>
+      <p class="muted">Costs one turn as well as the money, cannot be used past the age a horse could be bred, and the horse really is that much older afterwards - it will die that much sooner too.</p>
       `,
     },
     {

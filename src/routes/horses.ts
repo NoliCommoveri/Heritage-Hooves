@@ -66,6 +66,7 @@ import { evaluateHorse, wouldSharpen, type StoredEvaluation } from '../engines/c
 import { bandForTraitScore } from '../engines/conformation/labels';
 import { foalExpressedDistribution, centralInterval } from '../engines/genetics/foalPrediction';
 import { buildEvaluationStatements, evaluationCost, getLatestEvaluation } from '../db/evaluations';
+import { planTimeWarp, buildTimeWarpStatements } from '../db/timeWarp';
 import { parseIdealVector, traitScoreFor } from '../engines/showing/score';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { ConfigValues } from '../lib/config-cache';
@@ -1047,6 +1048,28 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       })
     : null;
 
+  // 2026-08-05: the "Grow up" card. Planned here so the button can name the real number of days -
+  // near the maturity cap the last warp is a short one, and saying "six months" would be a lie.
+  const warpPlan = owner ? planTimeWarp(horse, ctx.world.game_day, ctx.config.values) : null;
+  const timeWarp = warpPlan
+    ? {
+        horseId: horse.id,
+        days: warpPlan.days,
+        cost: warpPlan.cost,
+        clamped: warpPlan.clamped,
+        affordable: canTakeOnCost(ownerStable.balance) && ownerStable.balance >= warpPlan.cost,
+        // Months while it still reads as months - "0 years old" is not a thing anybody says about a
+        // foal, and this card is aimed squarely at a ten-year-old looking at one.
+        ageLabel:
+          ageYears < 1
+            ? `${String(Math.max(1, Math.round(ageYears * 12)))} months`
+            : `${String(Math.floor(ageYears))} year${Math.floor(ageYears) === 1 ? '' : 's'}`,
+        monthsLabel: `${String(Math.round((warpPlan.days / gameDaysPerYear) * 12))} months`,
+        error: params.get('warp_error') ?? undefined,
+        notice: params.get('warped') ? 'Grown up.' : undefined,
+      }
+    : null;
+
   const studListingRow = owner && horse.sex === 'stallion' ? await getActiveStudListingForHorse(ctx.env, horse.id) : null;
   const bookedThisSeason = studListingRow ? await bookingsThisSeasonCount(ctx.env, studListingRow.id, ctx.world.season_index) : 0;
   const suggestedStudFee = guideValue ? Math.max(10, Math.round((guideValue.value * ctx.config.values.npc_stud_fee_fraction) / 10) * 10) : null;
@@ -1088,6 +1111,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
       conformationLabels,
       conformationMaturityYears: ctx.config.values.conformation_maturity_years,
       evaluation,
+      timeWarp,
       showInbreedingNote: horse.coi >= ctx.config.values.coi_warn_threshold,
       showSummary,
       recentShowResultGroups,
@@ -2230,6 +2254,35 @@ async function buildEvaluationFor(ctx: RequestContext, horse: HorseRow): Promise
     },
     ctx.config.values
   );
+}
+
+/**
+ * /horses/:id/warp - the per-horse time warp, 2026-08-05. Owner-only, money and one turn, capped at
+ * maturity. See src/db/timeWarp.ts for what it does and deliberately does not simulate.
+ */
+export async function horseWarpRoute(ctx: RequestContext, horseId: number): Promise<Response> {
+  const horse = await getHorse(ctx.env, horseId);
+  if (!horse) return notFound();
+  const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
+  if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
+
+  const fail = (message: string) => redirect(`/horses/${String(horseId)}?warp_error=${encodeURIComponent(message)}`);
+
+  // Re-planned here rather than trusted from the page that drew the button: a tick may have run
+  // since, and the horse may already be grown.
+  const plan = planTimeWarp(horse, ctx.world.game_day, ctx.config.values);
+  if (!plan) return fail(`${displayNameFor(horse)} is already grown up.`);
+
+  const actionsLeft = actionsLeftFor(ctx);
+  if (actionsLeft !== null && actionsLeft < ACTION_COSTS.time_warp) return fail(turnsRefusalMessage(ctx));
+  if (!canTakeOnCost(ownerStable.balance) || ownerStable.balance < plan.cost) {
+    return fail(`${ownerStable.name} has ${String(ownerStable.balance)} and growing a horse up costs ${String(plan.cost)}. Win a show, sell a horse, or ask a grown-up to add money first.`);
+  }
+
+  await ctx.env.DB.batch(buildTimeWarpStatements(ctx.env, { horse, horseName: displayNameFor(horse), days: plan.days, cost: plan.cost, gameDay: ctx.world.game_day }));
+  await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.time_warp);
+
+  return redirect(`/horses/${String(horseId)}?warped=1`);
 }
 
 /**

@@ -344,6 +344,17 @@ export interface ConfigValues {
   evaluation_cost: number;
   evaluation_max_spread_bands: number;
   evaluation_certain_age_years: number;
+  /** Migration 0158, 2026-08-05. A horse younger than this costs nothing to keep at all - the
+   * operator's own call, since a foal can neither show nor breed and would otherwise just be
+   * parked at pasture to dodge the bill. Live, read by chargeUpkeep on every tick. 0 charges board
+   * from birth, as the game did before this landed. */
+  upkeep_free_until_age_game_days: number;
+  /** Migration 0159, 2026-08-05. The per-horse time warp: how much time one purchase buys, and what
+   * it costs on top of the one turn it also spends. Live, read at the point of purchase. The rules
+   * that are NOT numbers - capped at maturity, the horse really is that much older, the skipped
+   * months are not simulated - live in src/db/timeWarp.ts. */
+  time_warp_game_days: number;
+  time_warp_cost: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

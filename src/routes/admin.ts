@@ -330,6 +330,9 @@ const NUMERIC_CONFIG_KEYS = [
   'evaluation_cost',
   'evaluation_max_spread_bands',
   'evaluation_certain_age_years',
+  'upkeep_free_until_age_game_days',
+  'time_warp_game_days',
+  'time_warp_cost',
 ] as const;
 
 // These are genuine fractions (0.55, 1.0, 2.0, 5) rather than whole numbers - CLAUDE.md §5.5/slice
