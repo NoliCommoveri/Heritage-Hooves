@@ -161,6 +161,7 @@ import m0160 from '../../migrations/0160_ledger_add_time_warp_kind.sql';
 import m0161 from '../../migrations/0161_show_classes_young_and_ability.sql';
 import m0162 from '../../migrations/0162_horse_ability_words.sql';
 import m0163 from '../../migrations/0163_config_young_horse_classes.sql';
+import m0164 from '../../migrations/0164_barn_hides_ended_horses.sql';
 
 export interface MigrationFile {
   name: string;
@@ -338,6 +339,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0161_show_classes_young_and_ability.sql', sql: m0161 },
   { name: '0162_horse_ability_words.sql', sql: m0162 },
   { name: '0163_config_young_horse_classes.sql', sql: m0163 },
+  { name: '0164_barn_hides_ended_horses.sql', sql: m0164 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

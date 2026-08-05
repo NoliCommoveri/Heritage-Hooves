@@ -6,6 +6,15 @@ This file used to be CLAUDE.md §11. It moved out because it had grown too large
 
 ---
 
+**2026-08-05 — Barn list stops showing dead/retired-away horses after the day they end.** Operator report: dead horses were cluttering the stable view. Not a bug — slice 0011 §8.1 deliberately kept an ended horse visible in the main barn list (marked Died/Retired away) for `barn_shows_ended_game_days` (180) after it ended, specifically so the moment wasn't lost the instant it happened. The operator wants the stable view clear of them instead.
+
+- No code change. `barn_shows_ended_game_days` was already a live tunable read fresh by `listStableHorsesWithDead` (`src/db/horses.ts`), exactly built for this. `migrations/0164_barn_hides_ended_horses.sql` retunes it 180 → 0, `json_set`-ing the existing key the same way `0101` retuned `consignment_cadence_game_days` — a new migration, not an edit to `0060` (CLAUDE.md §8, forward-only). Numbered `0164` rather than the `0153` it was authored under, because main gained migrations `0153`-`0163` (slice 0025 stages 1-3) while this change was in review; renumbered on rebase, no other change.
+- An ended horse still shows on the game day it actually dies or is retired away (the cutoff comparison is `ended_game_day >= gameDay - 0`), then drops out of the barn list starting the next day. It stays reachable with no cutoff from `/stables/:id/past` (`listPastHorses`), which the barn list already links to ("Past horses"), and its ending is still announced in the events feed — nothing about how a horse ends changed, only how long it lingers in the main view.
+- This is a live tunable specifically so the operator can retune it again from `/admin/config` without a code change if 0 turns out to be too abrupt in practice.
+- Verified: `npx tsc --noEmit` clean, `npx vitest run` green (83 files, 783 tests, no test referenced the old default).
+
+---
+
 **2026-08-05 — Young-horse classes and ability tests.** Stage three of `docs/slices/0025-difficulty-foals-shows-and-evaluation.md`. Answers the fourth and fifth things the children said: they can't tell what a foal is worth because it can't show, and a single adult class per breed/discipline means their top horses just keep winning.
 
 - **`show_classes` gets two more `class_type`s via the same rebuild `discipline` used.** SQLite can't `ALTER` a `CHECK` constraint, so migration `0161` is another create-copy-drop-rename (migration `0064`'s own mechanics, `show_entries` round-tripped through a holding table because its foreign key blocks a bare `DROP TABLE`). `young_conformation` and `ability_test` join `breed_conformation`/`discipline`, plus two new nullable columns, `ability_trait_code` and `age_band` — the combined `CHECK` enforces exactly which columns each of the four requires, the same pairing `discipline` already established for `ideal_vector` XOR `ability_weights`.
