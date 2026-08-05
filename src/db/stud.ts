@@ -166,6 +166,28 @@ export async function bookingsThisSeasonCount(env: Env, studListingId: number, s
   return row?.n ?? 0;
 }
 
+/** Slice 0026 §1.1: gelding is refused while a paid stud booking against this stallion has not yet
+ * resolved (coverings.status = 'booked') - a paying customer's mare is somewhere in the middle of
+ * that cycle, and there is no refund path. Returns the mare's own display fields so the refusal
+ * sentence can name her, or null when nothing is unresolved. */
+export async function unresolvedStudBookingForStallion(
+  env: Env,
+  stallionId: number
+): Promise<{ registered_name: string | null; barn_name: string | null; sex: 'mare' | 'stallion' | 'gelding' } | null> {
+  return env.DB
+    .prepare(
+      `SELECT h.registered_name, h.barn_name, h.sex
+         FROM stud_bookings sb
+         JOIN coverings c ON c.id = sb.covering_id
+         JOIN horses h ON h.id = sb.mare_id
+        WHERE sb.stallion_id = ? AND c.status = 'booked'
+        ORDER BY sb.id DESC
+        LIMIT 1`
+    )
+    .bind(stallionId)
+    .first<{ registered_name: string | null; barn_name: string | null; sex: 'mare' | 'stallion' | 'gelding' }>();
+}
+
 /**
  * §13.2's guards, re-derived for two stables rather than one: everything validateBooking
  * (src/routes/horses.ts) already checks for a same-stable pairing, plus the two stud-specific

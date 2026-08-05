@@ -47,7 +47,10 @@ export type LedgerKind =
   // Paying to grow one horse up (2026-08-05, migration 0160). Its own kind because it is the one
   // purchase that buys nothing you can point at - no test result, no horse, no service - and a
   // child reading the money page needs to see what that money was.
-  | 'time_warp';
+  | 'time_warp'
+  // Gelding a stallion (slice 0026 §1.2, migration 0171). Its own kind for the same reason every
+  // entry above has one - the ledger is a thing a child reads.
+  | 'gelding';
 
 export interface LedgerEntry {
   stableId: number;

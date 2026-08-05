@@ -30,6 +30,9 @@ const CONFIG: AppraiseConfig = {
   market_carried_allele_cap: 1.5,
   // Slice 0021 §6.4.
   market_pattern_factor: 1.15,
+  // Slice 0026 §1.5.
+  market_gelding_factor: 0.75,
+  market_rank_factors: { novice: 1.0, open: 1.15, champion: 1.35 },
 };
 
 const IDEAL: IdealVector = {
@@ -53,6 +56,8 @@ function baseline(overrides: Partial<AppraiseParams> = {}): AppraiseParams {
     visibleColour: 'bay',
     knownHiddenColourAlleleCount: 0,
     hasPattern: false,
+    isGelding: false,
+    highestRank: 'novice',
     params: CONFIG,
     ...overrides,
   };
@@ -130,8 +135,10 @@ describe('appraise: never reads the lifespan (§4.2, §14.2)', () => {
       'expressed',
       'falloff',
       'hasPattern',
+      'highestRank',
       'ideal',
       'isFailing',
+      'isGelding',
       'knownHiddenColourAlleleCount',
       'knownResults',
       'params',
@@ -224,5 +231,28 @@ describe('appraise: colour (amendment 0017a §4.7)', () => {
     const known = appraise(baseline({ visibleColour: 'bay' })).value; // no entry for bay either
     const alsoUnknown = appraise(baseline({ visibleColour: 'some future colour name' })).value;
     expect(alsoUnknown).toBe(known);
+  });
+});
+
+// Slice 0026 §1.5/§5 test 4.
+describe('appraise: gelding and show rank', () => {
+  it('a gelding appraises lower than an otherwise-identical horse', () => {
+    const intact = appraise(baseline({ isGelding: false })).value;
+    const gelding = appraise(baseline({ isGelding: true })).value;
+    expect(gelding).toBeLessThan(intact);
+  });
+
+  it('a champion appraises higher than an otherwise-identical novice, and open sits between', () => {
+    const novice = appraise(baseline({ highestRank: 'novice' })).value;
+    const open = appraise(baseline({ highestRank: 'open' })).value;
+    const champion = appraise(baseline({ highestRank: 'champion' })).value;
+    expect(open).toBeGreaterThan(novice);
+    expect(champion).toBeGreaterThan(open);
+  });
+
+  it('the two compound: an intact champion appraises higher than a gelded champion', () => {
+    const intactChampion = appraise(baseline({ isGelding: false, highestRank: 'champion' })).value;
+    const geldedChampion = appraise(baseline({ isGelding: true, highestRank: 'champion' })).value;
+    expect(intactChampion).toBeGreaterThan(geldedChampion);
   });
 });

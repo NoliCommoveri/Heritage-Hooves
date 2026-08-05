@@ -39,6 +39,9 @@ export function eligibilityMessage(reason: EligibilityReason | 'class_closed' | 
       return "is out at pasture. Bring it into the barn first - it'll need a little while to settle in before it can be shown.";
     case 'settling_in':
       return 'came in from pasture recently and is still settling back into work.';
+    // Slice 0026 §1.3: a wait with an end date, the same shape as settling_in above.
+    case 'recovering_from_gelding':
+      return 'was gelded recently and is still recovering - not ready for the ring yet.';
     // Slice 0020 §5.4. Two reasons, two futures - an open incident clears on its own; a
     // degenerative outcome does not.
     case 'acute_incident':

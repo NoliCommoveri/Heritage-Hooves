@@ -51,6 +51,9 @@ import { nowUtcSeconds } from '../lib/time';
 // incidents' own truth from horse_conditions to horse_incidents; condition_code/condition_name in
 // the two payloads above are kept as field names for backward compatibility with events already
 // written, even though the value they carry is now an incident_types.code, not a conditions.code.
+// Slice 0026 §1.2 adds one more, same no-migration-needed reasoning - written for the owning stable
+// when its own stallion is gelded (src/routes/horses.ts's horseGeldRoute):
+//   gelded -> {"v":1,"horse_name":"..."}
 export type EventKind =
   | 'foaled'
   | 'covering_conceived'
@@ -66,7 +69,8 @@ export type EventKind =
   | 'consignment_batch'
   | 'stud_booked'
   | 'incident_onset'
-  | 'incident_resolved';
+  | 'incident_resolved'
+  | 'gelded';
 
 export interface EventRow {
   id: number;

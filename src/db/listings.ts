@@ -19,7 +19,8 @@ import { buildEventStatement } from './events';
 import { horseDisplayName, type HorseRow } from './horses';
 import { getBreedById } from './breeds';
 import { getKnowledgeForHorse } from './health';
-import { getShowSummary } from './shows';
+import { getShowSummary, horseClassRanksMap } from './shows';
+import { highestRankHeld } from '../engines/showing/eligibility';
 import { conformationValues, noiseFor } from '../engines/conformation/model';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
@@ -404,10 +405,11 @@ export function buildSaleStatements(env: Env, params: SaleStatementParams): D1Pr
  * one-formula-not-two argument §4.1 makes for reusing scoreEntry at all.
  */
 export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId: number, gameDay: number, config: ConfigValues): Promise<Appraisal> {
-  const [breed, knowledge, summary] = await Promise.all([
+  const [breed, knowledge, summary, ranks] = await Promise.all([
     horse.breed_id ? getBreedById(env, horse.breed_id) : Promise.resolve(undefined),
     getKnowledgeForHorse(env, stableId, horse.id),
     getShowSummary(env, horse.id),
+    horseClassRanksMap(env, horse.id),
   ]);
 
   const ageGameDays = gameDay - horse.born_game_day;
@@ -444,6 +446,9 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
     visibleColour: displayColourName(phenotype.visibleColour, creamTested),
     knownHiddenColourAlleleCount: hiddenColourAlleleCount(phenotype, testedLocusCodes),
     hasPattern: phenotype.patterns.length > 0,
+    // Slice 0026 §1.5.
+    isGelding: horse.sex === 'gelding',
+    highestRank: highestRankHeld([...ranks.values()]),
     params: config as AppraiseConfig,
   });
 }

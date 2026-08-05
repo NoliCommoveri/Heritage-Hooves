@@ -27,7 +27,7 @@ export function actionsRemaining(account: AccountActionState, tickSeq: number, a
  * by slice 0017 §13 (Part D) - a distinct kind from book_covering rather than reusing it, so a
  * future session reading the turns log can tell a cross-stable stud booking from an ordinary
  * same-barn one at a glance. Offering a stallion at stud stays free, same reasoning as listing. */
-export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse' | 'sell_to_offer' | 'book_stud' | 'time_warp';
+export type ActionKind = 'book_covering' | 'enter_show' | 'claim_founding' | 'genotype_test' | 'buy_horse' | 'sell_to_offer' | 'book_stud' | 'time_warp' | 'geld';
 
 export const ACTION_COSTS: Record<ActionKind, number> = {
   book_covering: 1,
@@ -45,6 +45,8 @@ export const ACTION_COSTS: Record<ActionKind, number> = {
   // turn is what stops a whole crop being warped to maturity in one sitting, since there is
   // deliberately no per-horse daily limit.
   time_warp: 1,
+  // Slice 0026 §1.1: gelding a stallion. A real decision, same footing as buy_horse/book_stud.
+  geld: 1,
 };
 
 /** The next tick slot's time of day, for the "more arrive at..." refusal message (§5.4). Purely

@@ -10,6 +10,7 @@ import type { Env } from '../types';
 import { nowUtcSeconds } from './time';
 import type { FeedLevelsConfig } from '../engines/care/modifier';
 import type { PatternPenetrance } from '../engines/genetics/expression';
+import type { ShowRank } from '../engines/showing/eligibility';
 
 export interface ConfigValues {
   display_timezone: string;
@@ -21,6 +22,11 @@ export interface ConfigValues {
   min_password_length: number;
   min_breeding_age_game_days: number;
   mare_recovery_game_days: number;
+  /** Slice 0026 §1.1. The turn-and-money price of gelding a stallion. */
+  gelding_cost: number;
+  /** Slice 0026 §1.3. How long a freshly gelded horse is unavailable for showing - checked against
+   * gameDay - horses.gelded_game_day. */
+  gelding_recovery_game_days: number;
   coi_warn_threshold: number;
   /** Ticks, not game days - slice 0003 §2: a real 21-day cycle aliases badly against a 10-day tick. */
   estrous_cycle_ticks: number;
@@ -70,6 +76,10 @@ export interface ConfigValues {
   show_entry_window_game_days: number;
   /** Slice 0008 §4.5. Snapshotted onto show_classes at creation (CLAUDE.md §5.5). */
   show_noise_sd: number;
+  /** Slice 0026 §1.4. Live, NOT snapshotted onto a class (unlike show_noise_sd above) - a gelding's
+   * negative show noise is multiplied by this; positive noise and non-geldings are untouched. See
+   * geldingAdjustedNoise, src/engines/showing/noise.ts. */
+  show_gelding_noise_relief: number;
   /** Slice 0008 §4.4. Snapshotted onto show_classes at creation. */
   show_ideal_falloff: number;
   /** Slice 0008 §6.2. Snapshotted onto show_classes at creation - the tick tops a class's field up
@@ -226,6 +236,12 @@ export interface ConfigValues {
    * (tobiano, frame, splash, sabino, appaloosa) - never stacked per pattern, so a maximally-marked
    * horse can't out-earn a well-bred one just by carrying more patterns. */
   market_pattern_factor: number;
+  /** Slice 0026 §1.5. Applied when sex = 'gelding', otherwise 1 - an intact stallion who also shows
+   * is premium, a gelding that has never shown is cheapest, and the two compound. */
+  market_gelding_factor: number;
+  /** Slice 0026 §1.5. Keyed by the horse's own highest rank held across every horse_class_ranks
+   * row - a horse with no row reads 'novice'. */
+  market_rank_factors: Record<ShowRank, number>;
   /** Amendment 0017a §5.8. The consignment dealer's own tunables - all live, all guesses. No
    * consignment_age_min/max_game_days key: runConsignments reuses founding_age_min/max_game_days
    * directly rather than a second, easy-to-drift copy of the same two numbers (§5.3). */

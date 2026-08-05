@@ -144,6 +144,10 @@ export function eventSentence(row: EventRow): AwayEvent {
       sentence = treated || outcome === 'death' ? outcomeSentence : `${outcomeSentence} (untreated)`;
       break;
     }
+    // Slice 0026 §1.2.
+    case 'gelded':
+      sentence = `${str('horse_name', 'A stallion')} was gelded.`;
+      break;
     default:
       sentence = row.kind;
   }

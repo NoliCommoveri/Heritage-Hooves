@@ -24,6 +24,7 @@ const ELIGIBLE_HORSE: EligibilityHorse = {
   hasDegenerativeIncident: false,
   // The location flag: the baseline horse is in the barn and settled.
   availability: { available: true },
+  recoveringFromGelding: false,
   rank: 'novice',
 };
 
@@ -54,6 +55,11 @@ describe('checkEligibility', () => {
     expect(
       checkEligibility({ ...ELIGIBLE_HORSE, availability: { available: false, reason: 'settling_in', daysRemaining: 12 } }, QH_CLASS, 0)
     ).toEqual({ ok: false, reason: 'settling_in' });
+  });
+
+  // Slice 0026 §1.3.
+  it('refuses a horse still recovering from gelding', () => {
+    expect(checkEligibility({ ...ELIGIBLE_HORSE, recoveringFromGelding: true }, QH_CLASS, 0)).toEqual({ ok: false, reason: 'recovering_from_gelding' });
   });
 
   it('reports being at pasture ahead of any other failed rule', () => {
