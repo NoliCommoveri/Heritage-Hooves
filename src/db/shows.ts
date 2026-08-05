@@ -529,6 +529,113 @@ function buildRankProgressionUpsertStatement(
   ).bind(params.horseId, params.classType, params.breedId, params.disciplineCode, params.classKey, params.rank, params.top3, params.wins, params.gameDay);
 }
 
+export interface RankBackfillResult {
+  pairsUpdated: number;
+}
+
+/**
+ * A one-time backfill, safe to press more than once: `horse_class_ranks` (migration `0166`) went
+ * live empty, with nothing reading a horse's pre-existing `show_entries` history into it - every
+ * ribbon won under the old flat, unranked class system was silently worth nothing toward the new
+ * Novice/Open/Champion progression (docs/build-log.md, 2026-08-05). This recomputes every
+ * rank-tracked (horse, class_key) pair from the *complete* judged history and overwrites whatever is
+ * there, rather than skipping a pair that already has a row - skipping would freeze out any horse
+ * whose first live-system placing landed the same day as the release, before this ever ran, losing
+ * its earlier history permanently. Folding the same horse's placings in the order they were actually
+ * judged through the identical `nextRankProgressionRow` the live judging path uses (§7.5's own
+ * graduation rule, unchanged) means this always converges on exactly the rank/counters the live
+ * system would have reached had it existed from day one - deterministic and idempotent, given the
+ * same `show_entries` rows.
+ */
+export async function backfillHistoricalRanks(env: Env, config: Config): Promise<RankBackfillResult> {
+  const rows =
+    (
+      await env.DB
+        .prepare(
+          `SELECT se.horse_id AS horse_id, sc.class_key AS class_key, sc.class_type AS class_type,
+                  sc.breed_id AS breed_id, sc.discipline_code AS discipline_code, se.placing AS placing,
+                  se.scored_game_day AS scored_game_day, se.id AS entry_id
+           FROM show_entries se
+           JOIN show_classes sc ON sc.id = se.class_id
+           WHERE sc.class_type IN ('breed_conformation', 'discipline') AND se.placing IS NOT NULL AND se.scored_game_day IS NOT NULL
+           ORDER BY se.horse_id ASC, sc.class_key ASC, se.scored_game_day ASC, se.id ASC`
+        )
+        .all<{
+          horse_id: number;
+          class_key: string;
+          class_type: 'breed_conformation' | 'discipline';
+          breed_id: number | null;
+          discipline_code: string | null;
+          placing: number;
+          scored_game_day: number;
+          entry_id: number;
+        }>()
+    ).results ?? [];
+
+  interface FoldState {
+    rank: ShowRank;
+    top3: number;
+    wins: number;
+    classType: 'breed_conformation' | 'discipline';
+    breedId: number | null;
+    disciplineCode: string | null;
+    lastGameDay: number;
+  }
+  // Keyed two levels deep (horse_id, then class_key) rather than a joined string key - class_key
+  // itself contains colons (e.g. 'disc:dressage'), which would make splitting a string key fragile.
+  const byHorse = new Map<number, Map<string, FoldState>>();
+
+  for (const row of rows) {
+    let byClassKey = byHorse.get(row.horse_id);
+    if (!byClassKey) {
+      byClassKey = new Map();
+      byHorse.set(row.horse_id, byClassKey);
+    }
+    const existing = byClassKey.get(row.class_key);
+    const next = nextRankProgressionRow(
+      existing
+        ? { horse_id: row.horse_id, class_key: row.class_key, rank: existing.rank, top3_since_promotion: existing.top3, wins_since_promotion: existing.wins }
+        : null,
+      row.placing,
+      config.values.show_rank_top3_required,
+      config.values.show_rank_win_required
+    );
+    byClassKey.set(row.class_key, {
+      rank: next.rank,
+      top3: next.top3,
+      wins: next.wins,
+      classType: row.class_type,
+      breedId: row.breed_id,
+      disciplineCode: row.discipline_code,
+      lastGameDay: row.scored_game_day,
+    });
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  let pairsUpdated = 0;
+  for (const [horseId, byClassKey] of byHorse) {
+    for (const [classKey, s] of byClassKey) {
+      pairsUpdated++;
+      statements.push(
+        buildRankProgressionUpsertStatement(env, {
+          horseId,
+          classType: s.classType,
+          breedId: s.breedId,
+          disciplineCode: s.disciplineCode,
+          classKey,
+          rank: s.rank,
+          top3: s.top3,
+          wins: s.wins,
+          gameDay: s.lastGameDay,
+        })
+      );
+    }
+  }
+
+  if (statements.length > 0) await env.DB.batch(statements);
+  return { pairsUpdated };
+}
+
 // ---------------------------------------------------------------------------
 // Entering a horse
 // ---------------------------------------------------------------------------
