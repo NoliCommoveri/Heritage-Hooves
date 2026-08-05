@@ -46,7 +46,7 @@ import type { EvaluationSectionView } from '../render/horses';
 import { getBreeds, type BreedRow } from '../db/breeds';
 import { getDisciplines } from '../db/disciplines';
 import { getEnabledConditions, getKnowledgeForHorse, conditionsPanelForHorse } from '../db/health';
-import { getShowSummary, listRecentResultsForHorse, listOpenEntriesForHorse } from '../db/shows';
+import { getShowSummary, listRecentResultsForHorse, listOpenEntriesForHorse, horseClassRanksMap, highestRanksForHorses } from '../db/shows';
 import { getActivePregnancyForMare } from '../db/pregnancies';
 import { getBookedCoveringForMare } from '../db/coverings';
 import { availabilityForHorse } from '../db/care';
@@ -254,12 +254,14 @@ async function buyerOptionsFor(ctx: RequestContext, excludeStableId: number): Pr
 
 async function buildListingView(ctx: RequestContext, listing: OpenListingRow, horse: HorseRow, isMine: boolean): Promise<ListingDetailView> {
   const cfg = ctx.config.values;
-  const [breeds, conditions, comesWith, summary, recentRaw, sire, dam] = await Promise.all([
+  const [breeds, conditions, comesWith, summary, recentRaw, currentRanks, highestRanks, sire, dam] = await Promise.all([
     getBreeds(ctx.env),
     disclosedConditionsFor(ctx, listing.seller_stable_id, horse.id),
     comesWithSentences(ctx, horse),
     getShowSummary(ctx.env, horse.id),
     listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT),
+    horseClassRanksMap(ctx.env, horse.id),
+    highestRanksForHorses(ctx.env, [horse.id]),
     horse.sire_id ? getHorse(ctx.env, horse.sire_id) : Promise.resolve(null),
     horse.dam_id ? getHorse(ctx.env, horse.dam_id) : Promise.resolve(null),
   ]);
@@ -288,7 +290,8 @@ async function buildListingView(ctx: RequestContext, listing: OpenListingRow, ho
     starts: summary?.starts ?? 0,
     wins: summary?.wins ?? 0,
     bestPlacingText: summary?.best_placing != null ? placingText(summary.best_placing) : 'none yet',
-    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year),
+    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year, currentRanks),
+    highestRank: highestRanks.get(horse.id),
     price: listing.price,
     expiresGameDay: listing.expires_game_day,
     conditions,
@@ -658,7 +661,7 @@ export async function studIndexRoute(ctx: RequestContext): Promise<Response> {
 
 async function buildStudListingView(ctx: RequestContext, listing: OpenStudListingRow, stallion: HorseRow, isMine: boolean): Promise<StudListingDetailView> {
   const cfg = ctx.config.values;
-  const [breeds, conditions, conformationLabels, summary, recentRaw, sire, dam, bookedThisSeason] = await Promise.all([
+  const [breeds, conditions, conformationLabels, summary, recentRaw, currentRanks, highestRanks, sire, dam, bookedThisSeason] = await Promise.all([
     getBreeds(ctx.env),
     disclosedConditionsFor(ctx, listing.stable_id, stallion.id),
     // 2026-08-05: free and public on a stud listing, gated on his own show record - see
@@ -666,6 +669,8 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     conformationLabelRowsFor(ctx.env, stallion, ctx.world.game_day, cfg),
     getShowSummary(ctx.env, stallion.id),
     listRecentResultsForHorse(ctx.env, stallion.id, SHOW_RESULT_FETCH_LIMIT),
+    horseClassRanksMap(ctx.env, stallion.id),
+    highestRanksForHorses(ctx.env, [stallion.id]),
     stallion.sire_id ? getHorse(ctx.env, stallion.sire_id) : Promise.resolve(null),
     stallion.dam_id ? getHorse(ctx.env, stallion.dam_id) : Promise.resolve(null),
     bookingsThisSeasonCount(ctx.env, listing.id, ctx.world.season_index),
@@ -694,7 +699,8 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     starts: summary?.starts ?? 0,
     wins: summary?.wins ?? 0,
     bestPlacingText: summary?.best_placing != null ? placingText(summary.best_placing) : 'none yet',
-    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year),
+    recentResultGroups: buildShowResultGroups(recentRaw, cfg.game_days_per_year, currentRanks),
+    highestRank: highestRanks.get(stallion.id),
     fee: listing.fee,
     seasonCap: listing.season_cap,
     bookedThisSeason,

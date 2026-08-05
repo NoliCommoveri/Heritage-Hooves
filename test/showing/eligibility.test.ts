@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkEligibility, type EligibilityClass, type EligibilityHorse } from '../../src/engines/showing/eligibility';
+import { checkEligibility, isPermanentRefusal, type EligibilityClass, type EligibilityHorse, type EligibilityReason } from '../../src/engines/showing/eligibility';
 
 const QH_CLASS: EligibilityClass = {
   breedId: 1, // Quarter Horse
@@ -137,5 +137,31 @@ describe('checkEligibility', () => {
     const cls: EligibilityClass = { ...QH_CLASS, rank: 'none' };
     expect(checkEligibility({ ...ELIGIBLE_HORSE, rank: 'novice' }, cls, 0)).toEqual({ ok: true });
     expect(checkEligibility({ ...ELIGIBLE_HORSE, rank: 'champion' }, cls, 0)).toEqual({ ok: true });
+  });
+});
+
+// Slice 0026 §3.4/test 6: the catalogue prune drops permanent-fact refusals entirely and keeps
+// everything else, since only a permanent fact about the horse can never become enterable.
+describe('isPermanentRefusal', () => {
+  it('is true for a permanent fact about the horse - wrong breed, crossbred, wrong sex, needs a gait', () => {
+    const permanent: EligibilityReason[] = ['wrong_breed', 'crossbred_not_eligible', 'wrong_sex', 'requires_gait'];
+    for (const reason of permanent) expect(isPermanentRefusal(reason)).toBe(true);
+  });
+
+  it('is false for anything temporary or actionable - the catalogue keeps these rows', () => {
+    const temporary: EligibilityReason[] = [
+      'too_young',
+      'too_old',
+      'at_pasture',
+      'settling_in',
+      'recovering_from_gelding',
+      'acute_incident',
+      'degenerative_incident',
+      'barred_by_condition',
+      'entry_cap_reached',
+      'already_entered',
+      'wrong_rank',
+    ];
+    for (const reason of temporary) expect(isPermanentRefusal(reason)).toBe(false);
   });
 });

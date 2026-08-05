@@ -13,7 +13,8 @@ import { html, raw, SafeHtml } from '../lib/html';
 import type { ConformationLabelRow } from '../db/conformationLabels';
 import type { EvaluationSectionView } from './horses';
 import { pageShell, errorBox, noticeBox } from './layout';
-import { showResultGroupsHtml, type ShowResultGroup } from './shows';
+import { showResultGroupsHtml, rankBadgeHtml, type ShowResultGroup } from './shows';
+import type { HorseHighestRank } from '../db/shows';
 import type { WorldRow } from '../db/world';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
@@ -316,6 +317,8 @@ export interface ListingDetailView {
   bestPlacingText: string;
   /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
   recentResultGroups: ShowResultGroup[];
+  /** Slice 0026 §3.1: rank is public - shown on this non-owner screen exactly as on the barn list. */
+  highestRank: HorseHighestRank | undefined;
   price: number;
   expiresGameDay: number;
   conditions: DisclosedCondition[];
@@ -438,7 +441,7 @@ export function renderListingPage(params: {
     ${comesWithBlock}
     <div class="card">
       <h2>Show record</h2>
-      <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText}</p>
+      <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText} ${rankBadgeHtml(l.highestRank)}</p>
       ${showResultGroupsHtml(l.recentResultGroups)}
       <p class="muted">A show record is the honest measure of a horse you do not own. An untested, unshown youngster is genuinely a gamble - that is what makes showing your own stock worth doing.</p>
     </div>
@@ -749,6 +752,8 @@ export interface StudListingDetailView {
   bestPlacingText: string;
   /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
   recentResultGroups: ShowResultGroup[];
+  /** Slice 0026 §3.1: rank is public - shown on this non-owner screen exactly as on the barn list. */
+  highestRank: HorseHighestRank | undefined;
   fee: number;
   seasonCap: number;
   bookedThisSeason: number;
@@ -866,7 +871,7 @@ export function renderStudDetailPage(params: {
     ${healthPanel(l.conditions, params.gameDaysPerYear)}
     <div class="card">
       <h2>Show record</h2>
-      <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText}</p>
+      <p><strong>Starts:</strong> ${String(l.starts)} &middot; <strong>Wins:</strong> ${String(l.wins)} &middot; <strong>Best:</strong> ${l.bestPlacingText} ${rankBadgeHtml(l.highestRank)}</p>
       ${showResultGroupsHtml(l.recentResultGroups)}
     </div>
     <div class="card">

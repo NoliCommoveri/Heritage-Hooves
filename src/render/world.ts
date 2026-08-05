@@ -5,8 +5,9 @@
 
 import { html, raw, SafeHtml } from '../lib/html';
 import { pageShell } from './layout';
-import { placingText, showResultGroupsHtml, type ShowResultGroup } from './shows';
+import { placingText, showResultGroupsHtml, rankBadgeHtml, type ShowResultGroup } from './shows';
 import type { WorldRow } from '../db/world';
+import type { HorseHighestRank } from '../db/shows';
 
 export interface WorldStableListRow {
   id: number;
@@ -121,6 +122,8 @@ export interface PublicHorseView {
   bestPlacing: number | null;
   /** Placings grouped by class type, exactly as the owner's own horse page groups them. */
   recentResultGroups: ShowResultGroup[];
+  /** Slice 0026 §3.1: rank is public - shown on this non-owner screen exactly as on the barn list. */
+  highestRank: HorseHighestRank | undefined;
   /** "Died" / "Retired away" / null when alive. */
   statusLabel: string | null;
   atPasture: boolean;
@@ -171,7 +174,7 @@ export function renderWorldHorsePage(params: {
     </div>
     <div class="card">
       <h2>Show record</h2>
-      <p><strong>Starts:</strong> ${String(h.starts)} &middot; <strong>Wins:</strong> ${String(h.wins)} &middot; <strong>Best:</strong> ${h.bestPlacing !== null ? placingText(h.bestPlacing) : 'none yet'}</p>
+      <p><strong>Starts:</strong> ${String(h.starts)} &middot; <strong>Wins:</strong> ${String(h.wins)} &middot; <strong>Best:</strong> ${h.bestPlacing !== null ? placingText(h.bestPlacing) : 'none yet'} ${rankBadgeHtml(h.highestRank)}</p>
       ${showResultGroupsHtml(h.recentResultGroups)}
     </div>
     <p><a href="/world">Back to Everyone</a></p>

@@ -9,8 +9,8 @@ import type { Genotype } from '../engines/genetics/genotype';
 import { LOCI } from '../engines/genetics/loci';
 import { NO_PICTURE_VALUE, type ImageOption } from '../lib/images';
 import type { ConformationDisplayRow } from '../engines/conformation/model';
-import type { HorseShowSummaryRow } from '../db/shows';
-import { placingText, showResultGroupsHtml, type ShowResultGroup } from './shows';
+import type { HorseShowSummaryRow, HorseRankProgressRow, HorseHighestRank } from '../db/shows';
+import { placingText, showResultGroupsHtml, rankProgressSentence, rankBadgeHtml, type ShowResultGroup } from './shows';
 import type { ConditionRow } from '../db/health';
 import type { AgeState } from '../engines/ageing/lifespan';
 import type { AgeModifierResult } from '../engines/ageing/performance';
@@ -25,6 +25,7 @@ import type { OpenIncidentView, IncidentHistoryView } from '../db/incidents';
 import { CONFORMATION_LABEL_TEXT, type ConformationLabel } from '../engines/conformation/labels';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import type { MareIneligibility } from '../engines/breeding/eligibility';
+import type { ClassRank } from '../engines/showing/eligibility';
 
 export const displayNameFor = horseDisplayName;
 
@@ -548,6 +549,9 @@ export function renderBarnList(params: {
     listingPrice: number | null;
     /** Slice 0020 §8.3: true when this horse has a currently open acute incident. */
     hasOpenIncident: boolean;
+    /** Slice 0026 §3.1: this horse's highest rank across every class_key, or undefined for a horse
+     * whose highest is 'novice' (no badge - see rankBadgeHtml, src/render/shows.ts). */
+    highestRank: HorseHighestRank | undefined;
   }[];
   feedLevels: Record<string, FeedLevelDefinition>;
   careSummary: { farrierDue: number; wellnessDue: number };
@@ -561,11 +565,11 @@ export function renderBarnList(params: {
 }): SafeHtml {
   const rows = params.horses.length
     ? params.horses.map(
-        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability, listingPrice, hasOpenIncident }) => html`
+        ({ horse, description, inSeason, conformation, showSummary, visibleConditions, ageState, ageModifier, care, availability, listingPrice, hasOpenIncident, highestRank }) => html`
         <div class="card horse-row">
           ${barnThumbnail(horse)}
           <div>
-            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${incidentBarnBadge(hasOpenIncident)} ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)} ${listingBarnBadge(listingPrice)}</h2>
+            <h2><a href="/horses/${String(horse.id)}">${displayNameFor(horse)}</a> ${incidentBarnBadge(hasOpenIncident)} ${inSeason ? html`<span class="badge badge-success">in season</span>` : raw('')} ${showBadge(showSummary)} ${rankBadgeHtml(highestRank)} ${healthBarnBadge(horse, visibleConditions)} ${ageStateBarnBadge(ageState)} ${ageModifierBarnBadge(ageModifier)} ${careBarnBadge(care)} ${locationBarnBadge(horse, availability)} ${listingBarnBadge(listingPrice)}</h2>
             <p>${description}</p>
             <p class="muted conformation-compact">${conformationCompactLine(conformation)}</p>
           </div>
@@ -1270,6 +1274,13 @@ export interface EnterShowInfo {
   classKey: string;
   className: string;
   eligible: boolean;
+  /** Slice 0026 §3.3: the rank this row would enter the horse at, named on the Enter button -
+   * 'none' for a young_conformation/ability_test row, which gets no bracket at all. */
+  targetRank: ClassRank;
+  /** Slice 0026 §3.4: which heading this row is grouped under - Conformation, a discipline's own
+   * name, Young Horse, or Ability Tests, matching §3.2's own group labels. */
+  group: 'conformation' | 'discipline' | 'young' | 'ability';
+  groupLabel: string;
   /** Present when !eligible - "isn't old enough yet - this class needs a horse at least..." etc,
    * from render/shows.ts's eligibilityMessage, with this horse's own name already prepended. */
   reasonSentence?: string;
@@ -1282,26 +1293,88 @@ export interface EnterShowInfo {
 /** Slice 0012 §9, widened by slice 0025 stage 4 §7.5a: one line per catalogue row the horse either
  * can or can't enter - the whole catalogue now, not only classes that happen to already be open,
  * since on demand there is no calendar to have pre-minted one. */
+/** Slice 0026 §3.3: the rank in brackets after the class name, e.g. "Enter in Dressage (Open)" -
+ * no bracket for a 'none' row (young_conformation/ability_test, which never rank-gates). */
+function rankSuffix(rank: ClassRank): string {
+  if (rank === 'none') return '';
+  return ` (${rank[0].toUpperCase()}${rank.slice(1)})`;
+}
+
+/** One eligible row's button + status sentence. */
+function enterButton(horseId: number, info: EnterShowInfo): SafeHtml {
+  return html`
+    <form method="post" action="/horses/${String(horseId)}/enter-show">
+      <input type="hidden" name="class_key" value="${info.classKey}">
+      <button type="submit">Enter in ${info.className}${rankSuffix(info.targetRank)}</button>
+    </form>
+    <p class="muted">${info.statusSentence}</p>`;
+}
+
+/** Slice 0026 §3.4: the whole catalogue, minus permanent-refusal rows the route already dropped
+ * (isPermanentRefusal, src/engines/showing/eligibility.ts). What remains splits three ways:
+ * - Conformation and each discipline's eligible rows render as buttons under an open heading -
+ *   the classes a horse can actually enter today, front and centre.
+ * - Young Horse and Ability Tests' eligible rows render the same way, but the whole pair sits
+ *   behind one collapsed <details> - there can be a couple dozen of these, and most horses are
+ *   only eligible for a couple age bands' worth at a time.
+ * - Every kept-but-not-eligible row (too_young, at_pasture, entry_cap_reached, ...) - regardless
+ *   of which of the above groups it belongs to - is filed into one shared collapsed <details>,
+ *   never inline among the buttons a child is trying to press. */
 function enterShowBlock(horseId: number, infos: EnterShowInfo[]): SafeHtml {
   if (infos.length === 0) return raw('');
-  return html`${infos.map((info) =>
-    info.eligible
+
+  const eligible = infos.filter((i) => i.eligible);
+  const notEligible = infos.filter((i) => !i.eligible);
+
+  const groupHeadingOrder = ['conformation', 'discipline'] as const;
+  const mainGroups = groupHeadingOrder.flatMap((groupKind) => {
+    const labels = [...new Set(eligible.filter((i) => i.group === groupKind).map((i) => i.groupLabel))];
+    return labels.map((label) => ({ label, rows: eligible.filter((i) => i.group === groupKind && i.groupLabel === label) }));
+  });
+
+  const youngAndAbility = (['young', 'ability'] as const)
+    .map((groupKind) => ({ label: groupKind === 'young' ? 'Young Horse' : 'Ability Tests', rows: eligible.filter((i) => i.group === groupKind) }))
+    .filter((g) => g.rows.length > 0);
+
+  return html`
+    ${mainGroups.map((g) => html`<h3>${g.label}</h3>${g.rows.map((info) => enterButton(horseId, info))}`)}
+    ${youngAndAbility.length
       ? html`
-        <form method="post" action="/horses/${String(horseId)}/enter-show">
-          <input type="hidden" name="class_key" value="${info.classKey}">
-          <button type="submit">Enter in ${info.className}</button>
-        </form>
-        <p class="muted">${info.statusSentence}</p>`
-      : html`<p class="muted">${info.reasonSentence}</p>`
-  )}`;
+        <details class="section-collapse">
+          <summary>Young horse and ability classes</summary>
+          ${youngAndAbility.map((g) => html`<h3>${g.label}</h3>${g.rows.map((info) => enterButton(horseId, info))}`)}
+        </details>`
+      : raw('')}
+    ${notEligible.length
+      ? html`
+        <details class="section-collapse">
+          <summary>${String(notEligible.length)} more class${notEligible.length === 1 ? '' : 'es'} not ready for yet</summary>
+          ${notEligible.map((info) => html`<p class="muted">${info.reasonSentence}</p>`)}
+        </details>`
+      : raw('')}
+  `;
 }
 
 /** Slice 0008 §8.1's Show record card: starts, wins, best result, and recent placings grouped by
  * class type. The groups themselves are built and templated by render/shows.ts, which is what lets
  * a sale listing, a stud listing and /world show the identical card. */
+/** Slice 0026 §3.1: one line per class_key this horse holds a rank row for - "Dressage — Open · 2
+ * of 4 top-three finishes and 1 of 1 wins toward Champion", no progress clause once at Champion. */
+function rankProgressLinesHtml(rows: HorseRankProgressRow[], top3Required: number, winRequired: number): SafeHtml {
+  if (rows.length === 0) return raw('');
+  return html`${rows.map((r) => {
+    const rankWord = `${r.rank[0].toUpperCase()}${r.rank.slice(1)}`;
+    const sentence = rankProgressSentence(r, top3Required, winRequired);
+    return html`<p>${r.label} &mdash; <strong>${rankWord}</strong>${sentence ? html` &middot; ${sentence}` : raw('')}</p>`;
+  })}`;
+}
+
 function showRecordCard(params: {
   summary: HorseShowSummaryRow | null;
   resultGroups: ShowResultGroup[];
+  rankProgress: HorseRankProgressRow[];
+  rankTop3Required: number;
+  rankWinRequired: number;
   enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
@@ -1316,6 +1389,7 @@ function showRecordCard(params: {
       ${s
         ? html`<p><strong>Starts:</strong> ${String(s.starts)} &middot; <strong>Wins:</strong> ${String(s.wins)} &middot; <strong>Best:</strong> ${s.best_placing !== null ? placingText(s.best_placing) : 'none yet'}</p>`
         : html`<p class="muted">No shows entered yet.</p>`}
+      ${rankProgressLinesHtml(params.rankProgress, params.rankTop3Required, params.rankWinRequired)}
       ${showResultGroupsHtml(params.resultGroups)}
       ${enterShowBlock(params.horseId, params.enterShow)}
     </div>`;
@@ -1376,6 +1450,11 @@ export function renderHorsePage(params: {
    * horse can (or can't yet) enter. */
   showSummary: HorseShowSummaryRow | null;
   recentShowResultGroups: ShowResultGroup[];
+  /** Slice 0026 §3.1: one row per class_key this horse holds a horse_class_ranks row for - the
+   * Show record card's "Dressage — Open · 2 of 4..." lines. */
+  rankProgress: HorseRankProgressRow[];
+  rankTop3Required: number;
+  rankWinRequired: number;
   enterShow: EnterShowInfo[];
   enterShowError?: string;
   enterShowNotice?: string;
@@ -1648,6 +1727,9 @@ export function renderHorsePage(params: {
       showRecordCard({
         summary: params.showSummary,
         resultGroups: params.recentShowResultGroups,
+        rankProgress: params.rankProgress,
+        rankTop3Required: params.rankTop3Required,
+        rankWinRequired: params.rankWinRequired,
         enterShow: params.enterShow,
         enterShowError: params.enterShowError,
         enterShowNotice: params.enterShowNotice,

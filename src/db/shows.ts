@@ -198,6 +198,13 @@ export interface HorseResultRow {
   scheduled_game_day: number;
   placing: number;
   final_score: number;
+  /** Slice 0026 §3.2: the rank this particular class was judged at - 'none' for a
+   * young_conformation/ability_test result, which is never rank-bracketed. */
+  rank: ClassRank;
+  /** The class_key this result belongs to - what a rank sub-group's "current rank" lookup keys on
+   * (horseClassRanksMap), added alongside rank rather than reusing class_id since rank progression
+   * is tracked per class_key, not per individual show_classes row. */
+  class_key: string;
 }
 
 export interface AdminShowSummary {
@@ -397,7 +404,7 @@ export async function listRecentResultsForHorse(env: Env, horseId: number, limit
   const result = await env.DB.prepare(
     `SELECT se.id AS entry_id, s.id AS show_id, s.name AS show_name, sc.id AS class_id, sc.name AS class_name,
             sc.class_type, d.name AS discipline_name, qt.name AS ability_trait_name,
-            s.scheduled_game_day, se.placing, se.final_score
+            s.scheduled_game_day, se.placing, se.final_score, sc.rank, sc.class_key
      FROM show_entries se
      JOIN show_classes sc ON sc.id = se.class_id
      JOIN shows s ON s.id = sc.show_id
@@ -494,6 +501,75 @@ async function rankMapForHorsesInClassKey(env: Env, horseIds: number[], classKey
 }
 
 const RANK_ORDER: ShowRank[] = ['novice', 'open', 'champion'];
+
+/** Slice 0026 §3.1: the barn badge and the public-screen rank badge - a horse's own highest rank
+ * across every class_key it holds one for, with a human label naming which class it was earned in
+ * ("dressage", "Quarter Horse") so the badge can never be misread as a single global rank. A horse
+ * with no row above 'novice' gets no entry back - the default every horse starts at is not worth a
+ * badge (§3.1: "A horse whose highest is novice gets no badge"). Batched for a whole barn list in
+ * one query, the same shape rankMapForHorsesInClassKey above uses. */
+export interface HorseHighestRank {
+  rank: ShowRank;
+  /** Which class this rank was earned in, e.g. "dressage" or "Quarter Horse" - never omitted, since
+   * the whole point of naming it is that rank is tracked per class type, not globally. */
+  label: string;
+}
+
+/** Slice 0026 §3.1's Show record card line: "Dressage — Open · 2 of 4 top-three finishes and 1 of
+ * 1 wins toward Champion". One row per class_key this horse holds a horse_class_ranks row for,
+ * labelled the same way highestRanksForHorses labels its own rows. */
+export interface HorseRankProgressRow {
+  classKey: string;
+  classType: 'breed_conformation' | 'discipline';
+  rank: ShowRank;
+  top3SincePromotion: number;
+  winsSincePromotion: number;
+  label: string;
+}
+
+export async function rankProgressRowsForHorse(env: Env, horseId: number): Promise<HorseRankProgressRow[]> {
+  const result = await env.DB.prepare(
+    `SELECT hcr.class_key, hcr.class_type, hcr.rank, hcr.top3_since_promotion, hcr.wins_since_promotion,
+            b.name AS breed_name, d.name AS discipline_name
+     FROM horse_class_ranks hcr
+     LEFT JOIN breeds b ON b.id = hcr.breed_id
+     LEFT JOIN disciplines d ON d.code = hcr.discipline_code
+     WHERE hcr.horse_id = ?
+     ORDER BY hcr.class_key ASC`
+  )
+    .bind(horseId)
+    .all<{ class_key: string; class_type: 'breed_conformation' | 'discipline'; rank: ShowRank; top3_since_promotion: number; wins_since_promotion: number; breed_name: string | null; discipline_name: string | null }>();
+  return (result.results ?? []).map((r) => ({
+    classKey: r.class_key,
+    classType: r.class_type,
+    rank: r.rank,
+    top3SincePromotion: r.top3_since_promotion,
+    winsSincePromotion: r.wins_since_promotion,
+    label: r.class_type === 'breed_conformation' ? (r.breed_name ?? 'conformation') : (r.discipline_name ?? 'discipline'),
+  }));
+}
+
+export async function highestRanksForHorses(env: Env, horseIds: number[]): Promise<Map<number, HorseHighestRank>> {
+  const map = new Map<number, HorseHighestRank>();
+  if (horseIds.length === 0) return map;
+  const result = await env.DB.prepare(
+    `SELECT hcr.horse_id, hcr.rank, hcr.class_type, b.name AS breed_name, d.name AS discipline_name
+     FROM horse_class_ranks hcr
+     LEFT JOIN breeds b ON b.id = hcr.breed_id
+     LEFT JOIN disciplines d ON d.code = hcr.discipline_code
+     WHERE hcr.horse_id IN (${horseIds.map(() => '?').join(',')}) AND hcr.rank != 'novice'`
+  )
+    .bind(...horseIds)
+    .all<{ horse_id: number; rank: ShowRank; class_type: 'breed_conformation' | 'discipline'; breed_name: string | null; discipline_name: string | null }>();
+  for (const row of result.results ?? []) {
+    const label = row.class_type === 'breed_conformation' ? (row.breed_name ?? 'conformation') : (row.discipline_name ?? 'discipline');
+    const existing = map.get(row.horse_id);
+    if (!existing || RANK_ORDER.indexOf(row.rank) > RANK_ORDER.indexOf(existing.rank)) {
+      map.set(row.horse_id, { rank: row.rank, label });
+    }
+  }
+  return map;
+}
 
 /**
  * The graduation rule (migration 0166's own comment): every placed entry in a rank-tracked class
@@ -1176,6 +1252,11 @@ export interface CatalogueRowStatus {
    * operator's own decision, 2026-08-05: "30 game days. that's one real day."). */
   judgedInDays: number;
   result: { ok: true } | { ok: false; reason: EligibilityReason };
+  /** Slice 0026 §3.3: the rank this row would enter the horse at - its own current rank in this
+   * class type, or 'none' for a young_conformation/ability_test row (which never rank-gates, same
+   * as ClassRank elsewhere). Was already computed above and discarded before this slice; now
+   * surfaced so the Enter button can name it. */
+  targetRank: ClassRank;
 }
 
 /**
@@ -1276,6 +1357,7 @@ export async function buildCatalogueStatusForHorse(
       entryCount: live?.entry_count ?? 0,
       judgedInDays: live ? live.scheduled_game_day - gameDay : config.values.show_entry_window_game_days,
       result,
+      targetRank: liveRankKey,
     };
   });
 }
