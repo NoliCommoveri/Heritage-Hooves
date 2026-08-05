@@ -42,7 +42,7 @@ import { getHorse, horseDisplayName, countAliveHorses, listStableHorses, type Ho
 import { getStableById, listStablesForAccount } from '../db/stables';
 import { getBreeds, type BreedRow } from '../db/breeds';
 import { getDisciplines } from '../db/disciplines';
-import { getEnabledConditions, getKnowledgeForHorse } from '../db/health';
+import { getEnabledConditions, getKnowledgeForHorse, conditionsPanelForHorse } from '../db/health';
 import { getShowSummary, listRecentResultsForHorse, listOpenEntriesForHorse } from '../db/shows';
 import { getActivePregnancyForMare } from '../db/pregnancies';
 import { getBookedCoveringForMare } from '../db/coverings';
@@ -187,7 +187,10 @@ async function disclosedConditionsFor(ctx: RequestContext, sellerStableId: numbe
   // Slice 0022 Part A: the twelve acquired incidents live in their own table now and carry no
   // horse_knowledge row at all (§2.7) - a listing's open/past incidents are a different disclosure,
   // not this genotype-test one - and getEnabledConditions already returns genetics-only rows.
-  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, sellerStableId, horseId)]);
+  // docs/fixes/breed-disease-panels.md: panel-filtered - a listing should not show ten "not tested"
+  // rows for conditions this horse's breeds cannot carry.
+  const [enabledConditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, sellerStableId, horseId)]);
+  const conditions = await conditionsPanelForHorse(ctx.env, horseId, enabledConditions);
   return conditions.map((c) => {
     const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
     return {

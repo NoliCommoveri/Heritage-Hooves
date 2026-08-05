@@ -31,6 +31,8 @@ function fabricatedCondition(overrides: Partial<ConditionRow> = {}): ConditionRo
     event_text: '',
     sort_order: 1,
     management_text: 'Do the thing.',
+    signs_delay_min_game_days: 0,
+    signs_delay_max_game_days: 0,
     ...overrides,
   };
 }

@@ -3,11 +3,11 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { generateCandidate, type LethalTrigger } from '../../src/engines/founding/generate';
 
-/** Same helper as test/founding/generate.test.ts - reads the final, post-0114 pool state rather
- * than the pre-colour-loci pools in 0014/0024/0051. */
+/** Same helper as test/founding/generate.test.ts - reads the final, post-0146 pool state rather
+ * than the pre-disease-panel pools in 0014/0024/0051/0114. */
 function poolJsonForBreed(code: string): string {
-  const migration = MIGRATIONS.find((m) => m.name === '0114_breed_pools_colour_pattern_loci.sql');
-  if (!migration) throw new Error('migration 0114_breed_pools_colour_pattern_loci.sql not found');
+  const migration = MIGRATIONS.find((m) => m.name === '0146_breed_pools_disease_loci.sql');
+  if (!migration) throw new Error('migration 0146_breed_pools_disease_loci.sql not found');
   const match = migration.sql.match(new RegExp(`founding_allele_pool = '(\\{[^']*\\})' WHERE code = '${code}'`));
   if (!match) throw new Error(`pool not found for breed ${code}`);
   return match[1];
@@ -90,14 +90,41 @@ describe('generateCandidate - the lethal clamp (slice 0010 §4.3)', () => {
   });
 });
 
-describe('generateCandidate - the other seven pools never carry a disease mutant', () => {
-  it.each(OTHER_BREEDS)('%s never produces a mutant allele at any of the four disease loci', (code) => {
+describe('generateCandidate - the other seven pools never carry the original QH-only disease mutants', () => {
+  it.each(OTHER_BREEDS)('%s never produces a mutant allele at HYPP, HERDA or GBED', (code) => {
     const pool = parseAllelePool(poolJsonForBreed(code));
     for (let i = 0; i < 500; i++) {
       const { genotype } = generateCandidate({ pool, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
-      for (const locus of ['HYPP', 'PSSM1', 'HERDA', 'GBED']) {
+      for (const locus of ['HYPP', 'HERDA', 'GBED']) {
         expect(genotype.mendelian[locus]).toEqual(['N', 'N']);
       }
     }
+  });
+});
+
+// docs/fixes/breed-disease-panels.md: PSSM1 is deliberately widened to German Warmblood and Paso
+// Fino (real biology, not a Quarter Horse exclusive), so those two are carved out of the blanket
+// "never carries PSSM1" claim above and asserted the other way instead.
+describe('generateCandidate - PSSM1 widened to German Warmblood and Paso Fino', () => {
+  it.each(['AR', 'TB', 'IC', 'FR', 'NOK'])('%s never produces a mutant allele at PSSM1', (code) => {
+    const pool = parseAllelePool(poolJsonForBreed(code));
+    for (let i = 0; i < 500; i++) {
+      const { genotype } = generateCandidate({ pool, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
+      expect(genotype.mendelian.PSSM1).toEqual(['N', 'N']);
+    }
+  });
+
+  it.each(['GW', 'PF'])('%s does occasionally produce a PSSM1 carrier, over enough draws', (code) => {
+    const pool = parseAllelePool(poolJsonForBreed(code));
+    let sawCarrier = false;
+    for (let i = 0; i < 2000; i++) {
+      const { genotype } = generateCandidate({ pool, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
+      const [a, b] = genotype.mendelian.PSSM1;
+      if (a !== b) {
+        sawCarrier = true;
+        break;
+      }
+    }
+    expect(sawCarrier).toBe(true);
   });
 });

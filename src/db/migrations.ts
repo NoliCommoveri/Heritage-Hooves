@@ -142,6 +142,14 @@ import m0141 from '../../migrations/0141_breeds_ability_bias.sql';
 import m0142 from '../../migrations/0142_seed_breed_ability_bias.sql';
 import m0143 from '../../migrations/0143_breeds_discipline_aptitudes.sql';
 import m0144 from '../../migrations/0144_seed_breed_discipline_aptitudes.sql';
+import m0145 from '../../migrations/0145_seed_breed_disease_loci.sql';
+import m0146 from '../../migrations/0146_breed_pools_disease_loci.sql';
+import m0147 from '../../migrations/0147_seed_breed_conditions.sql';
+import m0148 from '../../migrations/0148_conditions_signs_delay.sql';
+import m0149 from '../../migrations/0149_seed_signs_delays.sql';
+import m0150 from '../../migrations/0150_horse_conditions_signs.sql';
+import m0151 from '../../migrations/0151_horse_conditions_drop_incident_columns.sql';
+import m0152 from '../../migrations/0152_pssm1_breed_associations.sql';
 
 export interface MigrationFile {
   name: string;
@@ -300,6 +308,14 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0142_seed_breed_ability_bias.sql', sql: m0142 },
   { name: '0143_breeds_discipline_aptitudes.sql', sql: m0143 },
   { name: '0144_seed_breed_discipline_aptitudes.sql', sql: m0144 },
+  { name: '0145_seed_breed_disease_loci.sql', sql: m0145 },
+  { name: '0146_breed_pools_disease_loci.sql', sql: m0146 },
+  { name: '0147_seed_breed_conditions.sql', sql: m0147 },
+  { name: '0148_conditions_signs_delay.sql', sql: m0148 },
+  { name: '0149_seed_signs_delays.sql', sql: m0149 },
+  { name: '0150_horse_conditions_signs.sql', sql: m0150 },
+  { name: '0151_horse_conditions_drop_incident_columns.sql', sql: m0151 },
+  { name: '0152_pssm1_breed_associations.sql', sql: m0152 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

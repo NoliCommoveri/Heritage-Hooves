@@ -8,9 +8,13 @@ import type { Genotype } from '../engines/genetics/genotype';
 import { parseGenotype, getMendelianPair } from '../engines/genetics/genotype';
 import { conditionStatus, parseConditionTrigger, lethalTerminalGameDay, ownerVisibleStatus, type ConditionStatusLabel } from '../engines/health/status';
 import type { LethalTrigger } from '../engines/founding/generate';
-import { buildConditionSignsEventStatement, buildEventStatement } from './events';
+import { buildEventStatement } from './events';
 import { breedingHealthWarnings } from '../engines/health/breedingWarning';
 import { conditionDelta, type ConditionDeltaResult, type ManageableConditionState } from '../engines/health/management';
+import { panelFor } from '../engines/health/panel';
+import { getBreeds } from './breeds';
+import { parseAllelePool, type AllelePool } from '../engines/founding/pool';
+import { deriveSeed, makeRng } from '../lib/rng';
 
 export interface ConditionRow {
   id: number;
@@ -31,6 +35,12 @@ export interface ConditionRow {
   /** Slice 0014 §5.3/§7: what a management plan actually consists of, in a sentence a child can
    * read. Non-null only for severity_class = 'manageable' rows. */
   management_text: string | null;
+  /** docs/fixes/breed-disease-panels.md: how many game days after a horse_conditions row is
+   * written (birth, founding, consignment) before its signs become visible, drawn once per horse
+   * from a range. Both 0 for a condition that is visible immediately (today's behaviour, and every
+   * row's default) - only meaningful when signs_visible = 1. */
+  signs_delay_min_game_days: number;
+  signs_delay_max_game_days: number;
 }
 
 const CACHE_MS = 60_000;
@@ -67,6 +77,52 @@ export async function getLethalTriggers(env: Env): Promise<LethalTrigger[]> {
 }
 
 // ---------------------------------------------------------------------------
+// The breed disease panel (docs/fixes/breed-disease-panels.md) - which conditions are worth
+// testing/disclosing for a given horse, wired to real data via engines/health/panel.ts's pure
+// panelFor. Never used on a truth call site (buildHorseConditionStatements, killDueLethalFoals,
+// isBarredFromShowing, visibleAffectedConditions, getLethalTriggers, conditionCensus) - only on the
+// offer-and-disclosure surfaces the fix document names.
+// ---------------------------------------------------------------------------
+
+/** The horse's own breeds.code, UNION the distinct codes reached through horse_ancestors (up to
+ * PEDIGREE_DEPTH, the same horizon COI already uses) - one query, no N+1. Ancestry rather than just
+ * the horse's own breed_id, because cross-breeding is real: a Quarter Horse x Arabian foal can
+ * carry SCID, and filtering on breed_id alone would leave that risk with no test to buy. */
+export async function pedigreeBreedCodes(env: Env, horseId: number): Promise<Set<string>> {
+  const result = await env.DB.prepare(
+    `SELECT DISTINCT b.code FROM breeds b WHERE b.id IN (
+       SELECT breed_id FROM horses WHERE id = ?
+       UNION
+       SELECT h.breed_id FROM horse_ancestors ha JOIN horses h ON h.id = ha.ancestor_id WHERE ha.descendant_id = ?
+     )`
+  )
+    .bind(horseId, horseId)
+    .all<{ code: string }>();
+  return new Set((result.results ?? []).map((r) => r.code));
+}
+
+/** Every breed's founding_allele_pool, parsed once, keyed by breed code - panelFor's own `pools`
+ * parameter. getBreeds is already cached (src/db/breeds.ts), so this costs nothing beyond the parse. */
+async function breedPoolsByCode(env: Env): Promise<Map<string, AllelePool>> {
+  const breeds = await getBreeds(env);
+  return new Map(breeds.map((b) => [b.code, parseAllelePool(b.founding_allele_pool)]));
+}
+
+/** The one call every filtering call site should make - pedigreeBreedCodes and breedPoolsByCode,
+ * composed through panelFor, for one horse. */
+export async function conditionsPanelForHorse(env: Env, horseId: number, conditions: ConditionRow[]): Promise<ConditionRow[]> {
+  const [breedCodes, pools] = await Promise.all([pedigreeBreedCodes(env, horseId), breedPoolsByCode(env)]);
+  return panelFor(conditions, pools, breedCodes);
+}
+
+/** The breeding preview's own version: the union of both parents' pedigree breed codes, since a
+ * cross-breed pairing must warn on both sides' conditions (docs/fixes/breed-disease-panels.md). */
+export async function conditionsPanelForPairing(env: Env, horseIdA: number, horseIdB: number, conditions: ConditionRow[]): Promise<ConditionRow[]> {
+  const [codesA, codesB, pools] = await Promise.all([pedigreeBreedCodes(env, horseIdA), pedigreeBreedCodes(env, horseIdB), breedPoolsByCode(env)]);
+  return panelFor(conditions, pools, new Set([...codesA, ...codesB]));
+}
+
+// ---------------------------------------------------------------------------
 // Knowledge - what a stable has paid to learn (horse_knowledge)
 // ---------------------------------------------------------------------------
 
@@ -89,14 +145,57 @@ export async function getKnowledgeForHorse(env: Env, stableId: number, horseId: 
   return result.results ?? [];
 }
 
-/** Every enabled, signs_visible condition this genotype currently reads as affected by - the
- * observation an owner (or the barn list) can see with no test and no charge (slice 0010 §2.4).
- * Sync, not a database call - takes the conditions list the caller already loaded. */
-export function visibleAffectedConditions(genotype: Genotype, conditions: ConditionRow[]): ConditionRow[] {
+/** Every enabled, signs_visible condition this genotype currently reads as affected by AND whose
+ * signs delay has actually elapsed - the observation an owner (or the barn list) can see with no
+ * test and no charge (slice 0010 §2.4, delayed by docs/fixes/breed-disease-panels.md). Truth, not
+ * knowledge - never filtered by breed panel (a horse is affected by what its genotype says,
+ * regardless of what is worth testing for). Sync, not a database call - takes the conditions list
+ * and this horse's own horse_conditions signs_game_day rows, both already loaded by the caller.
+ * `signsGameDayByCode` missing an entry, or holding null, means "already due" - the same treatment
+ * a horse_conditions row written before this column existed gets (migrations/0150's own comment). */
+export function visibleAffectedConditions(
+  genotype: Genotype,
+  conditions: ConditionRow[],
+  signsGameDayByCode: Map<string, number | null>,
+  gameDay: number
+): ConditionRow[] {
   return conditions.filter((c) => {
     if (c.signs_visible !== 1 || c.locus_code === null) return false;
-    return conditionStatus(genotype, parseConditionTrigger(c.trigger)).status === 'affected';
+    if (conditionStatus(genotype, parseConditionTrigger(c.trigger)).status !== 'affected') return false;
+    const signsGameDay = signsGameDayByCode.get(c.code) ?? null;
+    return signsGameDay === null || signsGameDay <= gameDay;
   });
+}
+
+/** Every horse_conditions row's signs_game_day for the given horses, in one query - the same
+ * batching discipline getManageableConditionsForHorses already established. Used by both
+ * visibleAffectedConditions callers (the barn list, one query for the whole barn) and
+ * isBarredFromShowing (a one-element array costs nothing extra worth avoiding). */
+export interface HorseConditionSignsRow {
+  horse_id: number;
+  condition_code: string;
+  signs_game_day: number | null;
+}
+
+export async function getHorseConditionSigns(env: Env, horseIds: number[]): Promise<HorseConditionSignsRow[]> {
+  if (horseIds.length === 0) return [];
+  const placeholders = horseIds.map(() => '?').join(',');
+  const result = await env.DB.prepare(`SELECT horse_id, condition_code, signs_game_day FROM horse_conditions WHERE horse_id IN (${placeholders})`)
+    .bind(...horseIds)
+    .all<HorseConditionSignsRow>();
+  return result.results ?? [];
+}
+
+/** Groups getHorseConditionSigns' flat rows by horse_id, condition code -> signs_game_day - the
+ * shape visibleAffectedConditions actually wants per horse. */
+export function signsGameDayMapsByHorse(rows: HorseConditionSignsRow[]): Map<number, Map<string, number | null>> {
+  const out = new Map<number, Map<string, number | null>>();
+  for (const row of rows) {
+    const map = out.get(row.horse_id) ?? new Map<string, number | null>();
+    map.set(row.condition_code, row.signs_game_day);
+    out.set(row.horse_id, map);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +362,11 @@ export async function breedingHealthWarningsFor(
   stallionKnowledgeStableId: number = stableId
 ): Promise<string[]> {
   const conditions = await getEnabledConditions(env);
-  const recessive = conditions
+  // docs/fixes/breed-disease-panels.md: the union of both parents' own panels, not the whole
+  // enabled list - a cross-breed pairing warns on both sides' conditions, and nothing is said about
+  // a condition neither breed can actually carry.
+  const panelConditions = await conditionsPanelForPairing(env, mareId, stallionId, conditions);
+  const recessive = panelConditions
     .filter((c) => c.locus_code !== null && parseConditionTrigger(c.trigger).mode === 'recessive')
     .map((c) => ({ code: c.code, name: c.name }));
 
@@ -360,17 +463,25 @@ export interface NewHorseConditionsParams {
    * has no name yet, or the real registered name for founding stock, which is born already named. */
   horseName: string;
   conditions: ConditionRow[];
+  /** docs/fixes/breed-disease-panels.md: the horse's own rng_seed, so a signs delay is drawn
+   * reproducibly (CLAUDE.md §5.2) rather than resampled on every read. */
+  rngSeed: number;
 }
 
 /**
  * Not a tick stage - called from buildFoalInsertStatements and buildFoundingHorseInsertStatements
  * in src/db/horses.ts, the two places a horse comes into being (slice 0010 §6.3). Appends a
  * horse_conditions row for every condition the new horse's genotype reads as affected - never for
- * carriers or clear, per that table's own rule - plus a condition_signs event for any affected
- * condition with signs_visible = 1. Every statement here uses the same
+ * carriers or clear, per that table's own rule. Every statement here uses the same
  * "(SELECT id FROM horses ORDER BY id DESC LIMIT 1)" pattern buildFoalInsertStatements' own
  * ancestor rows use, and relies on the same guarantee: the caller runs these in one env.DB.batch()
  * immediately after the horse insert, with nothing else inserting into `horses` in between.
+ *
+ * docs/fixes/breed-disease-panels.md: no longer writes the condition_signs event itself - signs
+ * take time to show now, so the event is written later by the tick's noticeDueConditionSigns once
+ * this row's own signs_game_day (drawn here, once, from the horse's own seed) actually arrives.
+ * signs_game_day stays NULL for a signs_visible = 0 condition (GBED, SCID, LWO) - nothing ever
+ * reads it there.
  */
 export function buildHorseConditionStatements(env: Env, params: NewHorseConditionsParams): D1PreparedStatement[] {
   const statements: D1PreparedStatement[] = [];
@@ -384,27 +495,20 @@ export function buildHorseConditionStatements(env: Env, params: NewHorseConditio
     const isLethal = condition.severity_class === 'lethal';
     const terminalGameDay = isLethal ? lethalTerminalGameDay(params.bornGameDay, params.lethalFoalDeathGameDays) : null;
 
+    let signsGameDay: number | null = null;
+    if (condition.signs_visible === 1) {
+      const min = condition.signs_delay_min_game_days;
+      const max = condition.signs_delay_max_game_days;
+      const delay = max > min ? min + makeRng(deriveSeed(params.rngSeed, `signs_delay_${condition.code}`)).int(max - min + 1) : min;
+      signsGameDay = params.bornGameDay + delay;
+    }
+
     statements.push(
       env.DB.prepare(
-        `INSERT INTO horse_conditions (horse_id, condition_code, state, onset_game_day, terminal_game_day, last_evaluated_game_day)
-         VALUES ((SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?)`
-      ).bind(condition.code, isLethal ? 'terminal' : 'onset', params.bornGameDay, terminalGameDay, params.bornGameDay)
+        `INSERT INTO horse_conditions (horse_id, condition_code, state, onset_game_day, terminal_game_day, last_evaluated_game_day, signs_game_day, signs_noticed_game_day)
+         VALUES ((SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, ?, ?, ?, ?, ?, NULL)`
+      ).bind(condition.code, isLethal ? 'terminal' : 'onset', params.bornGameDay, terminalGameDay, params.bornGameDay, signsGameDay)
     );
-
-    // §2.2/§2.4: GBED's signs_visible is 0 on purpose - a neonatal lethal has no window of visible
-    // signs before the death, and an event here would give the foal 30 game days of announced
-    // dread instead of 30 game days of being a foal. Nothing branches on the condition code itself
-    // (CLAUDE.md rule 6) - this is a column read, not an `if (condition.code === 'GBED')`.
-    if (condition.signs_visible === 1) {
-      statements.push(
-        ...buildConditionSignsEventStatement(env, {
-          stableId: params.stableId,
-          accountId: params.accountId,
-          gameDay: params.bornGameDay,
-          payload: { horse_name: params.horseName, condition_name: condition.name, condition_code: condition.code },
-        })
-      );
-    }
   }
 
   return statements;
@@ -414,18 +518,28 @@ export function buildHorseConditionStatements(env: Env, params: NewHorseConditio
 // Show eligibility - which conditions bar showing (slice 0010 §7.4)
 // ---------------------------------------------------------------------------
 
-/** True when this genotype currently reads as affected by any enabled bars_showing condition -
- * HERDA in this slice. Reads the genotype directly (not knowledge): §2.4 makes an affected horse's
- * status visible with no test, so this is truth the game already shows for free, not something
- * hidden behind a purchase. */
-export async function isBarredFromShowing(env: Env, genotype: Genotype): Promise<boolean> {
+/** True when this genotype currently reads as affected by any enabled bars_showing condition AND
+ * that condition's signs have actually shown (docs/fixes/breed-disease-panels.md - HERDA, CA,
+ * dwarfism, hydrocephalus and MCOA today). Reads the genotype directly (not knowledge): §2.4 makes
+ * an affected horse's status visible with no test, so this is truth the game already shows for
+ * free, not something hidden behind a purchase. Never filtered by breed panel - truth, same as
+ * every other function in the "do not filter" half of the fix document.
+ *
+ * A missing horse_conditions row for an affected condition (should not happen -
+ * buildHorseConditionStatements always writes one) is treated as due, the same conservative default
+ * a NULL signs_game_day gets - a horse is never let into a show by a lookup gap. */
+export async function isBarredFromShowing(env: Env, horseId: number, genotype: Genotype, gameDay: number): Promise<boolean> {
   const conditions = await getEnabledConditions(env);
-  for (const condition of conditions) {
-    if (condition.bars_showing !== 1 || condition.locus_code === null) continue;
-    const trigger = parseConditionTrigger(condition.trigger);
-    if (conditionStatus(genotype, trigger).status === 'affected') return true;
-  }
-  return false;
+  const barring = conditions.filter((c) => c.bars_showing === 1 && c.locus_code !== null);
+  const affected = barring.filter((c) => conditionStatus(genotype, parseConditionTrigger(c.trigger)).status === 'affected');
+  if (affected.length === 0) return false;
+
+  const signsRows = await getHorseConditionSigns(env, [horseId]);
+  const signsByCode = new Map(signsRows.map((r) => [r.condition_code, r.signs_game_day]));
+  return affected.some((c) => {
+    const signsGameDay = signsByCode.has(c.code) ? signsByCode.get(c.code)! : null;
+    return signsGameDay === null || signsGameDay <= gameDay;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +627,61 @@ async function killOneLethalFoal(env: Env, row: DueLethalRow, gameDay: number, c
   ];
 
   await env.DB.batch(statements);
+}
+
+// ---------------------------------------------------------------------------
+// The tick's signs-delay stage (docs/fixes/breed-disease-panels.md) - sits beside
+// killDueLethalFoals above, same file, same shape.
+// ---------------------------------------------------------------------------
+
+interface DueSignsRow {
+  id: number;
+  horse_id: number;
+  condition_code: string;
+  owner_stable_id: number;
+  account_id: number | null;
+  registered_name: string | null;
+  barn_name: string | null;
+  sex: 'mare' | 'stallion' | 'gelding';
+}
+
+/**
+ * Writes the condition_signs event for every horse_conditions row whose signs_game_day has arrived
+ * and has not yet been noticed - the delayed version of what buildHorseConditionStatements used to
+ * write immediately at birth. Idempotent on signs_noticed_game_day IS NULL, the same shape
+ * killDueLethalFoals' own `status = 'alive'` guard gives it (CLAUDE.md §5.4): a re-fired tick finds
+ * nothing, because the first run already set the marker, and a missed tick still catches up because
+ * the comparison is `<=` against a stored day rather than an increment.
+ */
+export async function noticeDueConditionSigns(env: Env, gameDay: number): Promise<void> {
+  const due = await env.DB.prepare(
+    `SELECT hc.id, hc.horse_id, hc.condition_code, h.owner_stable_id, s.account_id, h.registered_name, h.barn_name, h.sex
+     FROM horse_conditions hc
+     JOIN horses h ON h.id = hc.horse_id
+     JOIN stables s ON s.id = h.owner_stable_id
+     WHERE hc.signs_noticed_game_day IS NULL AND hc.signs_game_day IS NOT NULL AND hc.signs_game_day <= ? AND h.status = 'alive'`
+  )
+    .bind(gameDay)
+    .all<DueSignsRow>();
+
+  const conditions = await getConditions(env);
+
+  for (const row of due.results ?? []) {
+    const condition = conditions.find((c) => c.code === row.condition_code);
+    if (!condition) continue;
+    const horseName = row.registered_name ?? row.barn_name ?? (row.sex === 'mare' ? 'Unnamed filly' : 'Unnamed colt');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE horse_conditions SET signs_noticed_game_day = ? WHERE id = ?').bind(gameDay, row.id),
+      ...buildEventStatement(env, {
+        stableId: row.owner_stable_id,
+        accountId: row.account_id,
+        gameDay,
+        kind: 'condition_signs',
+        subjectHorseId: row.horse_id,
+        payload: { horse_name: horseName, condition_name: condition.name, condition_code: condition.code },
+      }),
+    ]);
+  }
 }
 
 // ---------------------------------------------------------------------------

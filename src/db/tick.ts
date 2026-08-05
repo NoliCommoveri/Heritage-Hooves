@@ -25,7 +25,7 @@ import { deleteOldEvents } from './events';
 import { expireListings } from './listings';
 import { closeDeadStudListings } from './stud';
 import { runConsignments } from './consignment';
-import { killDueLethalFoals } from './health';
+import { killDueLethalFoals, noticeDueConditionSigns } from './health';
 import { assignLifespansAndNoticeFrailty, killDueOldHorses } from './ageing';
 
 export interface ExecuteTickParams {
@@ -104,6 +104,11 @@ export async function executeTick(env: Env, params: ExecuteTickParams): Promise<
       // it partly lived. Idempotency comes free from horses.status = 'alive' (see that function's
       // own comment) - no processed-marker column needed here either.
       await killDueLethalFoals(env, newGameDay);
+      // docs/fixes/breed-disease-panels.md: right after killDueLethalFoals - both read
+      // horse_conditions rows written at birth, and this is the stage that turns a delayed
+      // signs_game_day into the condition_signs event buildHorseConditionStatements used to write
+      // immediately. Idempotent on its own signs_noticed_game_day marker (CLAUDE.md §5.4).
+      await noticeDueConditionSigns(env, newGameDay);
       // Slice 0011 §7.5: after foalDuePregnancies and killDueLethalFoals, before createDueShows.
       // A mare due to foal and due to die of old age on the same tick foals first, then dies - the
       // foal lives, and that ordering is deliberate (see the comment on the "after

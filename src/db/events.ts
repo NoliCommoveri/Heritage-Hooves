@@ -125,26 +125,6 @@ export function buildFoaledEventStatement(
   ];
 }
 
-/**
- * Same job as buildFoaledEventStatement, for the other point a horse's id is not yet known in JS:
- * a newly-affected foal or founding horse, condition rows inserted immediately before this in the
- * same batch by src/db/health.ts's buildHorseConditionStatements (slice 0010 §6.3). Same safety
- * argument as buildFoaledEventStatement - nothing else inserts into `horses` between that insert
- * and this one landing.
- */
-export function buildConditionSignsEventStatement(
-  env: Env,
-  input: { stableId: number; accountId: number | null; gameDay: number; payload: Record<string, unknown> }
-): D1PreparedStatement[] {
-  if (input.accountId === null) return [];
-  return [
-    env.DB.prepare(
-      `INSERT INTO events (stable_id, game_day, kind, subject_horse_id, payload, read_at_real_ts, created_real_ts)
-       VALUES (?, ?, 'condition_signs', (SELECT id FROM horses ORDER BY id DESC LIMIT 1), ?, NULL, ?)`
-    ).bind(input.stableId, input.gameDay, JSON.stringify({ v: 1, ...input.payload }), nowUtcSeconds()),
-  ];
-}
-
 /** The "While you were away" panel (§6.3): every unread event across every stable an account owns,
  * newest first, capped at 30. */
 export async function listUnreadEventsForAccount(env: Env, accountId: number, limit: number): Promise<EventRow[]> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canTakeOnCost } from '../../src/lib/money';
-import { buildEventStatement, buildFoaledEventStatement, buildConditionSignsEventStatement } from '../../src/db/events';
+import { buildEventStatement, buildFoaledEventStatement } from '../../src/db/events';
 import type { Env } from '../../src/types';
 
 /**
@@ -92,9 +92,5 @@ describe('an NPC stable writes no events, via the guard every event-writing help
 
   it('buildFoaledEventStatement returns no statements for a null accountId', () => {
     expect(buildFoaledEventStatement(env, { stableId: 1, accountId: null, gameDay: 100, payload: {} })).toEqual([]);
-  });
-
-  it('buildConditionSignsEventStatement returns no statements for a null accountId', () => {
-    expect(buildConditionSignsEventStatement(env, { stableId: 1, accountId: null, gameDay: 100, payload: {} })).toEqual([]);
   });
 });

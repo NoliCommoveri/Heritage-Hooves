@@ -58,6 +58,17 @@ export const LOCI: readonly Locus[] = [
   { code: 'SB1', alleles: ['SB1', 'n'], wildType: 'n' },
   { code: 'LP', alleles: ['Lp', 'lp'], wildType: 'lp' },
   { code: 'PATN1', alleles: ['PATN1', 'n'], wildType: 'n' },
+  // Seven more disease loci, docs/fixes/breed-disease-panels.md. Appended after PATN1, never
+  // inserted earlier, for the same RNG-order reason as every group above. Wild type is N and is
+  // alleles[0] for all seven, the same convention the first four disease loci (HYPP..GBED) use.
+  // MCOA (Icelandic) needs no locus of its own - it reads Z above a second way, homozygous.
+  { code: 'SCID', alleles: ['N', 'Sc'], wildType: 'N' },
+  { code: 'CA', alleles: ['N', 'Ca'], wildType: 'N' },
+  { code: 'LFS', alleles: ['N', 'Lv'], wildType: 'N' },
+  { code: 'WFFS', alleles: ['N', 'Wf'], wildType: 'N' },
+  { code: 'DWARF', alleles: ['N', 'Dw'], wildType: 'N' },
+  { code: 'HYDRO', alleles: ['N', 'Hy'], wildType: 'N' },
+  { code: 'DSLD', alleles: ['N', 'Dsld'], wildType: 'N' },
 ] as const;
 
 // Ancestors beyond this many generations are treated as unrelated founders (pedigree.ts). This is

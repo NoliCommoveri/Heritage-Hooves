@@ -39,13 +39,15 @@ export interface EligibilityHorse {
    * this is truth already visible without a test (§2.4), not knowledge, so no boundary is crossed
    * reading it here. */
   barredByCondition: boolean;
-  /** Slice 0020 §5.4: true when this horse has an open (state = 'acute') horse_conditions row for
-   * any of the twelve acquired conditions, computed by the caller from horse_conditions - this is
-   * truth, no test or knowledge boundary involved (§2.7). */
+  /** Slice 0020 §5.4: true when this horse has an open (state = 'acute') horse_incidents row for
+   * any of the twelve acquired conditions, computed by the caller from horse_incidents - this is
+   * truth, no test or knowledge boundary involved (§2.7). Slice 0022 Part A moved this table's own
+   * truth from horse_conditions to horse_incidents; this comment now names the table that's
+   * actually read. */
   hasOpenAcuteIncident: boolean;
   /** Slice 0020 §5.4: true when a past incident's own outcome resolved 'degenerative' - permanent,
    * unlike hasOpenAcuteIncident which clears the moment the incident resolves. Read from the
-   * per-incident horse_conditions.outcome column, not conditions.bars_showing (§6.1/§6.2). */
+   * per-incident horse_incidents.outcome column, not conditions.bars_showing (§6.1/§6.2). */
   hasDegenerativeIncident: boolean;
   /** src/engines/care/location.ts's workAvailability, already evaluated by the caller. Passed in
    * resolved rather than as (location, changedDay, settleDays) so there is exactly one
