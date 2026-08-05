@@ -1534,6 +1534,10 @@ export function renderTestPage(params: {
   rows: TestConditionOption[];
   untestedCount: number;
   panelPrice: number;
+  /** docs/fixes/breed-disease-panels.md: every breed beyond this horse's own that contributed a
+   * condition to the Health panel below, by name - empty when the panel is just the horse's own
+   * breed. */
+  ancestryBreedNames: string[];
   /** Amendment 0017a §4.5 point 4: the colour panel, rendered as a second section on this same page. */
   colourRows: ColourLocusOption[];
   untestedColourCount: number;
@@ -1622,6 +1626,10 @@ export function renderTestPage(params: {
     ${errorBox(params.error)}
     <p class="muted">${params.ownerStable.name}'s balance: ${String(params.ownerStable.balance)}</p>
     <h2>Health</h2>
+    <p class="muted">These are the conditions that run in this horse's breeds. A test for anything else would tell you nothing, the alleles simply are not in the line.</p>
+    ${params.ancestryBreedNames.length > 0
+      ? html`<p class="muted">This horse has ${params.ancestryBreedNames.join(' and ')} in its pedigree, so those breeds' conditions are on its panel too.</p>`
+      : raw('')}
     ${rows}
     ${panelBlock}
     ${nothingLeft}
@@ -1928,7 +1936,7 @@ export function renderAdminHorseNewPage(params: {
     (b) => html`<option value="${String(b.id)}" data-code="${b.code}" ${f.breed_id === String(b.id) ? raw('selected') : raw('')}>${b.name}</option>`
   )}`;
 
-  const locusRows = LOCI.map((locus) => {
+  const locusFieldset = (locus: (typeof LOCI)[number]): SafeHtml => {
     const locusRow = params.loci.find((l) => l.code === locus.code);
     const [a1, a2] = locus.alleles;
     const selected1 = f[`locus_${locus.code}_1`] ?? locus.wildType;
@@ -1946,7 +1954,34 @@ export function renderAdminHorseNewPage(params: {
         ${locusRow ? html`<p class="muted">${locusRow.teaching_text}</p>` : raw('')}
       </fieldset>
     `;
-  });
+  };
+
+  // docs/fixes/breed-disease-panels.md: nineteen loci became twenty-six - grouped into collapsed
+  // <details> by category, the same treatment slice 0021 Part F gave the test page's own colour
+  // panel when nine rows became nineteen. Groups read off the loci table's own category column
+  // rather than a second hardcoded map, since it is already loaded here.
+  const ADMIN_LOCUS_GROUP_LABEL: Record<string, string> = { base: 'Base', dilution: 'Dilutions', pattern: 'Patterns', modifier: 'Patterns', gait: 'Gait', disease: 'Disease' };
+  const ADMIN_LOCUS_GROUP_ORDER = ['base', 'dilution', 'pattern', 'gait', 'disease'] as const;
+  const groupKeyFor = (code: string): (typeof ADMIN_LOCUS_GROUP_ORDER)[number] => {
+    const category = params.loci.find((l) => l.code === code)?.category ?? 'pattern';
+    if (category === 'modifier') return 'pattern';
+    const known = (ADMIN_LOCUS_GROUP_ORDER as readonly string[]).includes(category);
+    return known ? (category as (typeof ADMIN_LOCUS_GROUP_ORDER)[number]) : 'pattern';
+  };
+  const byGroup = new Map<string, (typeof LOCI)[number][]>();
+  for (const locus of LOCI) {
+    const key = groupKeyFor(locus.code);
+    const list = byGroup.get(key) ?? [];
+    list.push(locus);
+    byGroup.set(key, list);
+  }
+  const locusGroups = ADMIN_LOCUS_GROUP_ORDER.filter((key) => byGroup.has(key)).map(
+    (key) => html`
+    <details class="section-collapse" ${key === 'base' ? raw('open') : raw('')}>
+      <summary>${ADMIN_LOCUS_GROUP_LABEL[key]} (${String(byGroup.get(key)!.length)})</summary>
+      ${byGroup.get(key)!.map(locusFieldset)}
+    </details>`
+  );
 
   const body = html`
     <h1>Create a founding horse</h1>
@@ -1971,7 +2006,8 @@ export function renderAdminHorseNewPage(params: {
         <input type="text" inputmode="numeric" name="age_years" required value="${f.age_years ?? '4'}">
       </label>
       <h2>Genotype</h2>
-      ${locusRows}
+      <p class="muted">Any allele can be set on any breed here. A condition only appears on a horse's testing page if it runs in that horse's breeds, so an allele set outside its breed will be real but untestable.</p>
+      ${locusGroups}
       <button type="submit">Create horse</button>
     </form>
   `;

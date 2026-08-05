@@ -27,7 +27,7 @@ import { listNpcPolicies, resolveSelectionTarget, expressedFor, type NpcPolicyRo
 import type { SelectionTarget } from '../engines/npc/selection';
 import { scoreEntry } from '../engines/showing/score';
 import { scoreAbilityEntry } from '../engines/showing/abilityScore';
-import { getEnabledConditions, getKnowledgeForHorse, untestedConditions, buildKnowledgePurchaseStatements, type ConditionRow } from './health';
+import { getEnabledConditions, getKnowledgeForHorse, untestedConditions, buildKnowledgePurchaseStatements, conditionsPanelForHorse, type ConditionRow } from './health';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { buildLedgerStatements } from './ledger';
 import { openListingsBySellerStable, createListing, appraiseHorseForStable } from './listings';
@@ -58,8 +58,13 @@ async function payForPanelIfAffordable(
   env: Env,
   params: { stableId: number; horse: HorseRow; gameDay: number; balance: number; panelCost: number; conditions: ConditionRow[] }
 ): Promise<number> {
-  const knowledge = await getKnowledgeForHorse(env, params.stableId, params.horse.id);
-  const untested = untestedConditions(params.conditions, knowledge);
+  // docs/fixes/breed-disease-panels.md: panel-filtered, or an NPC stable burns its own balance
+  // testing conditions its own stock cannot carry.
+  const [knowledge, panelConditions] = await Promise.all([
+    getKnowledgeForHorse(env, params.stableId, params.horse.id),
+    conditionsPanelForHorse(env, params.horse.id, params.conditions),
+  ]);
+  const untested = untestedConditions(panelConditions, knowledge);
   if (untested.length === 0 || params.balance < params.panelCost) return 0;
 
   const base = Math.floor(params.panelCost / untested.length);

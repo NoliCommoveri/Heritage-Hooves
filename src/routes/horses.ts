@@ -84,7 +84,13 @@ import {
   testedColourLoci,
   buildLocusKnowledgePurchaseStatements,
   LOCUS_KNOWLEDGE_PREFIX,
+  conditionsPanelForHorse,
+  getHorseConditionSigns,
+  signsGameDayMapsByHorse,
+  pedigreeBreedCodes,
 } from '../db/health';
+import { panelFor } from '../engines/health/panel';
+import { parseAllelePool } from '../engines/founding/pool';
 import { displayColourName } from '../render/colour';
 import { inferFromPhenotype } from '../engines/genetics/inference';
 import { foalColourPossibilities } from '../engines/genetics/foal-colours';
@@ -299,6 +305,10 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   const creamTestedHorseIds = new Set(creamKnownRows.filter((r) => r.subject_code === 'locus:CR').map((r) => r.horse_id));
   // Slice 0020 §8.3: one query for the whole barn's open incidents, not one per row.
   const openIncidentIds = await openIncidentHorseIds(ctx.env, horses.map((h) => h.id));
+  // docs/fixes/breed-disease-panels.md: one query for the whole barn's signs_game_day rows, not one
+  // per horse - visibleAffectedConditions is truth, never panel-filtered, but now also needs to know
+  // whether each affected condition's delay has actually elapsed.
+  const signsMapsByHorse = signsGameDayMapsByHorse(await getHorseConditionSigns(ctx.env, horses.map((h) => h.id)));
 
   const rows = await Promise.all(
     horses.map(async (horse) => ({
@@ -317,7 +327,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
         isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
       conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
-      visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions),
+      visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions, signsMapsByHorse.get(horse.id) ?? new Map(), ctx.world.game_day),
       hasOpenIncident: openIncidentIds.has(horse.id),
       // Slice 0011 §4.3/§8.1: one glanceable marker for a living horse's own Veteran/Failing state
       // - 'ended' horses show their existing Died/Retired away badge instead (healthBarnBadge
@@ -795,7 +805,9 @@ async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boole
   // Slice 0022 Part A: the twelve acquired incidents (colic, laminitis, and the rest) live in their
   // own table now - they belong on their own Incidents card, not this one, and getEnabledConditions
   // already returns genetics-only rows.
-  const conditions = await getEnabledConditions(ctx.env);
+  // docs/fixes/breed-disease-panels.md: panel-filtered, all three branches below - a Friesian gets
+  // no HYPP row at all, rather than a guaranteed-clear one worth nothing.
+  const conditions = await conditionsPanelForHorse(ctx.env, horseId, await getEnabledConditions(ctx.env));
 
   if (isAdmin && !owner) {
     return conditions.map((c) => {
@@ -811,7 +823,8 @@ async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boole
     return conditions.map((c) => ({ code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false }));
   }
 
-  const knowledge = await getKnowledgeForHorse(ctx.env, ownerStableId, horseId);
+  const [knowledge, signsRows] = await Promise.all([getKnowledgeForHorse(ctx.env, ownerStableId, horseId), getHorseConditionSigns(ctx.env, [horseId])]);
+  const signsByCode = new Map(signsRows.map((r) => [r.condition_code, r.signs_game_day]));
   return conditions.map((c) => {
     const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
     // locus_code is only null for a future polygenic condition (none seeded yet) - nothing to
@@ -819,7 +832,11 @@ async function healthRowsFor(ctx: RequestContext, owner: boolean, isAdmin: boole
     if (c.locus_code === null) {
       return { code: c.code, name: c.name, teachingText: c.teaching_text, status: null, copies: null, testedGameDay: null, observedOnly: false };
     }
-    const visible = ownerVisibleStatus(genotype, parseConditionTrigger(c.trigger), c.signs_visible === 1, known);
+    // docs/fixes/breed-disease-panels.md: signs_visible alone is no longer enough for the free
+    // observation - the delay drawn at write time must have actually elapsed too.
+    const signsGameDay = signsByCode.get(c.code) ?? null;
+    const signsDue = signsGameDay === null || signsGameDay <= ctx.world.game_day;
+    const visible = ownerVisibleStatus(genotype, parseConditionTrigger(c.trigger), c.signs_visible === 1 && signsDue, known);
     return {
       code: c.code,
       name: c.name,
@@ -1409,13 +1426,28 @@ async function buildTestPageRows(
   ctx: RequestContext,
   ownerStableId: number,
   horseId: number,
-  genotype: Genotype
-): Promise<{ rows: TestConditionOption[]; untested: ReturnType<typeof untestedConditions> }> {
+  genotype: Genotype,
+  ownBreedId: number | null
+): Promise<{ rows: TestConditionOption[]; untested: ReturnType<typeof untestedConditions>; ancestryBreedNames: string[] }> {
   // Slice 0022 Part A: the twelve acquired incidents no longer live in `conditions` at all, so
   // getEnabledConditions already returns genetics-only rows - nothing to filter here.
-  const [conditions, knowledge] = await Promise.all([getEnabledConditions(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  // docs/fixes/breed-disease-panels.md: panel-filtered before untestedConditions ever sees the
+  // list, so a condition this horse's breeds cannot carry is never offered for sale.
+  const [enabledConditions, knowledge, breedCodes, breeds] = await Promise.all([
+    getEnabledConditions(ctx.env),
+    getKnowledgeForHorse(ctx.env, ownerStableId, horseId),
+    pedigreeBreedCodes(ctx.env, horseId),
+    getBreeds(ctx.env),
+  ]);
+  const conditions = panelFor(enabledConditions, new Map(breeds.map((b) => [b.code, parseAllelePool(b.founding_allele_pool)])), breedCodes);
   const untested = untestedConditions(conditions, knowledge);
   const untestedCodes = new Set(untested.map((c) => c.code));
+
+  // docs/fixes/breed-disease-panels.md: "This horse has Arabian in its pedigree, so the Arabian
+  // conditions are on its panel too" - named so a Quarter Horse showing an Arabian test doesn't
+  // read as a bug. Own breed excluded; every other breed in the pedigree, by name.
+  const ownCode = breeds.find((b) => b.id === ownBreedId)?.code ?? null;
+  const ancestryBreedNames = breeds.filter((b) => b.code !== ownCode && breedCodes.has(b.code)).map((b) => b.name);
 
   const rows: TestConditionOption[] = conditions.map((c) => {
     const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === c.code);
@@ -1431,7 +1463,7 @@ async function buildTestPageRows(
     };
   });
 
-  return { rows, untested };
+  return { rows, untested, ancestryBreedNames };
 }
 
 /** Amendment 0017a §4.5 point 4/§4.6: the colour panel, alongside the disease one above - same
@@ -1479,8 +1511,8 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
 
   const render = async (error?: string) => {
-    const [{ rows, untested }, colour] = await Promise.all([
-      buildTestPageRows(ctx, ownerStable.id, horseId, genotype),
+    const [{ rows, untested, ancestryBreedNames }, colour] = await Promise.all([
+      buildTestPageRows(ctx, ownerStable.id, horseId, genotype, horse.breed_id),
       buildColourTestPageRows(ctx, ownerStable.id, horseId),
     ]);
     return htmlResponse(
@@ -1495,6 +1527,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
         rows,
         untestedCount: untested.length,
         panelPrice: ctx.config.values.genotype_panel_cost,
+        ancestryBreedNames,
         colourRows: colour.rows,
         untestedColourCount: colour.untestedCodes.length,
         colourPanelPrice: ctx.config.values.genotype_panel_cost,
@@ -1582,7 +1615,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   // trusting the form - the same "re-derive and check membership" rule isAllowedImagePath
   // established in slice 0007. A submitted condition code that is already known or not applicable
   // is rejected and nothing is charged.
-  const { untested } = await buildTestPageRows(ctx, ownerStable.id, horseId, genotype);
+  const { untested } = await buildTestPageRows(ctx, ownerStable.id, horseId, genotype, horse.breed_id);
 
   let toBuy: (typeof untested)[number][];
   let totalCost: number;
@@ -1592,7 +1625,10 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
     if (untested.length === 0) return render('Nothing is left to test.');
     toBuy = untested;
     totalCost = ctx.config.values.genotype_panel_cost;
-    description = `Five-panel genotype test, ${displayNameFor(horse)}.`;
+    // docs/fixes/breed-disease-panels.md: the panel's own size now varies by breed (an Arabian's is
+    // three conditions, a Thoroughbred's is none) - "Five-panel" was only ever true for a Quarter
+    // Horse, so the count is read off what is actually being bought.
+    description = `${String(toBuy.length)}-condition panel test, ${displayNameFor(horse)}.`;
   } else {
     const found = untested.find((c) => c.code === form.condition_code);
     if (!found) return render("That test isn't available for this horse.");

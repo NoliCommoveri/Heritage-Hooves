@@ -355,6 +355,7 @@ export function buildFoundingHorseInsertStatements(env: Env, input: FoundingHors
       accountId: input.accountId,
       horseName: input.registeredName,
       conditions: input.conditions,
+      rngSeed: input.rngSeed,
     }),
   ];
 }
@@ -528,6 +529,7 @@ export function buildFoalInsertStatements(env: Env, input: FoalInsertInput): D1P
       accountId: input.accountId,
       horseName: horseDisplayName({ registered_name: null, barn_name: null, sex: input.sex }),
       conditions: input.conditions,
+      rngSeed: input.rngSeed,
     }),
   ];
 }

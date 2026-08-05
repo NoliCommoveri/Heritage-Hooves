@@ -14,7 +14,7 @@ import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS, ABILITY_TRAITS } 
 // four are last and in the right order, not a separate assertion bolted on beside it.
 describe('LOCI vs the seed migrations (0015 + 0050)', () => {
   it('seeds exactly the codes in LOCI, in the same order, with the same canonical allele order', () => {
-    const migrationNames = ['0015_seed_loci.sql', '0050_seed_disease_loci.sql', '0113_seed_colour_pattern_loci.sql'];
+    const migrationNames = ['0015_seed_loci.sql', '0050_seed_disease_loci.sql', '0113_seed_colour_pattern_loci.sql', '0145_seed_breed_disease_loci.sql'];
     const rowPattern = /\('([A-Z0-9]+)',\s*'[^']*',\s*'[^']*',\s*'[^']*',\s*'(\[[^\]]*\])'/g;
     const seeded: { code: string; alleles: string[] }[] = [];
 
@@ -39,13 +39,13 @@ describe('LOCI vs the seed migrations (0015 + 0050)', () => {
 // Slice 0005 §9: every seeded breed's founding_allele_pool must list every locus in LOCI, using
 // only known allele symbols, each locus summing to 1.0 - the guarantee that turns §3.2's rule
 // ("a pool missing a locus is an error, not a default") from a comment into something a future
-// locus-adding migration can't silently violate. Reads 0114_breed_pools_colour_pattern_loci.sql
-// (slice 0021 §4.3), not 0051/0014/0024 - that migration rewrites every breed's whole pool to add
-// the ten colour/pattern loci, so it is the final, authoritative state a later UPDATE always
-// supersedes an INSERT with, the same reasoning test/founding/generate.test.ts's own pool-loading
-// helper uses.
+// locus-adding migration can't silently violate. Reads 0146_breed_pools_disease_loci.sql
+// (docs/fixes/breed-disease-panels.md), not 0051/0014/0024/0114 - that migration rewrites every
+// breed's whole pool to add the seven new disease loci, so it is the final, authoritative state a
+// later UPDATE always supersedes an INSERT with, the same reasoning test/founding/generate.test.ts's
+// own pool-loading helper uses.
 describe('every seeded breed pool vs LOCI', () => {
-  const seedMigrations = ['0114_breed_pools_colour_pattern_loci.sql'];
+  const seedMigrations = ['0146_breed_pools_disease_loci.sql'];
   const poolPattern = /founding_allele_pool = '(\{[^']*\})' WHERE code = '([A-Z0-9]+)'/g;
 
   const pools: { code: string; poolJson: string }[] = [];
@@ -234,5 +234,75 @@ describe('breed ideal_vectors vs CONFORMATION_TRAITS (slice 0008 §4.2, slice 00
   // hard rule, and stays a document rather than a test.)
   it.each(vectors.map((v) => [v.code, v.traits] as const))('%s has at least one target off the population centre of 50', (code, traits) => {
     expect(Object.values(traits).some((t) => t.target !== 50), `${code} has every target on 50`).toBe(true);
+  });
+});
+
+// docs/fixes/breed-disease-panels.md, test 5: breed_associations stays display-only (never
+// enforced - src/engines/health/panel.ts derives the real panel from the pools), but it must still
+// say the truth, or the words under a condition and the panel it actually appears on could disagree
+// without anything catching it - the LWO trap (see that document's own "the rule" section) made
+// unrepeatable. Reads every conditions seed migration and the final pool migration, both already
+// parsed by name above, and cross-checks them directly rather than hand-copying either.
+describe('conditions.breed_associations matches the breeds whose pool actually carries the mutant (docs/fixes/breed-disease-panels.md)', () => {
+  const conditionMigrationNames = ['0053_seed_conditions.sql', '0117_condition_lethal_white.sql', '0147_seed_breed_conditions.sql'];
+  const conditionRowPattern =
+    /\('([A-Z0-9]+)',\s*'[^']*',\s*'[^']*',\s*'([A-Z0-9]+)',\s*'(\{[^']*\})',\s*'[^']*',\s*(\d),\s*(\d),\s*'(\[[^\]]*\])'/g;
+
+  interface ParsedCondition {
+    code: string;
+    locusCode: string;
+    trigger: { locus: string; mutant: string };
+    breedAssociations: string[];
+  }
+
+  const conditions: ParsedCondition[] = [];
+  for (const name of conditionMigrationNames) {
+    const migration = MIGRATIONS.find((m) => m.name === name);
+    expect(migration, `migration ${name} not found`).toBeDefined();
+    const pattern = new RegExp(conditionRowPattern.source, conditionRowPattern.flags);
+    let match: RegExpExecArray | null;
+    while (migration && (match = pattern.exec(migration.sql)) !== null) {
+      conditions.push({
+        code: match[1],
+        locusCode: match[2],
+        trigger: JSON.parse(match[3]) as { locus: string; mutant: string },
+        breedAssociations: JSON.parse(match[6]) as string[],
+      });
+    }
+  }
+
+  // migrations/0152 corrects PSSM1's breed_associations by UPDATE, after 0146 widened its pool to
+  // GW/PF - an UPDATE rather than a re-INSERT (0053 is already applied and forward-only), so it
+  // needs its own small merge here rather than falling out of conditionRowPattern.
+  const pssm1Override = MIGRATIONS.find((m) => m.name === '0152_pssm1_breed_associations.sql');
+  expect(pssm1Override, '0152_pssm1_breed_associations.sql not found').toBeDefined();
+  const overrideMatch = pssm1Override && /breed_associations = '(\[[^\]]*\])' WHERE code = 'PSSM1'/.exec(pssm1Override.sql);
+  expect(overrideMatch, "0152's UPDATE ... WHERE code = 'PSSM1' not found").toBeTruthy();
+  const pssm1 = conditions.find((c) => c.code === 'PSSM1');
+  if (pssm1 && overrideMatch) pssm1.breedAssociations = JSON.parse(overrideMatch[1]) as string[];
+
+  const poolMigration = MIGRATIONS.find((m) => m.name === '0146_breed_pools_disease_loci.sql');
+  expect(poolMigration, '0146_breed_pools_disease_loci.sql not found').toBeDefined();
+  const poolRowPattern = /founding_allele_pool = '(\{[^']*\})' WHERE code = '([A-Z0-9]+)'/g;
+  const pools: { code: string; pool: Record<string, Record<string, number>> }[] = [];
+  {
+    let match: RegExpExecArray | null;
+    const pattern = new RegExp(poolRowPattern.source, poolRowPattern.flags);
+    while (poolMigration && (match = pattern.exec(poolMigration.sql)) !== null) {
+      pools.push({ code: match[2], pool: JSON.parse(match[1]) as Record<string, Record<string, number>> });
+    }
+  }
+
+  it('found conditions from all three migrations and pools for all eight breeds', () => {
+    expect(conditions.length).toBeGreaterThanOrEqual(9); // 4 (0053) + 1 (0117) + 8 (0147, incl. MCOA/DSLD)
+    expect(pools.map((p) => p.code).sort()).toEqual(['AR', 'FR', 'GW', 'IC', 'NOK', 'PF', 'QH', 'TB']);
+  });
+
+  it.each(conditions.map((c) => [c.code, c] as const))('%s breed_associations names exactly the breeds whose pool carries the mutant at nonzero frequency', (code, condition) => {
+    const actual = pools
+      .filter((p) => (p.pool[condition.trigger.locus]?.[condition.trigger.mutant] ?? 0) > 0)
+      .map((p) => p.code)
+      .sort();
+    expect(condition.breedAssociations.slice().sort(), `${code} breed_associations`).toEqual(actual);
   });
 });

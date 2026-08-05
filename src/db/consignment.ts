@@ -13,6 +13,7 @@ import { parseAbilityBias } from '../engines/breeds/identity';
 import type { StableRow } from './stables';
 import { getHorse, buildFoundingHorseInsertStatements } from './horses';
 import { getEnabledConditions, getLethalTriggers, buildKnowledgePurchaseStatements, buildLocusKnowledgePurchaseStatements, type ConditionRow } from './health';
+import { panelFor } from '../engines/health/panel';
 import { appraiseHorseForStable, createListing } from './listings';
 import { buildEventStatement } from './events';
 import { parseAllelePool } from '../engines/founding/pool';
@@ -357,9 +358,14 @@ async function mintConsignmentBatch(
           })
         );
       }
+      // docs/fixes/breed-disease-panels.md: filtered to this candidate's own breed panel (the
+      // dealer's stock is founding stock, no ancestry to consider - a single breed's own pool is
+      // panelFor's whole `breedCodes` set) before picking which of them to pre-test, so the dealer
+      // never spends its fictional balance testing a condition its own stock cannot carry.
+      const candidatePanel = panelFor(conditions, new Map([[candidate.breedCode, candidate.pool]]), new Set([candidate.breedCode]));
       const testCount = drawWeighted(makeRng(deriveSeed(candidate.candidateSeed, 'test_count')), cfg.consignment_test_count_weights);
-      if (testCount > 0 && conditions.length > 0) {
-        const chosen = makeRng(deriveSeed(candidate.candidateSeed, 'test_pick')).shuffle(conditions).slice(0, Math.min(testCount, conditions.length));
+      if (testCount > 0 && candidatePanel.length > 0) {
+        const chosen = makeRng(deriveSeed(candidate.candidateSeed, 'test_pick')).shuffle(candidatePanel).slice(0, Math.min(testCount, candidatePanel.length));
         const costByCode: Record<string, number> = {};
         chosen.forEach((c) => {
           costByCode[c.code] = cfg.genotype_test_cost;

@@ -9,13 +9,13 @@ import { parseIdealVector, type IdealVector } from '../../src/engines/showing/sc
 /**
  * Pulls one breed's founding_allele_pool JSON straight out of migration SQL, so these tests
  * exercise the pool this codebase actually ships rather than a hand-copied duplicate that could
- * quietly drift from it. Reads 0114_breed_pools_colour_pattern_loci.sql, not 0051/0014/0024 - that
- * migration (slice 0021 §4.3) rewrites every breed's whole pool to add the ten colour/pattern
- * loci, so it is the final, authoritative state, the same way a later UPDATE always supersedes the
- * INSERT it followed.
+ * quietly drift from it. Reads 0146_breed_pools_disease_loci.sql, not 0051/0014/0024/0114 - that
+ * migration (docs/fixes/breed-disease-panels.md) rewrites every breed's whole pool to add the seven
+ * new disease loci, so it is the final, authoritative state, the same way a later UPDATE always
+ * supersedes the INSERT it followed.
  */
 function poolJsonForBreed(code: string): string {
-  const migrationName = '0114_breed_pools_colour_pattern_loci.sql';
+  const migrationName = '0146_breed_pools_disease_loci.sql';
   const migration = MIGRATIONS.find((m) => m.name === migrationName);
   if (!migration) throw new Error(`migration ${migrationName} not found`);
   const pattern = new RegExp(`founding_allele_pool = '(\\{[^']*\\})' WHERE code = '${code}'`);
