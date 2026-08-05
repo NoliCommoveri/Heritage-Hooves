@@ -76,7 +76,7 @@ import { parseAllelePool } from '../engines/founding/pool';
 import { ageState } from '../engines/ageing/lifespan';
 import { mintOffer, listRecentOffers } from '../db/founding';
 import { getShowBarnStable, stockShowBarn, stockNpcStable } from '../db/npc';
-import { listShowsForAdmin, judgeDueShowClasses } from '../db/shows';
+import { listShowsForAdmin, judgeDueShowClasses, backfillHistoricalRanks } from '../db/shows';
 import { listNpcStablesForAdmin, listNpcCeilingSchedule, upsertNpcCeilingScheduleRow, foundNpcStable } from '../db/npcBreeding';
 import { getDisciplines } from '../db/disciplines';
 import { getConformationTraits, getAbilityTraits } from '../db/quantitativeTraits';
@@ -824,12 +824,24 @@ export async function adminShowsRoute(ctx: RequestContext, method: string): Prom
 
   if (method === 'GET') {
     const params = new URL(ctx.request.url).searchParams;
-    const notice = params.get('stocked') ? 'Show barn stocked.' : params.get('judged') ? 'Judged every show that was due.' : undefined;
+    const rankPairs = params.get('ranks_backfilled');
+    const notice = params.get('stocked')
+      ? 'Show barn stocked.'
+      : params.get('judged')
+        ? 'Judged every show that was due.'
+        : rankPairs !== null
+          ? `Rank progress recomputed from history for ${rankPairs} horse/class combinations.`
+          : undefined;
     return page(undefined, notice);
   }
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
+
+  if (form.action === 'backfill_ranks') {
+    const result = await backfillHistoricalRanks(ctx.env, ctx.config);
+    return redirect(`/admin/shows?ranks_backfilled=${result.pairsUpdated}`);
+  }
 
   if (form.action === 'stock_barn') {
     if (form.confirm !== 'yes') return page('Tick the box to confirm before stocking the barn.');

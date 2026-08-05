@@ -1290,6 +1290,14 @@ export function renderShowsAdminPage(params: {
       </form>
     </div>
     <div class="card">
+      <h2>Recompute rank progress from history</h2>
+      <p class="muted">The Novice/Open/Champion progression started tracking from an empty table, so ribbons a horse won before it existed were not yet counted. This re-reads every horse's full show history and works out where its rank in each breed/discipline would actually be - safe to press more than once.</p>
+      <form method="post" action="/admin/shows">
+        <input type="hidden" name="action" value="backfill_ranks">
+        <button type="submit" class="secondary">Recompute rank progress</button>
+      </form>
+    </div>
+    <div class="card">
       <h2>Conformation criteria, by breed</h2>
       <p class="muted">What each breed's conformation class scores a horse against - target value and weight per trait, exactly as the judge applies them.</p>
       ${conformationDropdowns.length ? conformationDropdowns : html`<p class="muted">No breed has a conformation standard set yet.</p>`}

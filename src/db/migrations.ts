@@ -165,6 +165,7 @@ import m0164 from '../../migrations/0164_barn_hides_ended_horses.sql';
 import m0165 from '../../migrations/0165_show_classes_rank_and_key.sql';
 import m0166 from '../../migrations/0166_horse_class_ranks.sql';
 import m0167 from '../../migrations/0167_config_show_progression.sql';
+import m0168 from '../../migrations/0168_npc_stable_gw_dressage.sql';
 
 export interface MigrationFile {
   name: string;
@@ -346,6 +347,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0165_show_classes_rank_and_key.sql', sql: m0165 },
   { name: '0166_horse_class_ranks.sql', sql: m0166 },
   { name: '0167_config_show_progression.sql', sql: m0167 },
+  { name: '0168_npc_stable_gw_dressage.sql', sql: m0168 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
