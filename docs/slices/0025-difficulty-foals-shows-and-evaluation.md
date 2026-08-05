@@ -194,6 +194,24 @@ Endurance      Comet is too young (5 years)
 
 **Keep a way back.** A `show_auto_create_enabled` config key, defaulted off, leaving `createDueShows` in place behind it — so the calendar can be switched back on from `/admin/config` without a deploy if an empty show page turns out to read as a broken game to the children. Cheap insurance for an operator with no terminal.
 
+#### 7.5a.1 Fix `buildEnterShowInfos` — required, and do it first
+
+**This is a real defect on a live screen, not a consequence of stage 4, and it should be fixed whether or not the rest of §7.5a is ever built.** It is listed here because §7.5a rebuilds the same function and a session that fixes it in passing will get it right by accident; a session that does not will carry the bug into the new picker.
+
+`buildEnterShowInfos` (`src/routes/horses.ts`) calls `checkHorseEligibilityForClass` **once per open class, every time a horse page is drawn.** That function is four queries deep, so at stage 3's 40 classes a single horse page costs roughly **160 D1 round trips**. It was ~56 before stage 3 tripled the catalogue, and stage 4 would take it past 500. This is the screen the children use most.
+
+The fix is a refactor of the loop, not a change to any rule — **every eligibility answer stays exactly what it is today.** Of the four queries `checkHorseEligibilityForClass` makes, two do not depend on the class at all:
+
+- `isBarredFromShowing(env, horseId, genotype, gameDay)` and `acquiredBarringFlags(env, horseId)` take **only the horse**. Hoist both out of the loop and compute them **once per page**: 80 round trips become 2.
+- `getEntryByClassAndHorse` and `countStableEntriesInClass` are genuinely per-class, but both batch trivially across the whole class list — "which of these class ids does this horse already have an entry in" is one query, and "how many entries does this stable hold in each of these classes" is one grouped query: another 80 become 2.
+
+Everything left in `checkEligibility` is already pure — breed, cross, age, sex, gait, availability, and the class's own restrictions — so **the whole card lands at about 4 queries regardless of how large the catalogue grows.** That is what makes stage 4's class count stop mattering to this screen, which is the property worth having, not the constant factor.
+
+Two details not to lose while doing it:
+
+- `checkHorseEligibilityForClass` is also called by `judgeOneClass`'s NPC top-up, where it is the dominant cost of the whole tick (§7.6). **Do not change its signature in a way that leaves that caller behind** — the same hoist-and-batch shape is what the top-up loop needs too, per NPC horse rather than per class. Prefer adding a batched sibling over rewriting the single-horse function, so the two call sites can converge rather than drift into two eligibility paths. CLAUDE.md §13's no-second-scoring-path rule is the same instinct applied to scoring, and it applies here.
+- The per-class work is not only queries. `checkHorseEligibilityForClass` also runs `parseGenotype` and `expressPhenotype` on every iteration — and `expressPhenotype` folds all thirteen colour/pattern loci (slice 0021). At 40 classes that is 40 full phenotype expressions per page render against a 10ms CPU budget. Both depend only on the horse, so **they hoist out with the other two.**
+
 **Two things the operator still has to decide:**
 
 1. **How long an on-demand class runs before judging.** The existing 30 days (`show_entry_window_game_days`) exists *because* shows sit on a calendar and everyone needs notice; on demand the creator already knows, so the window can shrink. **Recommendation: 7-14 days.** This is the same child from §1.2 who has already said that waiting six weeks does not work, and "on demand" that takes a game month will not feel on-demand.
@@ -212,7 +230,7 @@ Endurance      Comet is too young (5 years)
 
 A class only becomes non-empty because somebody entered it, and it would be judged either way — so **on-demand creation removes the cheap waste and does not touch the expensive loop.** If stage 4 needs the paid tier, it will need it for the top-up loop, and that loop wants batching (one query for every candidate's barring flags, not four per horse) far more than it wants fewer classes. Build §7.5a for the screen it fixes, not for the milliseconds.
 
-**The same loop is already costing a page view, not just a tick.** `buildEnterShowInfos` calls `checkHorseEligibilityForClass` once per open class **every time a horse page is drawn** — at 40 classes that is ~160 D1 round trips per page load, and stage 3 tripled it by taking the catalogue from 14 to 40. This is live today, on the screen the children use most. §7.5a fixes it as a side effect, because eligibility against a *catalogue* entry is nearly pure — age, sex, breed, gait and availability need no query at all, and only the already-entered/stable-count checks touch the database, once in total rather than per class.
+**The same loop is already costing a page view, not just a tick.** `buildEnterShowInfos` calls the same `checkHorseEligibilityForClass` once per open class **every time a horse page is drawn** — ~160 D1 round trips at stage 3's 40 classes, on the screen the children use most, live today. **This is a defect independent of stage 4 and §7.5a.1 specifies the fix**; it is required work, it is small, and it should be done first, because §7.5a rebuilds that same function and would otherwise carry the bug into the new picker. The tick's top-up loop wants the identical hoist-and-batch treatment — see the first bullet at the end of §7.5a.1 for why the two should converge rather than grow a second eligibility path.
 
 **Worth confirming before building stage 4:** Workers' **subrequest** limit (50 on the free tier, 1000 on paid), which D1 binding calls count against. The tick may well hit that ceiling before it hits the 10ms CPU one, and if so it is the number that actually decides the tier question.
 
