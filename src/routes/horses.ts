@@ -2,6 +2,7 @@ import type { RequestContext } from '../lib/context';
 import { actionsLeftFor, turnsRefusalMessage } from '../lib/context';
 import { htmlResponse, redirect, notFound, parseForm } from '../lib/http';
 import { ACTION_COSTS } from '../lib/actions';
+import { DEFAULT_HORSE_TAB, horsePageUrl, parseHorseTab, type HorseTab } from '../lib/horseTab';
 import { spendAction } from '../db/accounts';
 import {
   renderBarnList,
@@ -272,6 +273,19 @@ function abilityRowsForHorse(traitRows: QuantitativeTraitRow[], words: Map<Trait
     name: traitRows.find((t) => t.code === trait)?.name ?? trait,
     label: words.get(trait) ?? 'unknown',
   }));
+}
+
+/**
+ * Slice 0026 stage 2 §2.2: which tab a POST should send the player back to.
+ *
+ * Most handlers on this page know their own tab from the card they belong to and pass it directly.
+ * The three blocks that sit ABOVE the tab bar - Register a name, Barn name, Grow up - belong to no
+ * tab at all, so their forms carry a hidden `tab` field naming whichever one the player happened to
+ * be looking at, and this reads it back. A missing or nonsense value falls through to the default,
+ * the same way the page itself treats a bad `?tab=`.
+ */
+function tabFromForm(form: Record<string, string | undefined>): HorseTab {
+  return parseHorseTab(typeof form.tab === 'string' ? form.tab : null);
 }
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
@@ -865,7 +879,9 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
       tickSeq: ctx.world.tick_seq,
     });
     await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.book_covering);
-    return redirect(`/horses/${String(mare.id)}`);
+    // A booked covering shows up in the mare status line, which is in the vitals card above the tab
+    // bar - so this one genuinely belongs to no tab and lands on the default (slice 0026 §2.1).
+    return redirect(horsePageUrl(mare.id, DEFAULT_HORSE_TAB));
   }
 
   return notFound();
@@ -989,6 +1005,8 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   ]);
 
   const params = new URL(ctx.request.url).searchParams;
+  // Slice 0026 stage 2 §2.2: an unrecognised or missing ?tab= renders the default rather than 404ing.
+  const activeTab = parseHorseTab(params.get('tab'));
   const nameError = params.get('name_error') ?? undefined;
   const barnNameNotice = params.get('barn_saved') ? 'Barn name saved.' : undefined;
   const enterShowError = params.get('show_error') ?? undefined;
@@ -1088,7 +1106,9 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // looking at this page is not offered one here (the sale and stud listing pages are where a
   // non-owner can buy one, and they pass their own paying stable).
   const evaluation = owner
-    ? await buildEvaluationSectionView(ctx, horse, ownerStable, `/horses/${String(horse.id)}`, {
+    ? // The evaluation block lives inside the Conformation card, so a purchase lands back on the
+      // Genetics tab (§2.2) rather than resetting the page to whichever tab is the default.
+      await buildEvaluationSectionView(ctx, horse, ownerStable, horsePageUrl(horse.id, 'genetics'), {
         error: params.get('evaluation_error') ?? undefined,
         notice: params.get('evaluated') ? 'Evaluation done.' : undefined,
       })
@@ -1100,6 +1120,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const timeWarp = warpPlan
     ? {
         horseId: horse.id,
+        tab: activeTab,
         days: warpPlan.days,
         cost: warpPlan.cost,
         clamped: warpPlan.clamped,
@@ -1129,6 +1150,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   return htmlResponse(
     renderHorsePage({
       world: ctx.world,
+      activeTab,
       isAdmin,
       actionsLeft: actionsLeftFor(ctx),
       gameDaysPerYear,
@@ -1229,7 +1251,7 @@ export async function horseAdminDeleteRoute(ctx: RequestContext, horseId: number
   const horse = await getHorse(ctx.env, horseId);
   if (!horse) return notFound();
 
-  const back = (message: string) => redirect(`/horses/${String(horseId)}?admin_error=${encodeURIComponent(message)}`);
+  const back = (message: string) => redirect(horsePageUrl(horseId, 'market', { admin_error: message }));
 
   if (horse.status === 'alive') {
     return back('That horse is still alive. Send it to a pet home or retire it first - this only clears up a horse that has already gone.');
@@ -1264,7 +1286,7 @@ export async function horseListRoute(ctx: RequestContext, horseId: number): Prom
   if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
   if (horse.status !== 'alive') return notFound();
 
-  const fail = (message: string) => redirect(`/horses/${String(horseId)}?market_error=${encodeURIComponent(message)}`);
+  const fail = (message: string) => redirect(horsePageUrl(horseId, 'market', { market_error: message }));
 
   const form = await parseForm(ctx.request);
   const price = Number((form.price ?? '').trim());
@@ -1300,7 +1322,7 @@ export async function horseStudRoute(ctx: RequestContext, horseId: number): Prom
   if (horse.status !== 'alive') return notFound();
   if (horse.sex !== 'stallion') return notFound();
 
-  const fail = (message: string) => redirect(`/horses/${String(horseId)}?stud_error=${encodeURIComponent(message)}`);
+  const fail = (message: string) => redirect(horsePageUrl(horseId, 'market', { stud_error: message }));
 
   const form = await parseForm(ctx.request);
   const fee = Number((form.fee ?? '').trim());
@@ -1312,7 +1334,7 @@ export async function horseStudRoute(ctx: RequestContext, horseId: number): Prom
 
   const result = await createStudListing(ctx.env, { stallionId: horseId, stableId: ownerStable.id, fee, seasonCap, gameDay: ctx.world.game_day });
   if (!result.ok) return fail(`${displayNameFor(horse)} is already standing at stud.`);
-  return redirect(`/horses/${String(horseId)}`);
+  return redirect(horsePageUrl(horseId, 'market'));
 }
 
 /** Slice 0003 §7: one line of state on a mare's page - in season now, due back in season around a
@@ -1382,13 +1404,16 @@ export async function horseNameRoute(ctx: RequestContext, horseId: number): Prom
   if (!horse) return notFound();
   const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
   if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
-  if (horse.registered_name !== null) return redirect(`/horses/${String(horseId)}`);
-
   const form = await parseForm(ctx.request);
+  // Slice 0026 stage 2 §2.1/§2.2: the Register-a-name form is pinned above the tab bar, so it
+  // carries whichever tab the player was looking at and lands them back on it.
+  const tab = tabFromForm(form);
+  if (horse.registered_name !== null) return redirect(horsePageUrl(horseId, tab));
+
   const namePart = (form.name ?? '').trim();
   const validation = validateHorseNamePart(namePart);
   if (!validation.ok) {
-    return redirect(`/horses/${String(horseId)}?name_error=${encodeURIComponent(validation.error ?? 'Invalid name.')}`);
+    return redirect(horsePageUrl(horseId, tab, { name_error: validation.error ?? 'Invalid name.' }));
   }
 
   const prefix = horse.breeder_prefix ?? ownerStable.prefix;
@@ -1396,9 +1421,9 @@ export async function horseNameRoute(ctx: RequestContext, horseId: number): Prom
   const result = await registerHorseName(ctx.env, horseId, registeredName);
   if (!result.ok) {
     const message = result.error === 'taken' ? 'That name is already registered to another horse.' : 'This horse already has a registered name.';
-    return redirect(`/horses/${String(horseId)}?name_error=${encodeURIComponent(message)}`);
+    return redirect(horsePageUrl(horseId, tab, { name_error: message }));
   }
-  return redirect(`/horses/${String(horseId)}`);
+  return redirect(horsePageUrl(horseId, tab));
 }
 
 export async function horseBarnNameRoute(ctx: RequestContext, horseId: number): Promise<Response> {
@@ -1410,7 +1435,7 @@ export async function horseBarnNameRoute(ctx: RequestContext, horseId: number): 
   const form = await parseForm(ctx.request);
   const barnName = (form.barn_name ?? '').trim();
   await setBarnName(ctx.env, horseId, barnName.length ? barnName : null);
-  return redirect(`/horses/${String(horseId)}?barn_saved=1`);
+  return redirect(horsePageUrl(horseId, tabFromForm(form), { barn_saved: '1' }));
 }
 
 /** Slice 0008 §8.1, rebuilt for slice 0025 stage 4 §7.5a: the horse page's "Enter in a show" button.
@@ -1427,13 +1452,13 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
 
   const form = await parseForm(ctx.request);
   const classKey = form.class_key ?? '';
-  if (!classKey) return redirect(`/horses/${String(horseId)}`);
+  if (!classKey) return redirect(horsePageUrl(horseId, 'shows'));
 
   // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
   // stableBreedRoute above.
   const actionsLeft = actionsLeftFor(ctx);
   if (actionsLeft !== null && actionsLeft < ACTION_COSTS.enter_show) {
-    return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(turnsRefusalMessage(ctx))}`);
+    return redirect(horsePageUrl(horseId, 'shows', { show_error: turnsRefusalMessage(ctx) }));
   }
 
   const result = await requestClassEntry(ctx.env, {
@@ -1451,11 +1476,11 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
     const breedName = breeds.find((b) => b.id === spec?.breedId)?.name ?? 'that breed';
     const minAgeYears = spec ? Math.round(spec.minAgeGameDays / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`;
-    return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(message)}`);
+    return redirect(horsePageUrl(horseId, 'shows', { show_error: message }));
   }
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.enter_show);
-  return redirect(`/horses/${String(horseId)}?entered_show=1`);
+  return redirect(horsePageUrl(horseId, 'shows', { entered_show: '1' }));
 }
 
 /** The picker - slice 0007 §2.6/§6.2. Owner-only on both GET and POST, same shape as every other
@@ -1530,7 +1555,8 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
 
   if (submitted === NO_PICTURE_VALUE) {
     await setHorseImage(ctx.env, horseId, null);
-    return redirect(`/horses/${String(horseId)}`);
+    // The portrait is in the vitals card, above the tab bar - no tab of its own, so the default.
+    return redirect(horsePageUrl(horseId, DEFAULT_HORSE_TAB));
   }
   // The POST never trusts the submitted value (slice 0007 §2.6) - the allowed set is re-derived
   // above from the horse's own composition and the live image_counts, not accepted from the form.
@@ -1538,7 +1564,7 @@ export async function horseImageRoute(ctx: RequestContext, method: string, horse
     return htmlResponse(render('Choose one of the pictures shown, or "No picture".'));
   }
   await setHorseImage(ctx.env, horseId, submitted);
-  return redirect(`/horses/${String(horseId)}`);
+  return redirect(horsePageUrl(horseId, DEFAULT_HORSE_TAB));
 }
 
 /** Slice 0010 §7.1: the test page's rows - what is already known (with tested date) or what it
@@ -1729,7 +1755,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
     }
 
     await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
-    return redirect(`/horses/${String(horseId)}`);
+    return redirect(horsePageUrl(horseId, 'genetics'));
   }
 
   // Slice 0010 §7.1 step 1: re-derive what is untested from the knowledge rows rather than
@@ -1813,7 +1839,7 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   }
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
-  return redirect(`/horses/${String(horseId)}`);
+  return redirect(horsePageUrl(horseId, 'care'));
 }
 
 /**
@@ -1863,9 +1889,9 @@ export async function horseLocationRoute(ctx: RequestContext, horseId: number): 
 
   const form = await parseForm(ctx.request);
   const action = form.action === 'turn_out' ? 'turn_out' : form.action === 'bring_in' ? 'bring_in' : null;
-  if (!action) return redirect(`/horses/${String(horseId)}`);
+  if (!action) return redirect(horsePageUrl(horseId, 'care'));
 
-  const fail = (message: string) => redirect(`/horses/${String(horseId)}?location_error=${encodeURIComponent(message)}`);
+  const fail = (message: string) => redirect(horsePageUrl(horseId, 'care', { location_error: message }));
 
   if (action === 'turn_out') {
     const blocked = await turnOutBlockedReason(ctx, horse);
@@ -1873,11 +1899,11 @@ export async function horseLocationRoute(ctx: RequestContext, horseId: number): 
     // A horse already at pasture is not an error worth a message - the page it lands on already
     // shows where the horse is.
     await turnOutToPasture(ctx.env, horseId, ctx.world.game_day);
-    return redirect(`/horses/${String(horseId)}?location_done=out`);
+    return redirect(horsePageUrl(horseId, 'care', { location_done: 'out' }));
   }
 
   await bringInFromPasture(ctx.env, horse, ctx.world.game_day);
-  return redirect(`/horses/${String(horseId)}?location_done=in`);
+  return redirect(horsePageUrl(horseId, 'care', { location_done: 'in' }));
 }
 
 /** Slice 0011 §6.2: what retiring this horse away is about to cancel or withdraw, named plainly -
@@ -1959,7 +1985,9 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
   if (typeof form.condition_code === 'string' && form.condition_code.length > 0) {
     if (!canTakeOnCost(ownerStable.balance)) {
       return redirect(
-        `/horses/${String(horseId)}?care_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`)}`
+        horsePageUrl(horseId, 'care', {
+          care_error: `${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`,
+        })
       );
     }
     const conditions = await getEnabledConditions(ctx.env);
@@ -1968,7 +1996,7 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
     // is not entitled to know about, or one that isn't manageable, is simply ignored.
     const rows = await managementPlanRowsForHorse(ctx.env, horse, conditions, ctx.world.game_day, cfg);
     const row = rows.find((r) => r.conditionCode === form.condition_code);
-    if (!row) return redirect(`/horses/${String(horseId)}`);
+    if (!row) return redirect(horsePageUrl(horseId, 'care'));
 
     await callOneConditionManagement(ctx.env, {
       horseId: horse.id,
@@ -1979,15 +2007,15 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
       intervalGameDays: cfg.condition_management_interval_game_days,
       gameDay: ctx.world.game_day,
     });
-    return redirect(`/horses/${String(horseId)}?care_done=management`);
+    return redirect(horsePageUrl(horseId, 'care', { care_done: 'management' }));
   }
 
   const service: CareService | null = form.service === 'farrier' ? 'farrier' : form.service === 'wellness' ? 'wellness' : null;
-  if (!service) return redirect(`/horses/${String(horseId)}`);
+  if (!service) return redirect(horsePageUrl(horseId, 'care'));
 
   const careView = careCardViewFor(horse, ownerStable.feed_level, cfg, ctx.world.game_day);
   if (careView.tooYoung) {
-    return redirect(`/horses/${String(horseId)}?care_error=${encodeURIComponent('Too young to need the farrier yet - care starts at three.')}`);
+    return redirect(horsePageUrl(horseId, 'care', { care_error: 'Too young to need the farrier yet - care starts at three.' }));
   }
 
   // Slice 0013 §2.7: a purchase, blocked by the debt rule the same way a genotype test is - poor
@@ -1995,13 +2023,15 @@ export async function horseCareRoute(ctx: RequestContext, horseId: number): Prom
   if (!canTakeOnCost(ownerStable.balance)) {
     const who = service === 'farrier' ? 'the farrier' : 'the vet';
     return redirect(
-      `/horses/${String(horseId)}?care_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling ${who}.`)}`
+      horsePageUrl(horseId, 'care', {
+        care_error: `${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling ${who}.`,
+      })
     );
   }
 
   const cost = service === 'farrier' ? cfg.farrier_cost : cfg.vet_wellness_cost;
   await callOneHorseCare(ctx.env, { horse, ownerStableId: ownerStable.id, service, cost, gameDay: ctx.world.game_day });
-  return redirect(`/horses/${String(horseId)}?care_done=${service}`);
+  return redirect(horsePageUrl(horseId, 'care', { care_done: service }));
 }
 
 /**
@@ -2195,7 +2225,7 @@ export async function horseGeldRoute(ctx: RequestContext, method: string, horseI
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.geld);
 
-  return redirect(`/horses/${String(horseId)}?gelded=1`);
+  return redirect(horsePageUrl(horseId, 'market', { gelded: '1' }));
 }
 
 /**
@@ -2215,15 +2245,17 @@ export async function horseTreatRoute(ctx: RequestContext, horseId: number): Pro
 
   const form = await parseForm(ctx.request);
   const conditionCode = typeof form.condition_code === 'string' ? form.condition_code : null;
-  if (!conditionCode) return redirect(`/horses/${String(horseId)}`);
+  if (!conditionCode) return redirect(horsePageUrl(horseId, 'care'));
 
   const { open } = await incidentsForHorse(ctx.env, horse.id, ctx.world.game_day, ctx.config.values);
   const incident = open.find((o) => o.conditionCode === conditionCode);
-  if (!incident) return redirect(`/horses/${String(horseId)}`);
+  if (!incident) return redirect(horsePageUrl(horseId, 'care'));
 
   if (!canTakeOnCost(ownerStable.balance)) {
     return redirect(
-      `/horses/${String(horseId)}?incident_error=${encodeURIComponent(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`)}`
+      horsePageUrl(horseId, 'care', {
+        incident_error: `${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Try dropping to poor feed, or ask a grown-up to add money, before calling the vet.`,
+      })
     );
   }
 
@@ -2235,8 +2267,8 @@ export async function horseTreatRoute(ctx: RequestContext, horseId: number): Pro
     cost: incident.cost,
     gameDay: ctx.world.game_day,
   });
-  if (!treated) return redirect(`/horses/${String(horseId)}`);
-  return redirect(`/horses/${String(horseId)}?incident_treated=1`);
+  if (!treated) return redirect(horsePageUrl(horseId, 'care'));
+  return redirect(horsePageUrl(horseId, 'care', { incident_treated: '1' }));
 }
 
 /**
@@ -2436,7 +2468,11 @@ export async function horseWarpRoute(ctx: RequestContext, horseId: number): Prom
   const ownerStable = await getStableById(ctx.env, horse.owner_stable_id);
   if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
 
-  const fail = (message: string) => redirect(`/horses/${String(horseId)}?warp_error=${encodeURIComponent(message)}`);
+  // The Grow up card is pinned above the tab bar too, so like the two name forms it carries the tab
+  // the player was on (slice 0026 stage 2 §2.1).
+  const form = await parseForm(ctx.request);
+  const tab = tabFromForm(form);
+  const fail = (message: string) => redirect(horsePageUrl(horseId, tab, { warp_error: message }));
 
   // Re-planned here rather than trusted from the page that drew the button: a tick may have run
   // since, and the horse may already be grown.
@@ -2452,7 +2488,7 @@ export async function horseWarpRoute(ctx: RequestContext, horseId: number): Prom
   await ctx.env.DB.batch(buildTimeWarpStatements(ctx.env, { horse, horseName: displayNameFor(horse), days: plan.days, cost: plan.cost, gameDay: ctx.world.game_day }));
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.time_warp);
 
-  return redirect(`/horses/${String(horseId)}?warped=1`);
+  return redirect(horsePageUrl(horseId, tab, { warped: '1' }));
 }
 
 /**

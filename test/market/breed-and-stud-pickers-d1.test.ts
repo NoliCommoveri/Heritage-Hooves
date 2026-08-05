@@ -343,7 +343,9 @@ describeWithSqlite('the Breed page can pair a mare with a stallion standing at a
       world.playerStableId
     );
     expect(booked.status).toBe(303);
-    expect(booked.headers.get('location')).toBe(`/horses/${world.freeMareId}`);
+    // Slice 0026 stage 2: the horse page's tabs - a booked covering shows in the mare status line,
+    // which sits above the tab bar, so this lands on the default tab.
+    expect(booked.headers.get('location')).toBe(`/horses/${world.freeMareId}?tab=genetics`);
     const coverings = world.db.prepare(`SELECT COUNT(*) AS n FROM coverings WHERE mare_id = ? AND status = 'booked'`).get(world.freeMareId) as { n: number };
     expect(coverings.n).toBe(1);
   });
