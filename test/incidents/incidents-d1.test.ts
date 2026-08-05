@@ -169,7 +169,7 @@ describeWithSqlite('rollAcuteIncidents / resolveAcuteIncidents, against a real d
     );
     db.exec(`INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts) VALUES (${STABLE},${HORSE},2,GAME_DAY,10,'booked',5,0)`.replace('GAME_DAY', String(GAME_DAY)));
     db.exec(`INSERT INTO shows (name, tier, venue, scheduled_game_day, entry_deadline_game_day, status, rng_seed, created_game_day, created_real_ts) VALUES ('Spring','local','Ring',9999,9990,'entries_open',1,1000,0)`);
-    db.exec(`INSERT INTO show_classes (show_id, name, class_type, breed_id, ideal_vector, judge_id, crosses_eligible, min_age_game_days, status, noise_sd, ideal_falloff, target_field_size, max_entries_per_stable, prize_schedule, rng_seed) VALUES (1,'QH Conformation','breed_conformation',1,'{"v":1,"traits":{}}',1,0,0,'scheduled',3,2,8,2,'[100,50]',7)`);
+    db.exec(`INSERT INTO show_classes (show_id, name, class_type, breed_id, class_key, ideal_vector, judge_id, crosses_eligible, min_age_game_days, status, noise_sd, ideal_falloff, target_field_size, max_entries_per_stable, prize_schedule, rng_seed) VALUES (1,'QH Conformation','breed_conformation',1,'bc:1','{"v":1,"traits":{}}',1,0,0,'scheduled',3,2,8,2,'[100,50]',7)`);
     db.exec(`INSERT INTO show_entries (class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot) VALUES (1,${HORSE},${STABLE},0,1000,'{}')`);
 
     await forceIncident(env, HORSE, 'TESTDEATH', GAME_DAY);

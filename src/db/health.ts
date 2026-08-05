@@ -529,17 +529,39 @@ export function buildHorseConditionStatements(env: Env, params: NewHorseConditio
  * buildHorseConditionStatements always writes one) is treated as due, the same conservative default
  * a NULL signs_game_day gets - a horse is never let into a show by a lookup gap. */
 export async function isBarredFromShowing(env: Env, horseId: number, genotype: Genotype, gameDay: number): Promise<boolean> {
+  const map = await isBarredFromShowingMap(env, new Map([[horseId, genotype]]), gameDay);
+  return map.get(horseId) ?? false;
+}
+
+/**
+ * docs/slices/0025-difficulty-foals-shows-and-evaluation.md §7.5a.1 (slice 0025 stage 4): the batched sibling of
+ * isBarredFromShowing - one getEnabledConditions read and one getHorseConditionSigns read for every
+ * horse given, rather than the pair isBarredFromShowing itself makes per call. Used wherever a whole
+ * catalogue or a whole NPC candidate pool needs a barring answer per horse (the horse page's "Enter
+ * in a show" card, the tick's NPC top-up) - both used to pay isBarredFromShowing's two queries once
+ * per class checked, which is where most of the O(classes) cost that fix document names actually
+ * came from. isBarredFromShowing itself is now just this map with a one-element input, so there is
+ * still exactly one place the rule is evaluated.
+ */
+export async function isBarredFromShowingMap(env: Env, genotypeByHorseId: Map<number, Genotype>, gameDay: number): Promise<Map<number, boolean>> {
+  const result = new Map<number, boolean>();
+  const horseIds = Array.from(genotypeByHorseId.keys());
+  if (horseIds.length === 0) return result;
+
   const conditions = await getEnabledConditions(env);
   const barring = conditions.filter((c) => c.bars_showing === 1 && c.locus_code !== null);
-  const affected = barring.filter((c) => conditionStatus(genotype, parseConditionTrigger(c.trigger)).status === 'affected');
-  if (affected.length === 0) return false;
+  const signsMaps = signsGameDayMapsByHorse(await getHorseConditionSigns(env, horseIds));
 
-  const signsRows = await getHorseConditionSigns(env, [horseId]);
-  const signsByCode = new Map(signsRows.map((r) => [r.condition_code, r.signs_game_day]));
-  return affected.some((c) => {
-    const signsGameDay = signsByCode.has(c.code) ? signsByCode.get(c.code)! : null;
-    return signsGameDay === null || signsGameDay <= gameDay;
-  });
+  for (const [horseId, genotype] of genotypeByHorseId) {
+    const affected = barring.filter((c) => conditionStatus(genotype, parseConditionTrigger(c.trigger)).status === 'affected');
+    const signsByCode = signsMaps.get(horseId) ?? new Map<string, number | null>();
+    const barred = affected.some((c) => {
+      const signsGameDay = signsByCode.has(c.code) ? signsByCode.get(c.code)! : null;
+      return signsGameDay === null || signsGameDay <= gameDay;
+    });
+    result.set(horseId, barred);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

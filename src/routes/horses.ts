@@ -75,9 +75,9 @@ import type { ConfigValues } from '../lib/config-cache';
 import {
   getShowSummary,
   listRecentResultsForHorse,
-  getOpenClasses,
-  checkHorseEligibilityForClass,
-  enterHorseInClass,
+  buildCatalogueStatusForHorse,
+  buildShowCatalogue,
+  requestClassEntry,
   listOpenEntriesForHorse,
 } from '../db/shows';
 import {
@@ -277,35 +277,42 @@ async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<S
   return stable;
 }
 
-/** Slice 0008 §8.1/slice 0012 §9: the horse page's "Enter in a show" section - one line per open
- * class (a breed-conformation class and every open discipline class), each either a button or the
- * plain sentence saying why not. Before slice 0012 there was ever only one open class at once; now
- * there can be several, so every open class is checked rather than just the first.
+/** Slice 0008 §8.1/slice 0012 §9, rebuilt for slice 0025 stage 4 §7.5a: the horse page's "Enter in a
+ * show" section is now the whole catalogue - every class type this horse could conceivably enter,
+ * not only the classes that currently happen to have a live show_classes row, since on demand there
+ * is no calendar to have pre-minted one. Each eligible row says whether pressing it joins something
+ * already live or starts something new (§7.5a's own example rows); an ineligible row still names why
+ * not, exactly as before.
  *
- * 2026-08-05: the limit was 10, which slice 0025 stage 3's young_conformation/ability_test classes
- * (up to 26 more per show, created last and so carrying the highest ids) would have pushed clean
- * off an ORDER BY id ASC LIMIT 10 read - exactly the classes a young horse's owner most needs to
- * see. Raised well above any real per-show class count, the same margin SHOW_RESULT_FETCH_LIMIT
- * already uses for the same reason. */
-async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow, breeds: BreedRow[]): Promise<EnterShowInfo[]> {
-  const openClasses = await getOpenClasses(ctx.env, 200);
+ * buildCatalogueStatusForHorse does the actual batching (§7.5a.1's required fix) - this function
+ * only turns its EligibilityReason answers into the sentences a child reads, the same split
+ * eligibilityMessage already draws elsewhere. */
+async function buildEnterShowInfos(ctx: RequestContext, horse: HorseRow): Promise<EnterShowInfo[]> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
+  const [rows, breeds] = await Promise.all([
+    buildCatalogueStatusForHorse(ctx.env, horse, ctx.world.game_day, gameDaysPerYear, ctx.config),
+    getBreeds(ctx.env),
+  ]);
 
-  return Promise.all(
-    openClasses.map(async (cls) => {
-      const result = await checkHorseEligibilityForClass(ctx.env, cls, horse, ctx.world.game_day, gameDaysPerYear, ctx.config);
-      if (result.ok) return { classId: cls.id, className: cls.name, eligible: true };
+  return rows.map((row) => {
+    const statusSentence =
+      row.liveClassId !== null
+        ? `${String(row.entryCount)} entered, judged in ${String(row.judgedInDays)} days.`
+        : `Nobody yet - starts a show, judged in ${String(row.judgedInDays)} days.`;
 
-      const breedName = breeds.find((b) => b.id === cls.breed_id)?.name ?? 'that breed';
-      const minAgeYears = Math.round(cls.min_age_game_days / gameDaysPerYear);
-      return {
-        classId: cls.id,
-        className: cls.name,
-        eligible: false,
-        reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`,
-      };
-    })
-  );
+    if (row.result.ok) {
+      return { classKey: row.spec.classKey, className: row.spec.name, eligible: true, statusSentence };
+    }
+
+    const breedName = breeds.find((b) => b.id === row.spec.breedId)?.name ?? 'that breed';
+    const minAgeYears = Math.round(row.spec.minAgeGameDays / gameDaysPerYear);
+    return {
+      classKey: row.spec.classKey,
+      className: row.spec.name,
+      eligible: false,
+      reasonSentence: `${displayNameFor(horse)} ${eligibilityMessage(row.result.reason, { breedName, minAgeYears })}`,
+    };
+  });
 }
 
 export async function stableHorsesRoute(ctx: RequestContext, stableId: number): Promise<Response> {
@@ -1021,7 +1028,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   // made-up show name tells a player nothing, but which kind of class a result came from does.
   const recentResultsRaw = await listRecentResultsForHorse(ctx.env, horse.id, SHOW_RESULT_FETCH_LIMIT);
   const recentShowResultGroups = buildShowResultGroups(recentResultsRaw, gameDaysPerYear);
-  const enterShow = canManage ? await buildEnterShowInfos(ctx, horse, await getBreeds(ctx.env)) : [];
+  const enterShow = canManage ? await buildEnterShowInfos(ctx, horse) : [];
   const health = await healthRowsFor(ctx, owner, isAdmin, ownerStable.id, horse.id, genotype);
   // Slice 0014 §5.3: the Management section, and the delta it feeds into the Care card's own
   // modifier so the number shown here matches what a show would actually apply.
@@ -1403,10 +1410,12 @@ export async function horseBarnNameRoute(ctx: RequestContext, horseId: number): 
   return redirect(`/horses/${String(horseId)}?barn_saved=1`);
 }
 
-/** Slice 0008 §8.1: the horse page's "Enter in a show" button. Owner-only, same shape as every
- * other horse-scoped route. Re-checks eligibility server-side rather than trusting that the button
- * was only shown because it passed - the same discipline the image picker's POST uses (CLAUDE.md
- * §11, slice 0007's "never trust the submitted value" entry). */
+/** Slice 0008 §8.1, rebuilt for slice 0025 stage 4 §7.5a: the horse page's "Enter in a show" button.
+ * Owner-only, same shape as every other horse-scoped route. Posts a catalogue class_key rather than
+ * a class_id, since there may be no live class yet - requestClassEntry joins one if it's open or
+ * mints exactly one otherwise. Re-checks eligibility server-side rather than trusting that the
+ * button was only shown because it passed - the same discipline the image picker's POST uses
+ * (CLAUDE.md §11, slice 0007's "never trust the submitted value" entry). */
 export async function horseEnterShowRoute(ctx: RequestContext, horseId: number): Promise<Response> {
   const horse = await getHorse(ctx.env, horseId);
   if (!horse) return notFound();
@@ -1414,8 +1423,8 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
   if (!ownerStable || ownerStable.account_id !== ctx.account!.id) return notFound();
 
   const form = await parseForm(ctx.request);
-  const classId = Number(form.class_id);
-  if (!Number.isInteger(classId)) return redirect(`/horses/${String(horseId)}`);
+  const classKey = form.class_key ?? '';
+  if (!classKey) return redirect(`/horses/${String(horseId)}`);
 
   // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
   // stableBreedRoute above.
@@ -1424,8 +1433,8 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
     return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(turnsRefusalMessage(ctx))}`);
   }
 
-  const result = await enterHorseInClass(ctx.env, {
-    classId,
+  const result = await requestClassEntry(ctx.env, {
+    classKey,
     horseId,
     gameDay: ctx.world.game_day,
     gameDaysPerYear: ctx.config.values.game_days_per_year,
@@ -1434,10 +1443,10 @@ export async function horseEnterShowRoute(ctx: RequestContext, horseId: number):
   });
 
   if (!result.ok) {
-    const breeds = await getBreeds(ctx.env);
-    const cls = (await getOpenClasses(ctx.env, 200)).find((c) => c.id === classId);
-    const breedName = breeds.find((b) => b.id === cls?.breed_id)?.name ?? 'that breed';
-    const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
+    const [breeds, catalogue] = await Promise.all([getBreeds(ctx.env), buildShowCatalogue(ctx.env, ctx.config)]);
+    const spec = catalogue.find((c) => c.classKey === classKey);
+    const breedName = breeds.find((b) => b.id === spec?.breedId)?.name ?? 'that breed';
+    const minAgeYears = spec ? Math.round(spec.minAgeGameDays / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName, minAgeYears })}`;
     return redirect(`/horses/${String(horseId)}?show_error=${encodeURIComponent(message)}`);
   }

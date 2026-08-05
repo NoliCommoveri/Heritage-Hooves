@@ -103,7 +103,7 @@ function seed(db: DatabaseSync, opts: { sameAccount?: boolean } = {}) {
   db.exec(`INSERT INTO horse_knowledge (stable_id, horse_id, kind, subject_code, result, tested_game_day, cost_paid) VALUES (${SELLER},1,'genotype','HYPP','carrier',900,150)`);
   db.exec(`INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts) VALUES (${SELLER},1,2,1000,10,'booked',5,0)`);
   db.exec(`INSERT INTO shows (name, tier, venue, scheduled_game_day, entry_deadline_game_day, status, rng_seed, created_game_day, created_real_ts) VALUES ('Spring','local','Ring',1200,1190,'entries_open',1,1000,0)`);
-  db.exec(`INSERT INTO show_classes (show_id, name, class_type, breed_id, ideal_vector, judge_id, crosses_eligible, min_age_game_days, status, noise_sd, ideal_falloff, target_field_size, max_entries_per_stable, prize_schedule, rng_seed) VALUES (1,'QH Conformation','breed_conformation',1,'{"v":1,"traits":{}}',1,0,1080,'scheduled',3,2,8,2,'[100,50]',7)`);
+  db.exec(`INSERT INTO show_classes (show_id, name, class_type, breed_id, class_key, ideal_vector, judge_id, crosses_eligible, min_age_game_days, status, noise_sd, ideal_falloff, target_field_size, max_entries_per_stable, prize_schedule, rng_seed) VALUES (1,'QH Conformation','breed_conformation',1,'bc:1','{"v":1,"traits":{}}',1,0,1080,'scheduled',3,2,8,2,'[100,50]',7)`);
   db.exec(`INSERT INTO show_entries (class_id, horse_id, entered_by_stable_id, is_npc, entered_game_day, trait_snapshot) VALUES (1,1,${SELLER},0,1000,'{}')`);
   db.exec(`INSERT INTO ledger (stable_id, amount, kind, description, game_day, created_real_ts) VALUES (${SELLER},10000,'opening','Starting balance.',0,0), (${BUYER},10000,'opening','Starting balance.',0,0)`);
 }

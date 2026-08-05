@@ -363,6 +363,13 @@ export interface ConfigValues {
    * §5.5), same as show_conformation_min_age_game_days already is. */
   young_horse_yearling_min_age_game_days: number;
   young_horse_two_year_old_min_age_game_days: number;
+  /** Migration 0167, 2026-08-05. Slice 0025 stage 4 §7.5: the graduation rule, implemented as the
+   * operator's own compound alternative to a vaguer "points" system - at least this many placings of
+   * 3rd or better, including at least one 1st, since the horse's last promotion (or since it started
+   * in this class type, for its first promotion). Live - a mid-career retune changes what a horse
+   * still needs for its NEXT promotion, never rewrites a rank it already holds. */
+  show_rank_top3_required: number;
+  show_rank_win_required: number;
 }
 
 export type ConfigFlags = Record<string, boolean>;

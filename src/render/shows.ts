@@ -45,6 +45,11 @@ export function eligibilityMessage(reason: EligibilityReason | 'class_closed' | 
       return "can't be shown right now - it's in the middle of a health incident.";
     case 'degenerative_incident':
       return "can't be shown - a past health incident left a lasting problem.";
+    // Slice 0025 stage 4 §7.5. The horse page's own "Enter" button can never produce this - it
+    // always targets the horse's own current rank - so this is only ever seen browsing /shows/:id's
+    // list of open classes directly.
+    case 'wrong_rank':
+      return "hasn't earned the rank this class is for yet.";
     case 'class_closed':
       return "can't enter - this class isn't open for entries anymore.";
     case 'not_found':
@@ -153,6 +158,9 @@ function classRulesSentence(cls: ShowClassRow, breedName: string, minAgeYears: n
   if (cls.max_age_game_days !== null) sentence += ` · no older than ${String(Math.round(cls.max_age_game_days / 360))} years`;
   if (cls.sex_restriction) sentence += ` · ${cls.sex_restriction}s only`;
   if (cls.requires_gait) sentence += ' · must be gaited';
+  // Slice 0025 stage 4 §7.5: 'none' means young_conformation/ability_test, which are never
+  // rank-bracketed - nothing to add there.
+  if (cls.rank !== 'none') sentence += ` · ${cls.rank[0].toUpperCase()}${cls.rank.slice(1)}`;
   return sentence;
 }
 
@@ -240,19 +248,22 @@ export function renderShowsIndexPage(params: {
   isAdmin: boolean;
   actionsLeft: number | null;
   gameDaysPerYear: number;
-  nextShow: { show: ShowRow; classes: ShowsIndexNextClass[] } | null;
+  /** Slice 0025 stage 4 §7.5a: classes mint on demand now, so more than one show can be open for
+   * entries at once - a list, not a single "next show". */
+  openShows: { show: ShowRow; classes: ShowsIndexNextClass[] }[];
   recentShows: { show: ShowRow; classes: ShowsIndexRecentClass[] }[];
   classType: string;
   breedId: number | null;
   disciplines: { code: string; name: string }[];
   eligibleBreeds: { id: number; name: string }[];
 }): SafeHtml {
-  const nextBlock = params.nextShow
-    ? html`
+  const openBlock = params.openShows.length
+    ? params.openShows.map(
+        (openShow) => html`
       <div class="card">
-        <h2>${params.nextShow.show.name}</h2>
-        <p><strong>Venue:</strong> ${params.nextShow.show.venue} &middot; <strong>${formatCalendarDate(params.nextShow.show.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(params.nextShow.show.scheduled_game_day)})</span></p>
-        ${params.nextShow.classes.map(
+        <h2>${openShow.show.name}</h2>
+        <p><strong>Venue:</strong> ${openShow.show.venue} &middot; <strong>${formatCalendarDate(openShow.show.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(openShow.show.scheduled_game_day)})</span></p>
+        ${openShow.classes.map(
           (c) => html`
           <div class="card">
             <h3>${c.cls.name}</h3>
@@ -262,9 +273,10 @@ export function renderShowsIndexPage(params: {
             ${thinFieldNote(c.cls, c.entryCount)}
           </div>`
         )}
-        <p><a class="button-link" href="/shows/${String(params.nextShow.show.id)}">View and enter</a></p>
+        <p><a class="button-link" href="/shows/${String(openShow.show.id)}">View and enter</a></p>
       </div>`
-    : html`<p>No open classes match this filter right now.</p>`;
+      )
+    : html`<p>No open classes match this filter right now. Enter a horse from its own page to start one - see "Enter in a show" there.</p>`;
 
   const recentBlock = params.recentShows.length
     ? params.recentShows.map(
@@ -282,8 +294,8 @@ export function renderShowsIndexPage(params: {
   const body = html`
     <h1>Shows</h1>
     ${showsFilterControls({ classType: params.classType, breedId: params.breedId, disciplines: params.disciplines, eligibleBreeds: params.eligibleBreeds })}
-    <h2>Next up</h2>
-    ${nextBlock}
+    <h2>Open for entries</h2>
+    ${openBlock}
     <h2>Recent results</h2>
     ${recentBlock}
   `;
