@@ -49,6 +49,10 @@
     // seeded breed numbers are asserted where they actually live rather than hand-copied into a
     // test that would then have to be kept in step with every retune.
     "test/genetics/breed-ability-bias.test.ts",
-    "test/showing/breed-aptitude.test.ts"
+    "test/showing/breed-aptitude.test.ts",
+    // Same again: reads src/routes/horses.ts and src/render/horses.ts off disk to check that every
+    // POST on the horse page redirects back to a named tab, and that all four tabs still have cards
+    // behind them. Its pure half is test/horse-tabs.test.ts, which is type-checked normally.
+    "test/horse-tabs-source.test.ts"
   ]
 }

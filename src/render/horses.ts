@@ -20,6 +20,7 @@ import type { WorkAvailability } from '../engines/care/location';
 import type { CareStatus, FeedLevelDefinition } from '../engines/care/modifier';
 import { formatCalendarDate } from '../lib/calendar';
 import type { BarnBucket } from '../lib/barnFilter';
+import { HORSE_TABS, horsePageUrl, type HorseTab } from '../lib/horseTab';
 import type { OpenIncidentView, IncidentHistoryView } from '../db/incidents';
 import { CONFORMATION_LABEL_TEXT, type ConformationLabel } from '../engines/conformation/labels';
 import type { TraitCode } from '../engines/genetics/polygenic';
@@ -483,6 +484,26 @@ function studCard(params: {
         <button type="submit">Offer ${displayNameFor(h)} at stud</button>
       </form>
     </div>`;
+}
+
+/** Slice 0026 stage 2 §2: the horse page's own four tabs. Plain links with a query parameter, the
+ * same no-JavaScript shape barnTabs below already uses. The four buttons are always all drawn - see
+ * horseTabBody for why. */
+function horseTabs(horseId: number, activeTab: HorseTab): SafeHtml {
+  return html`
+    <nav class="subnav">
+      ${HORSE_TABS.map(
+        (t) => html`<a href="${horsePageUrl(horseId, t.key)}" class="${t.key === activeTab ? 'subnav-link is-active' : 'subnav-link'}">${t.label}</a>`
+      )}
+    </nav>`;
+}
+
+/** Slice 0026 stage 2 §2.2: a tab whose cards all render empty for this viewer still draws its
+ * button and says so inside, rather than vanishing - the tab bar has to be the same four buttons
+ * whoever is looking, or a page looks broken to an admin peering at somebody else's horse. */
+function horseTabBody(cards: SafeHtml[], emptyLine: string): SafeHtml {
+  const drawn = cards.filter((c) => c.value.trim() !== '');
+  return drawn.length > 0 ? html`${drawn}` : html`<p class="muted">${emptyLine}</p>`;
 }
 
 /** Slice 0016 §4.1: the barn list's tabs - plain links with a query parameter, no JavaScript
@@ -966,6 +987,7 @@ function growUpCard(view: TimeWarpCardView, name: string): SafeHtml {
       <p>${name} is ${view.ageLabel} old and can't be shown or bred yet. You can pay to skip ahead - ${name} wakes up ${String(view.monthsLabel)} older, and everything else in the world stays where it is.</p>
       <p class="muted">Costs ${String(view.cost)} and one turn. ${name} really is that much older afterwards, so ${name} will grow old that much sooner too - you are buying the time, not getting it free.${view.clamped ? ' This one takes ' + name + ' the rest of the way to grown, which is less than a full six months.' : ''}</p>
       <form method="post" action="/horses/${String(view.horseId)}/warp">
+        <input type="hidden" name="tab" value="${view.tab}">
         <button type="submit" class="secondary" ${view.affordable ? raw('') : raw('disabled')}>Grow up by ${String(view.days)} days (${String(view.cost)})</button>
       </form>
       ${view.affordable ? raw('') : html`<p class="muted">Not enough money for that right now.</p>`}
@@ -974,6 +996,9 @@ function growUpCard(view: TimeWarpCardView, name: string): SafeHtml {
 
 export interface TimeWarpCardView {
   horseId: number;
+  /** Slice 0026 stage 2 §2.1: the Grow up card is pinned above the tab bar, so its form carries the
+   * tab the player is actually looking at and horseWarpRoute redirects back to that one. */
+  tab: HorseTab;
   days: number;
   cost: number;
   clamped: boolean;
@@ -1298,6 +1323,9 @@ function showRecordCard(params: {
 
 export function renderHorsePage(params: {
   world: WorldRow;
+  /** Slice 0026 stage 2 §2: which of the four tabs to draw. Already normalised by parseHorseTab, so
+   * an unrecognised `?tab=` arrives here as 'genetics' rather than as itself. */
+  activeTab: HorseTab;
   isAdmin: boolean;
   actionsLeft: number | null;
   gameDaysPerYear: number;
@@ -1421,6 +1449,7 @@ export function renderHorsePage(params: {
         ${errorBox(params.nameError)}
         <p class="muted">The stable's prefix is stamped on automatically. Once registered, the name is permanent.</p>
         <form method="post" action="/horses/${String(h.id)}/name">
+          <input type="hidden" name="tab" value="${params.activeTab}">
           <label>${h.breeder_prefix ?? params.ownerStable.prefix}
             <input type="text" name="name" required maxlength="40">
           </label>
@@ -1434,6 +1463,7 @@ export function renderHorsePage(params: {
       <h2>Barn name</h2>
       ${noticeBox(params.barnNameNotice)}
       <form method="post" action="/horses/${String(h.id)}/barn-name">
+        <input type="hidden" name="tab" value="${params.activeTab}">
         <label>What you call ${h.sex === 'mare' ? 'her' : 'him'} around the barn
           <input type="text" name="barn_name" maxlength="60" value="${h.barn_name ?? ''}">
         </label>
@@ -1558,6 +1588,107 @@ export function renderHorsePage(params: {
         </div>`
       : raw('');
 
+  // Slice 0026 stage 2 §2.1: the two one-way exits and gelding sit together in one card on the
+  // Buying & selling tab. All three are things a child cannot take back, which is the honest thing
+  // to put in the heading - a child weighing one of them should see the others beside it.
+  const permanentChangesCard =
+    params.canManage
+      ? html`
+        <div class="card">
+          <h2>Changes that can't be undone</h2>
+          ${geldLink}
+          ${retireLink}
+        </div>`
+      : raw('');
+
+  const pedigreeCard = html`
+    <div class="card">
+      <h2>Pedigree</h2>
+      ${pedigreeTable}
+    </div>`;
+
+  // Slice 0026 stage 2 §2.1: which cards live behind which tab. The route still loads everything
+  // (§2.3) - this only decides what is drawn, so a tab switch is a plain link with no state.
+  const tabCards: Record<HorseTab, SafeHtml[]> = {
+    genetics: [
+      conformationCard({
+        conformation: params.conformation,
+        labels: params.conformationLabels,
+        ageYears: params.ageYears,
+        maturityYears: params.conformationMaturityYears,
+        name: displayNameFor(h),
+        possessive,
+        hasShown: (params.showSummary?.starts ?? 0) >= 1,
+        breedName: params.breed?.name ?? null,
+        evaluation: params.evaluation,
+      }),
+      abilityCard(params.abilityRows, displayNameFor(h)),
+      colourCard({ rows: params.colour, visibleColour: params.visibleColour, patternWords: params.patternWords, canTest: params.canManage, horseId: h.id }),
+      pedigreeCard,
+      genotypeBlock,
+    ],
+    care: [
+      healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear }),
+      params.owner || params.isAdmin
+        ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })
+        : raw(''),
+      careCard({
+        care: params.care,
+        feedLevelName: params.feedLevelName,
+        horseId: h.id,
+        canManage: params.canManage,
+        pronoun: h.sex === 'mare' ? 'she' : 'he',
+        careError: params.careError,
+        careNotice: params.careNotice,
+        managementPlans: params.managementPlans,
+      }),
+      locationCard({ horse: h, availability: params.availability, canManage: params.canManage, blockedReason: params.locationBlockedReason, error: params.locationError }),
+    ],
+    shows: [
+      showRecordCard({
+        summary: params.showSummary,
+        resultGroups: params.recentShowResultGroups,
+        enterShow: params.enterShow,
+        enterShowError: params.enterShowError,
+        enterShowNotice: params.enterShowNotice,
+        horseId: h.id,
+      }),
+    ],
+    market: [
+      sellCard({
+        horse: h,
+        canManage: params.canManage,
+        listing: params.listing,
+        guide: params.guideValue,
+        commissionPercent: params.marketCommissionPercent,
+        error: params.marketError,
+        notice: params.marketNotice,
+      }),
+      studCard({
+        horse: h,
+        canManage: params.canManage,
+        studListing: params.studListing,
+        oldEnough: params.stallionOldEnoughForStud,
+        eligibleFromGameDay: params.stallionStudEligibleFromGameDay,
+        gameDaysPerYear: params.gameDaysPerYear,
+        suggestedFee: params.suggestedStudFee,
+        defaultSeasonCap: params.defaultStudSeasonCap,
+        commissionPercent: params.marketCommissionPercent,
+        error: params.studError,
+        notice: params.studNotice,
+      }),
+      permanentChangesCard,
+      adminDeleteBlock,
+    ],
+  };
+
+  const emptyTabLine: Record<HorseTab, string> = {
+    genetics: `There is nothing recorded about ${displayNameFor(h)}'s breeding here.`,
+    care: `No health or care records to show for ${displayNameFor(h)}.`,
+    shows: `No show record to show for ${displayNameFor(h)}.`,
+    market: `${displayNameFor(h)} isn't yours to buy, sell or send on.`,
+  };
+
   const body = html`
     <h1>${displayNameFor(h)}</h1>
     ${errorBox(params.adminError)}
@@ -1575,77 +1706,17 @@ export function renderHorsePage(params: {
         : raw('')}
       <p><strong>Inbreeding coefficient:</strong> ${coiPercent}</p>
       ${params.showInbreedingNote
-        ? html`<p class="notice">Being this closely bred holds back growth - ${displayNameFor(h)}'s measurements below sit closer to the middle than ${possessive} genetics alone would give.</p>`
+        ? // "below" until slice 0026 stage 2 put the Conformation card behind a tab - the note is
+          // above the tab bar now, so it can no longer point down the page at the measurements.
+          html`<p class="notice">Being this closely bred holds back growth - ${displayNameFor(h)}'s measurements sit closer to the middle than ${possessive} genetics alone would give.</p>`
         : raw('')}
       ${params.mareStatus ? html`<p>${params.mareStatus}</p>` : raw('')}
     </div>
-    ${conformationCard({
-      conformation: params.conformation,
-      labels: params.conformationLabels,
-      ageYears: params.ageYears,
-      maturityYears: params.conformationMaturityYears,
-      name: displayNameFor(h),
-      possessive,
-      hasShown: (params.showSummary?.starts ?? 0) >= 1,
-      breedName: params.breed?.name ?? null,
-      evaluation: params.evaluation,
-    })}
-    ${abilityCard(params.abilityRows, displayNameFor(h))}
     ${params.canManage && params.timeWarp ? growUpCard(params.timeWarp, displayNameFor(h)) : raw('')}
-    ${healthCard({ canSeeFullHealth: params.owner || params.isAdmin, canTest: params.canManage, rows: params.health, horseId: h.id, gameDaysPerYear: params.gameDaysPerYear })}
-    ${params.owner || params.isAdmin
-      ? incidentsCard({ incidents: params.incidents, horseId: h.id, canManage: params.canManage, incidentError: params.incidentError, incidentNotice: params.incidentNotice })
-      : raw('')}
-    ${colourCard({ rows: params.colour, visibleColour: params.visibleColour, patternWords: params.patternWords, canTest: params.canManage, horseId: h.id })}
-    ${careCard({
-      care: params.care,
-      feedLevelName: params.feedLevelName,
-      horseId: h.id,
-      canManage: params.canManage,
-      pronoun: h.sex === 'mare' ? 'she' : 'he',
-      careError: params.careError,
-      careNotice: params.careNotice,
-      managementPlans: params.managementPlans,
-    })}
-    ${locationCard({ horse: h, availability: params.availability, canManage: params.canManage, blockedReason: params.locationBlockedReason, error: params.locationError })}
-    ${showRecordCard({
-      summary: params.showSummary,
-      resultGroups: params.recentShowResultGroups,
-      enterShow: params.enterShow,
-      enterShowError: params.enterShowError,
-      enterShowNotice: params.enterShowNotice,
-      horseId: h.id,
-    })}
-    ${sellCard({
-      horse: h,
-      canManage: params.canManage,
-      listing: params.listing,
-      guide: params.guideValue,
-      commissionPercent: params.marketCommissionPercent,
-      error: params.marketError,
-      notice: params.marketNotice,
-    })}
-    ${studCard({
-      horse: h,
-      canManage: params.canManage,
-      studListing: params.studListing,
-      oldEnough: params.stallionOldEnoughForStud,
-      eligibleFromGameDay: params.stallionStudEligibleFromGameDay,
-      gameDaysPerYear: params.gameDaysPerYear,
-      suggestedFee: params.suggestedStudFee,
-      defaultSeasonCap: params.defaultStudSeasonCap,
-      commissionPercent: params.marketCommissionPercent,
-      error: params.studError,
-      notice: params.studNotice,
-    })}
-    <h2>Pedigree</h2>
-    ${pedigreeTable}
     ${nameForm}
     ${params.owner ? barnNameForm : raw('')}
-    ${geldLink}
-    ${retireLink}
-    ${genotypeBlock}
-    ${adminDeleteBlock}
+    ${horseTabs(h.id, params.activeTab)}
+    ${horseTabBody(tabCards[params.activeTab], emptyTabLine[params.activeTab])}
     <p><a href="/stables/${String(params.ownerStable.id)}/horses">Back to horses</a></p>
   `;
   return pageShell({
