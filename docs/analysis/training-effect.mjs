@@ -266,7 +266,10 @@ function scenario3(runs = 200000) {
     }
     const mean = sum / runs;
     bred.push({ k, mean, sd: Math.sqrt(sumSq / runs - mean * mean) });
-    const label = k === 0 ? 'unselected' : `${k} of 5 on target`;
+    // NB: k is the number of traits FORCED onto target. The remaining traits land on target by
+    // luck a further ~30% of the time (scenario 7), so a horse's true count is higher than k --
+    // "1 forced" measures 2.2 of 5 actually right. Compare like with like before quoting these.
+    const label = k === 0 ? 'unselected' : `${k} forced on target`;
     console.log(`    ${label.padEnd(18)} mean ${mean.toFixed(1)}   SD ${sd(bred, k).toFixed(1)}`);
   }
 
