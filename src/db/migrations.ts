@@ -172,6 +172,7 @@ import m0171 from '../../migrations/0171_ledger_add_gelding_kind.sql';
 import m0172 from '../../migrations/0172_show_barn_split.sql';
 import m0173 from '../../migrations/0173_config_show_barn_plan.sql';
 import m0174 from '../../migrations/0174_accounts_paused.sql';
+import m0175 from '../../migrations/0175_show_classes_allow_parallel.sql';
 
 export interface MigrationFile {
   name: string;
@@ -360,6 +361,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0172_show_barn_split.sql', sql: m0172 },
   { name: '0173_config_show_barn_plan.sql', sql: m0173 },
   { name: '0174_accounts_paused.sql', sql: m0174 },
+  { name: '0175_show_classes_allow_parallel.sql', sql: m0175 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';
