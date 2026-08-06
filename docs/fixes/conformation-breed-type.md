@@ -21,6 +21,11 @@ would immediately make that one dead code. Build this instead.
 Measured throughout by `docs/analysis/conformation-architecture.mjs` — run it after any change here.
 Every number below is that script's output, not an estimate.
 
+**To try this by hand rather than read about it, use `docs/analysis/breeding-lab.mjs`** — a
+command-line bench that mints a founding batch under either engine, prints what a player would see
+*and* the numbers underneath, and lets you cross any two horses and roll foals, then breed those
+foals onward. It runs in an afternoon the experiments that would take months of real play. See §13.
+
 ---
 
 ## 1. What is actually wrong
@@ -505,3 +510,38 @@ Per CLAUDE.md §2, these are genuinely undecided and the build should stop for t
    one band" story, at the cost of a coarser ladder and slightly larger target snapping. 8 is
    recommended and everything above is measured at 8.
 5. **Confirm the reset**, and confirm that new founding grants go out afterwards rather than before.
+6. **Does ability want its own noise SD?** Found while building the bench, not while writing §7, and
+   it is the one thing in this document nobody has decided. `rollEnvironmentalNoise` draws
+   Normal(0, sd) per trait for **all fourteen traits from the single `conformation_noise_sd`**. So
+   §7.1's drop from 6 to 2 quietly shrinks **ability** noise too — and ability is what decides
+   discipline classes, which per the operator (2026-08-06) are the only place different breeds meet.
+   Tightening conformation is the point; tightening every discipline class at the same time is a
+   side effect nobody asked for. Either accept it, or split the key in two (`ability_noise_sd`,
+   staying at 6) and change `drawNoise` to take one SD per trait category. `breeding-lab.mjs` models
+   the shared SD faithfully, so the effect is visible in its ability lines rather than hidden.
+
+---
+
+## 13. The bench: `docs/analysis/breeding-lab.mjs`
+
+Built 2026-08-06 at the operator's request, so the design can be *played* before it is built:
+
+```
+node docs/analysis/breeding-lab.mjs new --breed AR --horses 6      # a founding batch
+node docs/analysis/breeding-lab.mjs show 1 2 3                     # player view + the arithmetic
+node docs/analysis/breeding-lab.mjs predict 1 to 4                 # the exact foal distribution
+node docs/analysis/breeding-lab.mjs breed 1 to 4 --foals 5         # roll them
+node docs/analysis/breeding-lab.mjs breed 7 to 9                   # foal onto foal, generation 3
+node docs/analysis/breeding-lab.mjs summary                        # progress by generation
+```
+
+**There is no sex in the bench, deliberately** (operator's instruction): every horse crosses with
+every other, because it is a bench for testing which *pairings of traits* produce what, not a
+simulation of a breeding season. Population persists between commands in a gitignored state file;
+`--state <path>` runs two labs side by side, which is how `--engine today` and `--engine proposed`
+get compared on the same seed.
+
+Pedigree and COI are real, so full-sibling matings show genuine inbreeding depression. What is not
+modelled: colour, disease, fertility, robustness, care, training, tack, incidents, the market, and
+the show calendar — and conformation scores carry **no show noise**, so a 2-point gap on screen is
+inside the Normal(0, 5) a real class would add on top.
