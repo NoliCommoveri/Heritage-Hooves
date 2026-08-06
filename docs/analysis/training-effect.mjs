@@ -452,6 +452,24 @@ function scenario7() {
     console.log(`  ${code.padEnd(7)}${cells.join('  ')}        50.0%`);
   }
 
+  // One breed in full, trait by trait — this is the table docs/fixes/quality-band-on-target.md §2
+  // is built from. Paso Fino by default because it states the contradiction most cleanly: it wants
+  // a high-set neck (14 alleles) AND a short back (6), and one dial cannot do both.
+  const detail = process.env.BREED ?? 'PF';
+  const vec = ALL_BREEDS[detail];
+  if (vec) {
+    console.log(`\n  ${detail} in full — each trait rides on 20 alleles and measures count x 5:\n`);
+    console.log('    Trait             wants   needs   low(.42)   mid(.50)   high(.58)');
+    for (const [trait, [target]] of Object.entries(vec)) {
+      const need = Math.round(target / 5);
+      const cells = [BAND.low, BAND.mid, BAND.high]
+        .map((p) => `${(100 * onTargetChance(target, p)).toFixed(0)}%`.padStart(9));
+      console.log(`    ${trait.padEnd(17)}${String(target).padStart(5)}${String(need).padStart(8)}${cells.join('  ')}`);
+    }
+    console.log('\n    Read the two rows needing the most and the fewest alleles: they move in');
+    console.log('    OPPOSITE directions. No single dial setting can satisfy both.');
+  }
+
   console.log('\n  Every cell should read close to its band. None of them do, and the mid');
   console.log('  column is nowhere near 50%. A breed whose targets sit far from 50 (Arabian\'s');
   console.log('  dished head at 8, Friesian\'s neck at 82) is worst served, because no single');

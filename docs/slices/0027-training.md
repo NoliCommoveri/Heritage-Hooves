@@ -7,8 +7,16 @@ and specifies the whole stage.
 
 Every decision below is settled. Where a number is a first guess it says so (§11).
 
-Next free migration number is `0176`. Every migration also needs registering in
-`src/db/migrations.ts` (CLAUDE.md §8).
+Next free migration number is `0176`, **unless `docs/fixes/quality-band-on-target.md` lands first**,
+which it should (see below) — that fix claims `0176`–`0178` and this slice shifts up. Migration
+numbers are claimed at build time, not when a document is written (overview §13). Every migration
+also needs registering in `src/db/migrations.ts` (CLAUDE.md §8).
+
+**Build the quality-band fix before this.** Writing this slice turned up a defect in
+`generateCandidate` — the founding quality band never reads a breed's `ideal_vector`, so "mid" has
+never meant what it was supposed to mean. Fixing it makes every new horse better, which moves the
+population that §10.1's training numbers were measured against. Landing it first means training is
+tuned once rather than tuned and retuned.
 
 ---
 
