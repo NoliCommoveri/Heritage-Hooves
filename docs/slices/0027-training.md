@@ -486,6 +486,31 @@ treadmill and it is invisible until a child notices they cannot win. And the top
 that a Polished ordinary horse beats an Untrained good one more often than feels right, that is the
 number to cut, not the noise.
 
+### 10.1 Measured, before building
+
+`docs/analysis/training-effect.mjs` (`node docs/analysis/training-effect.mjs`) runs the live
+conformation pipeline — real ideal vector, real judges, real falloff and noise — over 200,000 classes
+per row against the numbers above. Re-run it after any retune. What it says today:
+
+**One completed programme with the session bonus (Untrained → Working) is worth +2.4 raw points**, a
+63% win rate against the identical untrained horse, and it moves a player horse in a field of eight
+from 8.3% wins to 12.4% — which is exactly the 12.5% a fair field gives. That is the cleanest
+justification for `npc_training_level = 2` there is: **one programme, run properly, is what it costs
+to draw level with the computer field.** Neglecting training entirely costs about a third of a
+player's wins (12.4% → 8.3%); it is a real penalty, but a horse that never trains still places top
+three nearly a third of the time.
+
+**Breeding still dominates, comfortably.** Bringing one conformation trait onto its breed's target is
+worth 3.9 raw points; the whole training ladder is worth 4.4. A fully Polished founding-grade horse
+still loses to an untrained horse with three traits on target 60% of the time, and to a fully bred one
+81% of the time. Overview §8a's failure mode — equipment and care swinging results more than genetics
+— does not happen at these numbers.
+
+**The one number sitting at its limit is the top of the ladder.** Polished is worth 1.14 traits'
+worth of breeding, which is slightly more than one full trait bought with money. If that reads as too
+much when the children play it, cut Polished from 1.060 to 1.050 (0.95 traits) rather than touching
+anything else — the lower levels are all comfortably under.
+
 Costing, for scale: at 90 game days a programme is about three real days, and taking one horse from
 Untrained to Polished costs 1000 across roughly twelve real days — against a farrier call at 30, a
 full genotype panel at 700, and a show win paying 600.
