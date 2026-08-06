@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildShowPageTabs, buildShowPageClassGroups, type ShowPageClassView } from '../../src/render/shows';
+import { buildShowPageTabs, buildShowPageClassGroups, groupClassesByKeyAndRank, type ShowPageClassView } from '../../src/render/shows';
 import { showPageUrl, showsIndexUrl } from '../../src/lib/showsFilter';
 import type { ShowClassRow } from '../../src/db/shows';
 
@@ -149,6 +149,33 @@ describe('buildShowPageClassGroups', () => {
       view({ id: 4, class_type: 'discipline', name: 'Barrel Racing', class_key: 'disc:barrels', rank: 'open', breed_id: null, discipline_code: 'barrels' }),
     ]);
     expect(groups.map((g) => g.label)).toEqual(['Conformation- Quarter Horse', 'Barrel Racing', 'Dressage', 'Yearling Speed Test']);
+  });
+});
+
+// The /shows index lists a show's classes too - one summary line each - so three sections of one
+// class were three near-identical lines there as well, which is where a player meets the
+// duplication first. Both screens group through this one function, on their own payload types.
+describe('groupClassesByKeyAndRank is shared by both screens', () => {
+  it('groups a summary-shaped payload by the same rule, in the same order', () => {
+    const summary = (id: number, over: Partial<ShowClassRow>, entryCount: number) => ({ cls: cls({ id, ...over }), entryCount });
+    const groups = groupClassesByKeyAndRank(
+      [
+        summary(4, { class_type: 'discipline', name: 'Dressage', class_key: 'disc:dressage', breed_id: null, discipline_code: 'dressage' }, 3),
+        summary(2, { name: 'Conformation- Quarter Horse', class_key: 'conf:1' }, 3),
+        summary(1, { name: 'Conformation- Quarter Horse', class_key: 'conf:1' }, 2),
+      ],
+      (s) => s.cls
+    );
+    expect(groups.map((g) => g.label)).toEqual(['Conformation- Quarter Horse', 'Dressage']);
+    expect(groups[0].sections.map((s) => s.cls.id)).toEqual([1, 2]);
+    // What the index's "N horses entered so far" line adds up across a split class.
+    expect(groups[0].sections.reduce((sum, s) => sum + s.entryCount, 0)).toBe(5);
+  });
+
+  it('leaves an unsplit class as a group of one, so the old single-class rendering is unchanged', () => {
+    const groups = groupClassesByKeyAndRank([{ cls: cls({ id: 9 }) }], (s) => s.cls);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].sections).toHaveLength(1);
   });
 });
 

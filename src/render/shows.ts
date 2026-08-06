@@ -286,6 +286,62 @@ const CLASS_TYPE_SORT: Record<ShowClassRow['class_type'], number> = {
   ability_test: 3,
 };
 
+const RANK_SORT: Record<ClassRank, number> = { novice: 0, open: 1, champion: 2, none: 3 };
+
+/** One class as the player thinks of it, with every parallel copy of it filed underneath. Since the
+ * 2026-08-06 walkback (migration 0175) a request that finds its class full for that stable mints
+ * another one beside it, so a busy household's show holds two or three identical "Conformation-
+ * Quarter Horse, Open" classes - which, listed in mint order, interleave with every other class and
+ * are impossible to tell apart. */
+export interface ClassGroup<T> {
+  /** class_key plus rank - what "the same class" means everywhere else in the codebase. */
+  key: string;
+  label: string;
+  /** Every copy of this class, oldest first (the order entries were minted into). */
+  sections: T[];
+}
+
+/**
+ * Groups classes by (class_key, rank), and orders the groups the way the entry catalogue is built -
+ * conformation, disciplines, young-horse classes - then by name, then Novice before Open before
+ * Champion. Deliberately not mint order, which is the thing the operator asked to be rid of on
+ * 2026-08-06: mint order interleaves a second copy of one class with whatever else happened to be
+ * started between the two.
+ *
+ * Generic over the view type because both screens that list a show's classes need it and they carry
+ * different payloads - the show page's own class cards, and the /shows index's one-line summaries.
+ * One ordering rule, so the two screens can never disagree about what order a show's classes come in.
+ */
+export function groupClassesByKeyAndRank<T>(items: T[], clsOf: (item: T) => ShowClassRow): ClassGroup<T>[] {
+  const byKey = new Map<string, { group: ClassGroup<T>; first: ShowClassRow }>();
+  for (const item of items) {
+    const cls = clsOf(item);
+    const key = `${cls.class_key}|${cls.rank}`;
+    let entry = byKey.get(key);
+    if (!entry) {
+      entry = { group: { key, label: cls.name, sections: [] }, first: cls };
+      byKey.set(key, entry);
+    }
+    if (cls.id < entry.first.id) entry.first = cls;
+    entry.group.sections.push(item);
+  }
+  const entries = [...byKey.values()];
+  for (const e of entries) e.group.sections.sort((a, b) => clsOf(a).id - clsOf(b).id);
+  entries.sort(
+    (a, b) =>
+      CLASS_TYPE_SORT[a.first.class_type] - CLASS_TYPE_SORT[b.first.class_type] ||
+      a.first.name.localeCompare(b.first.name) ||
+      RANK_SORT[a.first.rank] - RANK_SORT[b.first.rank]
+  );
+  return entries.map((e) => e.group);
+}
+
+/** "A", "A and B", "A, B and C" - for naming the several winners or judges a split class has. */
+function joinWords(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 function tabLabelFor(key: string, disciplines: { code: string; name: string }[]): string {
   if (key === 'all') return 'All';
   if (key === 'conformation') return 'Conformation';
@@ -412,22 +468,29 @@ export function renderShowsIndexPage(params: {
   eligibleBreeds: { id: number; name: string }[];
 }): SafeHtml {
   const filter: ShowsFilterLike = { classType: params.classType, breedId: params.breedId };
+
+  // Both lists group a class's parallel copies exactly as the show page itself does (2026-08-06) -
+  // three sections of one class were three near-identical lines here, which is where a player meets
+  // the duplication first, before ever clicking into the show.
   const openBlock = params.openShows.length
     ? params.openShows.map(
         (openShow) => html`
       <div class="card">
         <h2>${openShow.show.name}</h2>
         <p><strong>Venue:</strong> ${openShow.show.venue} &middot; <strong>${formatCalendarDate(openShow.show.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(openShow.show.scheduled_game_day)})</span></p>
-        ${openShow.classes.map(
-          (c) => html`
+        ${groupClassesByKeyAndRank(openShow.classes, (c) => c.cls).map((g) => {
+          const first = g.sections[0];
+          const entryCount = g.sections.reduce((sum, c) => sum + c.entryCount, 0);
+          const judges = joinWords(g.sections.map((c) => c.judge?.name ?? 'an unnamed judge'));
+          return html`
           <div class="card">
-            <h3>${c.cls.name}</h3>
-            <p class="muted">${classRulesSentence(c.cls, c.minAgeYears)}</p>
-            <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
-            <p class="muted">${String(c.entryCount)} horse${c.entryCount === 1 ? '' : 's'} entered so far.</p>
-            ${thinFieldNote(c.cls, c.entryCount)}
-          </div>`
-        )}
+            <h3>${g.label}${g.sections.length > 1 ? ` (${String(g.sections.length)} sections)` : ''}</h3>
+            <p class="muted">${classRulesSentence(first.cls, first.minAgeYears)}</p>
+            <p>Judged by <strong>${judges}</strong>${g.sections.length === 1 && first.judge ? html` - ${first.judge.blurb}` : raw('')}</p>
+            <p class="muted">${String(entryCount)} horse${entryCount === 1 ? '' : 's'} entered so far.</p>
+            ${g.sections.length === 1 ? thinFieldNote(first.cls, entryCount) : raw('')}
+          </div>`;
+        })}
         <p><a class="button-link" href="${showPageUrl(openShow.show.id, filter)}">View and enter</a></p>
       </div>`
       )
@@ -439,9 +502,15 @@ export function renderShowsIndexPage(params: {
         <div class="card">
           <h3><a href="${showPageUrl(r.show.id, filter)}">${r.show.name}</a></h3>
           <p class="muted">${r.show.venue} &middot; ${formatCalendarDate(r.show.scheduled_game_day, params.gameDaysPerYear)} (game day ${String(r.show.scheduled_game_day)})</p>
-          ${r.classes.map(
-            (c) => html`<p>${c.cls.name}, judged by ${c.judge?.name ?? 'an unnamed judge'}: <strong>${c.winnerName ?? 'no entries'}</strong> won.</p>`
-          )}
+          ${groupClassesByKeyAndRank(r.classes, (c) => c.cls).map((g) => {
+            const winners = joinWords(g.sections.map((c) => c.winnerName ?? 'no entries'));
+            // A split class names every section's winner in one sentence, and drops the judges: with
+            // three sections that is three names on top of three winners, and the show's own page
+            // says who judged what.
+            return g.sections.length === 1
+              ? html`<p>${g.label}, judged by ${g.sections[0].judge?.name ?? 'an unnamed judge'}: <strong>${winners}</strong> won.</p>`
+              : html`<p>${g.label}, ${String(g.sections.length)} sections: <strong>${winners}</strong> won.</p>`;
+          })}
         </div>`
       )
     : html`<p class="muted">No shows have been judged yet.</p>`;
@@ -501,48 +570,12 @@ export interface ShowPageClassView {
   ineligibleCount?: number;
 }
 
-/** One class as the player thinks of it, with every parallel copy of it filed underneath. Since the
- * 2026-08-06 walkback (migration 0175) a request that finds its class full for that stable mints
- * another one beside it, so a busy household's show holds two or three identical "Conformation-
- * Quarter Horse, Open" classes - which, listed in mint order, interleave with every other class and
- * are impossible to tell apart. Grouping them is what makes the page readable; the tabs above it do
- * the rest. */
-export interface ShowPageClassGroup {
-  /** class_key plus rank - what "the same class" means everywhere else in the codebase. */
-  key: string;
-  label: string;
-  /** Every copy of this class in this show, oldest first (the order entries were minted into). */
-  sections: ShowPageClassView[];
-}
+export type ShowPageClassGroup = ClassGroup<ShowPageClassView>;
 
-const RANK_SORT: Record<ClassRank, number> = { novice: 0, open: 1, champion: 2, none: 3 };
-
-/**
- * Groups a show's classes by (class_key, rank), and orders the groups the way the entry catalogue
- * is built - conformation, disciplines, young-horse classes - then by name, then Novice before Open
- * before Champion. Deliberately not mint order, which is the thing the operator asked to be rid of:
- * mint order interleaves a second copy of one class with whatever else happened to be started
- * between the two.
- */
+/** The show page's own grouping - the shared rule above, told where to find each card's class row.
+ * Grouping is what makes this page readable when a class has been split; the tabs do the rest. */
 export function buildShowPageClassGroups(classes: ShowPageClassView[]): ShowPageClassGroup[] {
-  const byKey = new Map<string, ShowPageClassGroup>();
-  for (const c of classes) {
-    const key = `${c.cls.class_key}|${c.cls.rank}`;
-    let group = byKey.get(key);
-    if (!group) {
-      group = { key, label: c.cls.name, sections: [] };
-      byKey.set(key, group);
-    }
-    group.sections.push(c);
-  }
-  const groups = [...byKey.values()];
-  for (const g of groups) g.sections.sort((a, b) => a.cls.id - b.cls.id);
-  groups.sort((a, b) => {
-    const x = a.sections[0].cls;
-    const y = b.sections[0].cls;
-    return CLASS_TYPE_SORT[x.class_type] - CLASS_TYPE_SORT[y.class_type] || x.name.localeCompare(y.name) || RANK_SORT[x.rank] - RANK_SORT[y.rank];
-  });
-  return groups;
+  return groupClassesByKeyAndRank(classes, (c) => c.cls);
 }
 
 export function renderShowPage(params: {
