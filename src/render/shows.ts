@@ -10,6 +10,7 @@ import type { JudgeRow } from '../db/judges';
 import { ribbonFor } from '../engines/showing/placing';
 import type { EligibilityReason, ClassRank, ShowRank } from '../engines/showing/eligibility';
 import { formatCalendarDate } from '../lib/calendar';
+import { showsIndexUrl, showPageUrl, type ShowsFilterLike } from '../lib/showsFilter';
 
 /** §8.1: "each refusal names the horse and says exactly which rule it failed" - the horse's own
  * name is prepended by the caller; this is just the rule fragment. */
@@ -260,6 +261,79 @@ function thinFieldNote(cls: ShowClassRow, entryCount: number): SafeHtml {
   return html`<p class="muted">Only ${String(entryCount)} horse${entryCount === 1 ? ' has' : 's have'} entered so far - a thin field for ${noun}, not a bug.</p>`;
 }
 
+// ---------------------------------------------------------------------------
+// The class-type tabs. The /shows index draws a fixed bar (every enabled discipline, whether or not
+// anything is scheduled in it); one show's own page draws a bar built from the classes that show
+// actually holds - "tabs by each type part of it", the operator's own words, 2026-08-06. Both read
+// the same tab keys, so a tab clicked on one screen means the same thing on the other.
+// ---------------------------------------------------------------------------
+
+export interface ShowPageTab {
+  /** The `class` query parameter value - 'all', 'conformation', 'young', or a discipline code. */
+  key: string;
+  label: string;
+  /** How many of this show's classes the tab holds. Drawn beside the label, like the barn list's. */
+  count: number;
+}
+
+/** Ordering for the class-type groups on a show page, and for the discipline tabs' position in the
+ * bar: adult conformation, then disciplines, then the two young-horse types. The same order
+ * buildShowCatalogue mints in, so the page reads the way the entry picker does. */
+const CLASS_TYPE_SORT: Record<ShowClassRow['class_type'], number> = {
+  breed_conformation: 0,
+  discipline: 1,
+  young_conformation: 2,
+  ability_test: 3,
+};
+
+function tabLabelFor(key: string, disciplines: { code: string; name: string }[]): string {
+  if (key === 'all') return 'All';
+  if (key === 'conformation') return 'Conformation';
+  if (key === 'young') return 'Young Horse';
+  return disciplines.find((d) => d.code === key)?.name ?? key;
+}
+
+/** Which tab a class belongs to - the inverse of classMatchesShowsFilter's own rule, for the one
+ * case that predicate can't answer: "which tabs does this show need at all". */
+function tabKeyForClass(cls: Pick<ShowClassRow, 'class_type' | 'discipline_code'>): string {
+  if (cls.class_type === 'breed_conformation') return 'conformation';
+  if (cls.class_type === 'discipline') return cls.discipline_code ?? 'discipline';
+  return 'young';
+}
+
+/**
+ * A single show's tab bar: All, then one tab per class type actually present, disciplines ordered
+ * by name. `activeKey` is always represented even when the show holds nothing matching it (a link
+ * carrying `?class=dressage` opened on a show with no dressage) - a bar with no active tab and an
+ * empty page beneath it reads as broken, where an active tab reading "Dressage (0)" reads as true.
+ */
+export function buildShowPageTabs(
+  classes: Pick<ShowClassRow, 'class_type' | 'discipline_code'>[],
+  disciplines: { code: string; name: string }[],
+  activeKey: string
+): ShowPageTab[] {
+  const counts = new Map<string, number>();
+  const typeOrder = new Map<string, number>();
+  for (const cls of classes) {
+    const key = tabKeyForClass(cls);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    typeOrder.set(key, Math.min(typeOrder.get(key) ?? Infinity, CLASS_TYPE_SORT[cls.class_type]));
+  }
+  if (activeKey !== 'all' && !counts.has(activeKey)) {
+    counts.set(activeKey, 0);
+    // An absent tab has no class to read a type order off, so it sorts with the disciplines - the
+    // only kind of key that can arrive here from a stale link in practice.
+    typeOrder.set(activeKey, CLASS_TYPE_SORT.discipline);
+  }
+
+  const rest = [...counts.entries()]
+    .map(([key, count]) => ({ key, label: tabLabelFor(key, disciplines), count, order: typeOrder.get(key) ?? 0 }))
+    .sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+    .map(({ key, label, count }) => ({ key, label, count }));
+
+  return [{ key: 'all', label: 'All', count: classes.length }, ...rest];
+}
+
 export interface ShowsIndexNextClass {
   cls: ShowClassRow;
   judge: JudgeRow | undefined;
@@ -278,44 +352,41 @@ export interface ShowsIndexRecentClass {
 /** Slice 0016 §5.1: the class-type tabs (All, Conformation, one per enabled discipline) plus, when
  * two or more breeds have classes, a breed picker - both plain links/a plain GET form, no
  * JavaScript (§3). The breed picker is only rendered on a non-discipline tab, since a discipline
- * class never carries a breed_id (mutually exclusive by construction). */
-function showsFilterControls(params: {
-  classType: string;
-  breedId: number | null;
-  disciplines: { code: string; name: string }[];
+ * class never carries a breed_id (mutually exclusive by construction).
+ *
+ * Shared by the /shows index and one show's own page (2026-08-06): the index passes the fixed tab
+ * set (every enabled discipline, whether or not anything is scheduled in it), a show page passes
+ * the tabs its own classes need. Both hand in the link builder for their own screen, so a tab click
+ * stays on the page the player is already looking at. */
+function filterControls(params: {
+  tabs: { key: string; label: string; count?: number }[];
+  filter: ShowsFilterLike;
   eligibleBreeds: { id: number; name: string }[];
+  /** The GET form's target - '/shows' or '/shows/:id'. */
+  action: string;
+  hrefFor: (classType: string) => string;
 }): SafeHtml {
-  const usesBreed = params.classType === 'all' || params.classType === 'conformation';
-  const tabHref = (classType: string): string => {
-    const qs = new URLSearchParams({ class: classType });
-    if ((classType === 'all' || classType === 'conformation') && params.breedId !== null) qs.set('breed', String(params.breedId));
-    return `/shows?${qs.toString()}`;
-  };
-
-  const tabs = [
-    { key: 'all', label: 'All' },
-    { key: 'conformation', label: 'Conformation' },
-    ...params.disciplines.map((d) => ({ key: d.code, label: d.name })),
-    // Slice 0025 stage 3: young_conformation and ability_test share one tab, since a horse only
-    // ever matches one age band at a time regardless of which of the two it entered.
-    { key: 'young', label: 'Young Horse' },
-  ];
+  const usesBreed = params.filter.classType === 'all' || params.filter.classType === 'conformation';
 
   const tabNav = html`
     <nav class="subnav">
-      ${tabs.map((t) => html`<a href="${tabHref(t.key)}" class="${t.key === params.classType ? 'subnav-link is-active' : 'subnav-link'}">${t.label}</a>`)}
+      ${params.tabs.map(
+        (t) => html`<a href="${params.hrefFor(t.key)}" class="${t.key === params.filter.classType ? 'subnav-link is-active' : 'subnav-link'}">${t.label}${
+          t.count !== undefined ? ` (${String(t.count)})` : ''
+        }</a>`
+      )}
     </nav>`;
 
   const breedPicker =
     usesBreed && params.eligibleBreeds.length >= 2
       ? html`
-        <form method="get" action="/shows">
-          <input type="hidden" name="class" value="${params.classType}">
+        <form method="get" action="${params.action}">
+          <input type="hidden" name="class" value="${params.filter.classType}">
           <label>Breed
             <select name="breed">
-              <option value="" ${params.breedId === null ? raw('selected') : raw('')}>All breeds</option>
+              <option value="" ${params.filter.breedId === null ? raw('selected') : raw('')}>All breeds</option>
               ${params.eligibleBreeds.map(
-                (b) => html`<option value="${String(b.id)}" ${b.id === params.breedId ? raw('selected') : raw('')}>${b.name}</option>`
+                (b) => html`<option value="${String(b.id)}" ${b.id === params.filter.breedId ? raw('selected') : raw('')}>${b.name}</option>`
               )}
             </select>
           </label>
@@ -340,6 +411,7 @@ export function renderShowsIndexPage(params: {
   disciplines: { code: string; name: string }[];
   eligibleBreeds: { id: number; name: string }[];
 }): SafeHtml {
+  const filter: ShowsFilterLike = { classType: params.classType, breedId: params.breedId };
   const openBlock = params.openShows.length
     ? params.openShows.map(
         (openShow) => html`
@@ -356,7 +428,7 @@ export function renderShowsIndexPage(params: {
             ${thinFieldNote(c.cls, c.entryCount)}
           </div>`
         )}
-        <p><a class="button-link" href="/shows/${String(openShow.show.id)}">View and enter</a></p>
+        <p><a class="button-link" href="${showPageUrl(openShow.show.id, filter)}">View and enter</a></p>
       </div>`
       )
     : html`<p>No open classes match this filter right now. Enter a horse from its own page to start one - see "Enter in a show" there.</p>`;
@@ -365,7 +437,7 @@ export function renderShowsIndexPage(params: {
     ? params.recentShows.map(
         (r) => html`
         <div class="card">
-          <h3><a href="/shows/${String(r.show.id)}">${r.show.name}</a></h3>
+          <h3><a href="${showPageUrl(r.show.id, filter)}">${r.show.name}</a></h3>
           <p class="muted">${r.show.venue} &middot; ${formatCalendarDate(r.show.scheduled_game_day, params.gameDaysPerYear)} (game day ${String(r.show.scheduled_game_day)})</p>
           ${r.classes.map(
             (c) => html`<p>${c.cls.name}, judged by ${c.judge?.name ?? 'an unnamed judge'}: <strong>${c.winnerName ?? 'no entries'}</strong> won.</p>`
@@ -376,7 +448,23 @@ export function renderShowsIndexPage(params: {
 
   const body = html`
     <h1>Shows</h1>
-    ${showsFilterControls({ classType: params.classType, breedId: params.breedId, disciplines: params.disciplines, eligibleBreeds: params.eligibleBreeds })}
+    ${filterControls({
+      // The index's tabs are the fixed set - every enabled discipline gets a tab whether or not
+      // anything is scheduled in it, since this screen is also how a player finds out a discipline
+      // exists. No counts here: a tab spans every show on the page, not one show's class list.
+      tabs: [
+        { key: 'all', label: 'All' },
+        { key: 'conformation', label: 'Conformation' },
+        ...params.disciplines.map((d) => ({ key: d.code, label: d.name })),
+        // Slice 0025 stage 3: young_conformation and ability_test share one tab, since a horse only
+        // ever matches one age band at a time regardless of which of the two it entered.
+        { key: 'young', label: 'Young Horse' },
+      ],
+      filter,
+      eligibleBreeds: params.eligibleBreeds,
+      action: '/shows',
+      hrefFor: (classType) => showsIndexUrl({ classType, breedId: params.breedId }),
+    })}
     <h2>Open for entries</h2>
     ${openBlock}
     <h2>Recent results</h2>
@@ -395,6 +483,9 @@ export function renderShowsIndexPage(params: {
 
 export interface ShowPageEntryRow extends ClassEntryDisplayRow {
   name: string;
+  /** Entered by one of the looking account's own stables. Marks the rows a player is actually here
+   * to read, in a table that is mostly the show barn's horses (2026-08-06). */
+  isYours: boolean;
 }
 
 export interface ShowPageClassView {
@@ -410,25 +501,75 @@ export interface ShowPageClassView {
   ineligibleCount?: number;
 }
 
+/** One class as the player thinks of it, with every parallel copy of it filed underneath. Since the
+ * 2026-08-06 walkback (migration 0175) a request that finds its class full for that stable mints
+ * another one beside it, so a busy household's show holds two or three identical "Conformation-
+ * Quarter Horse, Open" classes - which, listed in mint order, interleave with every other class and
+ * are impossible to tell apart. Grouping them is what makes the page readable; the tabs above it do
+ * the rest. */
+export interface ShowPageClassGroup {
+  /** class_key plus rank - what "the same class" means everywhere else in the codebase. */
+  key: string;
+  label: string;
+  /** Every copy of this class in this show, oldest first (the order entries were minted into). */
+  sections: ShowPageClassView[];
+}
+
+const RANK_SORT: Record<ClassRank, number> = { novice: 0, open: 1, champion: 2, none: 3 };
+
+/**
+ * Groups a show's classes by (class_key, rank), and orders the groups the way the entry catalogue
+ * is built - conformation, disciplines, young-horse classes - then by name, then Novice before Open
+ * before Champion. Deliberately not mint order, which is the thing the operator asked to be rid of:
+ * mint order interleaves a second copy of one class with whatever else happened to be started
+ * between the two.
+ */
+export function buildShowPageClassGroups(classes: ShowPageClassView[]): ShowPageClassGroup[] {
+  const byKey = new Map<string, ShowPageClassGroup>();
+  for (const c of classes) {
+    const key = `${c.cls.class_key}|${c.cls.rank}`;
+    let group = byKey.get(key);
+    if (!group) {
+      group = { key, label: c.cls.name, sections: [] };
+      byKey.set(key, group);
+    }
+    group.sections.push(c);
+  }
+  const groups = [...byKey.values()];
+  for (const g of groups) g.sections.sort((a, b) => a.cls.id - b.cls.id);
+  groups.sort((a, b) => {
+    const x = a.sections[0].cls;
+    const y = b.sections[0].cls;
+    return CLASS_TYPE_SORT[x.class_type] - CLASS_TYPE_SORT[y.class_type] || x.name.localeCompare(y.name) || RANK_SORT[x.rank] - RANK_SORT[y.rank];
+  });
+  return groups;
+}
+
 export function renderShowPage(params: {
   world: WorldRow;
   isAdmin: boolean;
   actionsLeft: number | null;
   gameDaysPerYear: number;
   show: ShowRow;
+  /** Already filtered to the active tab by the route - the tab bar is built from the show's full
+   * class list, which is why both are passed rather than one derived from the other. */
   classes: ShowPageClassView[];
+  tabs: ShowPageTab[];
+  filter: ShowsFilterLike;
+  eligibleBreeds: { id: number; name: string }[];
   error?: string;
   notice?: string;
 }): SafeHtml {
   const s = params.show;
+  const filter = params.filter;
 
-  const classBlocks = params.classes.map((c) => {
+  const sectionCard = (c: ShowPageClassView, sectionNumber: number, sectionCount: number): SafeHtml => {
     const open = c.cls.status === 'scheduled';
     const entryRows = c.entries.map(
       (e) => html`
       <tr>
         <td>${open ? '-' : placingText(e.placing)}</td>
-        <td><a href="/world/horses/${String(e.horse_id)}">${e.name}</a></td>
+        <td><a href="/world/horses/${String(e.horse_id)}">${e.name}</a>${e.isYours ? html` <span class="badge badge-success">Yours</span>` : raw('')}</td>
         <td>${e.stable_is_npc ? html`${e.stable_name} <span class="muted">(the game's own barn)</span>` : html`${e.stable_name}${e.owner_display_name ? html` <span class="muted">(${e.owner_display_name})</span>` : raw('')}`}</td>
         <td>${e.final_score !== null ? e.final_score.toFixed(1) : raw('&mdash;')}</td>
         <td>${e.placing !== null ? html`<a href="/shows/${String(s.id)}/entries/${String(e.id)}">Why?</a>` : raw('')}</td>
@@ -438,7 +579,7 @@ export function renderShowPage(params: {
     const entryForm = open
       ? c.eligibleHorses && c.eligibleHorses.length
         ? html`
-          <form method="post" action="/shows/${String(s.id)}">
+          <form method="post" action="${showPageUrl(s.id, filter)}">
             <input type="hidden" name="action" value="enter">
             <input type="hidden" name="class_id" value="${String(c.cls.id)}">
             <label>Enter one of your horses
@@ -453,27 +594,69 @@ export function renderShowPage(params: {
         : html`<p class="muted">None of your horses are eligible for this class right now.</p>`
       : raw('');
 
+    // Only one section: the card is headed by the class itself, exactly as before grouping existed.
+    // Several: the group's heading carries the class name and rules, and each card is headed by
+    // which section it is.
+    const heading =
+      sectionCount === 1
+        ? html`
+          <h2>${c.cls.name}</h2>
+          <p class="muted">${classRulesSentence(c.cls, c.minAgeYears)}</p>`
+        : html`<h3>Section ${String(sectionNumber)} of ${String(sectionCount)}</h3>`;
+
+    const yoursCount = c.entries.filter((e) => e.isYours).length;
+    const yoursLine = yoursCount
+      ? html`<p class="muted">${String(yoursCount)} of your horses ${yoursCount === 1 ? 'is' : 'are'} in this ${sectionCount === 1 ? 'class' : 'section'}.</p>`
+      : raw('');
+
     return html`
       <div class="card">
-        <h2>${c.cls.name}</h2>
-        <p class="muted">${classRulesSentence(c.cls, c.minAgeYears)}</p>
+        ${heading}
+        ${yoursLine}
         <p>Judged by <strong>${c.judge?.name ?? 'an unnamed judge'}</strong>${c.judge ? html` - ${c.judge.blurb}` : raw('')}</p>
-        ${thinFieldNote(c.cls, c.entries.length)}
+        ${/* A split class has a thin section because it was split, not because the class went
+             unentered - the group's own "split into N sections" line above says so already, and
+             thinFieldNote's explanation ("a rank bracket that has not filled up yet") would be
+             flatly untrue here. */ sectionCount === 1 ? thinFieldNote(c.cls, c.entries.length) : raw('')}
         <table>
           <thead><tr><th>Place</th><th>Horse</th><th>Stable</th><th>Score</th><th></th></tr></thead>
           <tbody>${entryRows.length ? entryRows : html`<tr><td colspan="5" class="muted">No entries yet.</td></tr>`}</tbody>
         </table>
         ${entryForm}
       </div>`;
+  };
+
+  const groups = buildShowPageClassGroups(params.classes);
+  const classBlocks = groups.map((g) => {
+    const count = g.sections.length;
+    if (count === 1) return sectionCard(g.sections[0], 1, 1);
+    const first = g.sections[0];
+    return html`
+      <div class="card">
+        <h2>${g.label}</h2>
+        <p class="muted">${classRulesSentence(first.cls, first.minAgeYears)}</p>
+        <p class="muted">Split into ${String(count)} sections so every horse could get in - each one is judged on its own, with its own ribbons.</p>
+        ${g.sections.map((c, i) => sectionCard(c, i + 1, count))}
+      </div>`;
   });
+
+  const emptyLine = classBlocks.length ? raw('') : html`<p class="muted">This show has no classes of that kind. Try another tab above.</p>`;
 
   const body = html`
     <h1>${s.name}</h1>
     ${errorBox(params.error)}
     ${noticeBox(params.notice)}
     <p><strong>Venue:</strong> ${s.venue} &middot; <strong>${formatCalendarDate(s.scheduled_game_day, params.gameDaysPerYear)}</strong> <span class="muted">(game day ${String(s.scheduled_game_day)})</span> &middot; <strong>Status:</strong> ${s.status === 'entries_open' ? 'open for entries' : 'judged'}</p>
+    ${filterControls({
+      tabs: params.tabs,
+      filter,
+      eligibleBreeds: params.eligibleBreeds,
+      action: `/shows/${String(s.id)}`,
+      hrefFor: (classType) => showPageUrl(s.id, { classType, breedId: filter.breedId }),
+    })}
     ${classBlocks}
-    <p><a href="/shows">Back to shows</a></p>
+    ${emptyLine}
+    <p><a href="${showsIndexUrl(filter)}">Back to shows</a></p>
   `;
   return pageShell({
     title: s.name,

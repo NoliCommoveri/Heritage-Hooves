@@ -8,9 +8,11 @@ import {
   renderShowPage,
   renderEntryResultPage,
   eligibilityMessage,
+  buildShowPageTabs,
   type ShowPageClassView,
   type EntryResultTraitRow,
 } from '../render/shows';
+import { showPageUrl } from '../lib/showsFilter';
 import { displayNameFor } from '../render/horses';
 import {
   listOpenShows,
@@ -159,9 +161,9 @@ export async function showsIndexRoute(ctx: RequestContext): Promise<Response> {
  * individually explained here; a per-horse reason lives on that horse's own page instead. */
 async function loadAccountEligibility(
   ctx: RequestContext,
-  cls: ShowClassRow
+  cls: ShowClassRow,
+  stables: { id: number }[]
 ): Promise<{ eligible: { horseId: number; name: string }[]; ineligibleCount: number }> {
-  const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
   const eligible: { horseId: number; name: string }[] = [];
   let ineligibleCount = 0;
@@ -177,13 +179,41 @@ async function loadAccountEligibility(
   return { eligible, ineligibleCount };
 }
 
-async function buildClassViews(ctx: RequestContext, showId: number, breeds: BreedRow[], filter: ShowsFilterParams): Promise<ShowPageClassView[]> {
+/**
+ * Everything one show's page draws, in one pass: its own tab bar (built from every class the show
+ * holds, not just the ones on the active tab), the classes the active tab shows, and the breed
+ * picker's options. 2026-08-06: the whole show is loaded once and filtered in memory rather than
+ * queried per tab, because the tab bar has to count classes the current tab is hiding - and the
+ * expensive per-class work (each account's own eligibility, §8.1's entry form) still happens only
+ * for the classes actually being drawn.
+ */
+async function buildShowPageView(
+  ctx: RequestContext,
+  showId: number,
+  breeds: BreedRow[],
+  filter: ShowsFilterParams
+): Promise<{ classes: ShowPageClassView[]; tabs: ReturnType<typeof buildShowPageTabs>; eligibleBreeds: BreedRow[] }> {
   const gameDaysPerYear = ctx.config.values.game_days_per_year;
-  const visible = await loadVisibleClasses(ctx, showId, filter);
+  const allVisible = await loadVisibleClasses(ctx, showId, { classType: 'all', breedId: null });
+  const disciplines = await getEnabledDisciplines(ctx.env);
+  const tabs = buildShowPageTabs(
+    allVisible.map(({ cls }) => cls),
+    disciplines.map((d) => ({ code: d.code, name: d.name })),
+    filter.classType
+  );
 
-  return Promise.all(
-    visible.map(async ({ cls, judge, entries: entryRows }) => {
-      const entries = entryRows.map((e) => ({ ...e, name: nameForEntry(e) }));
+  // The breed picker offers the breeds this show actually holds a class for, not every breed with
+  // an ideal_vector - a picker whose options mostly return nothing is worse than no picker.
+  const breedIdsInShow = new Set(allVisible.map(({ cls }) => cls.breed_id).filter((id): id is number => id !== null));
+  const eligibleBreeds = breeds.filter((b) => breedIdsInShow.has(b.id));
+
+  const stables = await listStablesForAccount(ctx.env, ctx.account!.id);
+  const yourStableIds = new Set(stables.map((s) => s.id));
+
+  const matching = allVisible.filter(({ cls }) => classMatchesShowsFilter(cls, filter));
+  const classes = await Promise.all(
+    matching.map(async ({ cls, judge, entries: entryRows }) => {
+      const entries = entryRows.map((e) => ({ ...e, name: nameForEntry(e), isYours: yourStableIds.has(e.stable_id) }));
       const view: ShowPageClassView = {
         cls,
         judge,
@@ -192,13 +222,15 @@ async function buildClassViews(ctx: RequestContext, showId: number, breeds: Bree
         entries,
       };
       if (cls.status === 'scheduled') {
-        const { eligible, ineligibleCount } = await loadAccountEligibility(ctx, cls);
+        const { eligible, ineligibleCount } = await loadAccountEligibility(ctx, cls, stables);
         view.eligibleHorses = eligible;
         view.ineligibleCount = ineligibleCount;
       }
       return view;
     })
   );
+
+  return { classes, tabs, eligibleBreeds };
 }
 
 export async function showRoute(ctx: RequestContext, method: string, showId: number): Promise<Response> {
@@ -212,11 +244,28 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
   // bare /shows/:id, which defaults to 'all') never disagrees with what the list just showed.
   const filter = await resolveShowsFilter(ctx);
 
-  if (method === 'GET') {
-    const notice = new URL(ctx.request.url).searchParams.get('entered') ? 'Entered.' : undefined;
+  /** Every render of this page, success and refusal alike, so the tab bar and the filter are never
+   * assembled two different ways. */
+  const renderPage = async (extra: { error?: string; notice?: string }): Promise<Response> => {
+    const view = await buildShowPageView(ctx, show.id, breeds, filter);
     return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds, filter), notice })
+      renderShowPage({
+        world: ctx.world,
+        isAdmin,
+        actionsLeft,
+        gameDaysPerYear,
+        show,
+        classes: view.classes,
+        tabs: view.tabs,
+        filter,
+        eligibleBreeds: view.eligibleBreeds,
+        ...extra,
+      })
     );
+  };
+
+  if (method === 'GET') {
+    return renderPage({ notice: new URL(ctx.request.url).searchParams.get('entered') ? 'Entered.' : undefined });
   }
   if (method !== 'POST') return notFound();
 
@@ -229,33 +278,13 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
   const ownerStable = horse ? await getStableById(ctx.env, horse.owner_stable_id) : null;
 
   if (!horse || !ownerStable || ownerStable.account_id !== ctx.account!.id) {
-    return htmlResponse(
-      renderShowPage({
-        world: ctx.world,
-        isAdmin,
-        actionsLeft,
-        gameDaysPerYear,
-        show,
-        classes: await buildClassViews(ctx, show.id, breeds, filter),
-        error: 'Choose one of your own horses.',
-      })
-    );
+    return renderPage({ error: 'Choose one of your own horses.' });
   }
 
   // Slice 0009 Part B §5.3: check, act, then spend - see the comment on the same pattern in
   // routes/horses.ts's stableBreedRoute.
   if (actionsLeft !== null && actionsLeft < ACTION_COSTS.enter_show) {
-    return htmlResponse(
-      renderShowPage({
-        world: ctx.world,
-        isAdmin,
-        actionsLeft,
-        gameDaysPerYear,
-        show,
-        classes: await buildClassViews(ctx, show.id, breeds, filter),
-        error: turnsRefusalMessage(ctx),
-      })
-    );
+    return renderPage({ error: turnsRefusalMessage(ctx) });
   }
 
   const result = await enterHorseInClass(ctx.env, {
@@ -271,13 +300,13 @@ export async function showRoute(ctx: RequestContext, method: string, showId: num
     const cls = await getShowClass(ctx.env, classId);
     const minAgeYears = cls ? Math.round(cls.min_age_game_days / ctx.config.values.game_days_per_year) : 0;
     const message = `${displayNameFor(horse)} ${eligibilityMessage(result.reason, { breedName: breedNameFor(breeds, cls?.breed_id ?? null), minAgeYears })}`;
-    return htmlResponse(
-      renderShowPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, show, classes: await buildClassViews(ctx, show.id, breeds, filter), error: message })
-    );
+    return renderPage({ error: message });
   }
 
   await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.enter_show);
-  return redirect(`/shows/${String(showId)}?entered=1`);
+  // Slice 0026 §2.2's rule, applied to this page's own tabs: a POST lands back on the tab it was
+  // made from, or the "Entered." notice hides behind a tab the player is not looking at.
+  return redirect(showPageUrl(showId, filter, { entered: '1' }));
 }
 
 export async function showEntryResultRoute(ctx: RequestContext, showId: number, entryId: number): Promise<Response> {
