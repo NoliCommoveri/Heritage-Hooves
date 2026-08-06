@@ -403,6 +403,82 @@ function scenario6() {
   console.log('  affects the consignment dealer\'s mid band and the show barn\'s rank plan alike.');
 }
 
+// ---------------------------------------------------------------------------
+// SCENARIO 7 — the quality band against what it was meant to mean
+// ---------------------------------------------------------------------------
+// Operator, 2026-08-06: "mid was supposed to mean that a horse was on target for a conformation
+// trait 50% of the time."
+//
+// That is not what the band does. `polygenicOneChance` (generate.ts) is the flat chance that any
+// single allele is a '1', applied identically to every trait, and it never reads the breed's ideal
+// vector. "On target" here uses the game's own definition of the phrase — slice 0019's specialist
+// rule, potential within +/-1 allele of round(target / 5).
+//
+// Computed exactly from the binomial PMF, not simulated.
+
+function binomPmf(k, n, p) {
+  let logC = 0;
+  for (let i = 1; i <= k; i++) logC += Math.log((n - k + i) / i);
+  return Math.exp(logC + k * Math.log(p) + (n - k) * Math.log(1 - p));
+}
+
+/** P(potential within +/-1 allele of the target) for one trait at one band. */
+function onTargetChance(target, p) {
+  const centre = Math.round(target / 5);
+  let total = 0;
+  for (let k = Math.max(0, centre - 1); k <= Math.min(LOCI_PER_TRAIT * 2, centre + 1); k++) {
+    total += binomPmf(k, LOCI_PER_TRAIT * 2, p);
+  }
+  return total;
+}
+
+function scenario7() {
+  console.log('\n=== 7. The quality band vs. what it was meant to mean ===');
+  console.log('Intended: the band IS the chance a conformation trait lands on target.');
+  console.log('Actual: the band is a flat per-allele chance, blind to the breed.\n');
+  console.log('  Chance a conformation trait lands within +/-1 allele of its target:\n');
+  console.log('  Breed    low band   mid band   high band     intended at mid');
+
+  for (const [code, vec] of Object.entries(ALL_BREEDS)) {
+    const cells = [];
+    for (const p of [BAND.low, BAND.mid, BAND.high]) {
+      let sum = 0;
+      for (const [, [target]] of Object.entries(vec)) sum += onTargetChance(target, p);
+      cells.push(pct(sum / 5, 1).padStart(9));
+    }
+    console.log(`  ${code.padEnd(7)}${cells.join('  ')}        50.0%`);
+  }
+
+  console.log('\n  Every cell should read close to its band. None of them do, and the mid');
+  console.log('  column is nowhere near 50%. A breed whose targets sit far from 50 (Arabian\'s');
+  console.log('  dished head at 8, Friesian\'s neck at 82) is worst served, because no single');
+  console.log('  flat allele frequency can centre on two targets at once.\n');
+
+  // What the intended semantics would do to the population's scores.
+  console.log('  What the intended reading would do to Quarter Horse scores:\n');
+  console.log('  Band      traits on target   mean raw score   (today)');
+  const runs = 100000;
+  for (const [name, p] of Object.entries(BAND)) {
+    rand = mulberry32(7000 + name.length);
+    let intendedSum = 0, actualSum = 0, kSum = 0;
+    for (let i = 0; i < runs; i++) {
+      let k = 0;
+      for (let t = 0; t < 5; t++) if (rand() < p) k++;
+      kSum += k;
+      intendedSum += rawScore(drawBredHorse(BAND.mid, k), JUDGES[0]);
+      actualSum += rawScore(drawHorse(p), JUDGES[0]);
+    }
+    console.log(
+      `  ${name.padEnd(9)} ${(kSum / runs).toFixed(2)} of 5`.padEnd(30) +
+      `${(intendedSum / runs).toFixed(1)}`.padStart(9) +
+      `        ${(actualSum / runs).toFixed(1)}`
+    );
+  }
+  console.log('\n  Fixing this raises EVERY new horse, players and NPC stables alike — it is a');
+  console.log('  change to the population, not to one screen. Read it against the NPC ceiling');
+  console.log('  before acting on it.');
+}
+
 console.log('Training effect on show scores — docs/slices/0027-training.md §11');
 console.log('Quarter Horse conformation, five traits, three judges, 200,000 classes per row.');
 scenario1();
@@ -411,4 +487,5 @@ scenario3();
 scenario4();
 scenario5();
 scenario6();
+scenario7();
 console.log('');
