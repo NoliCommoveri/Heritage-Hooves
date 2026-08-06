@@ -118,6 +118,42 @@ not an improvement.
 guarantee doing exactly its job, and it is the reason `low` at 2.9 traits right is still a decent
 horse rather than a bad one.
 
+### 3.2 This does NOT mean the children's horses are bad — read this before repeating §2 to anyone
+
+The operator drew exactly the wrong conclusion from §2, and reasonably: *"I have multiple horses with
+several Outstanding traits. I'm confused how that is if you're saying we got worse horses than we
+should have."* The horses are fine. The numbers in §2 and §3 describe **what the band contributes**,
+not what a player's barn looks like.
+
+**"Outstanding" on the Conformation card and "on target" in this document are the same bar.**
+Outstanding is `traitScore >= 90` (migration 0135) against a falloff of 2.0 — that is *within 5 of the
+breed target*. One allele is worth 5. The only difference is the step at which they are read: this
+document measures the genotype, the card measures the expressed value after birth noise. Same test,
+one step apart.
+
+**Measured on the operator's own sixteen Paso Finos**, they read **2.58 of 5 on target by genotype**
+and **1.89 Outstanding on screen** (birth noise scatters a few off — a narrow window is easier to fall
+out of than into). One mare, PW Sweet Escape, shows 4 of 5 Outstanding.
+
+**2.58 of 5 is 52% — essentially exactly the 50% the band was supposed to deliver.** Three things get
+a player horse there, and the band is the smallest of them:
+
+| Source | Traits on target |
+|---|---|
+| Slice 0019's guaranteed conformation specialist | 1.00 |
+| The quality band | ~1.1 |
+| The player's own choosing (keep 2 of 4 mares, 1 of 2 stallions) | ~0.5 |
+| **Total** | **~2.6** |
+
+The band contributes about 1.1 and would contribute roughly that much at *any* setting — that is the
+whole defect, stated as a number. **Two accidents are carrying the intent**: a gift slice 0019 gave
+every founding horse, and the fact that a player gets to pick.
+
+**So the damage is in the NPC field, not the player barn.** An NPC horse gets the specialist and no
+choice: 2.15 of 5. And the show barn's champions get nothing at all from being minted at `high` —
+for the Quarter Horse it hurts them. That is the part a child actually feels, because moving up to
+Champion does not put them against better horses.
+
 Three consequences worth naming separately:
 
 - **No cell is near its band**, and the worst-served breeds are the ones with the most distinctive
@@ -278,6 +314,20 @@ chase, which is years of it. At `mid` they would start at 3.6 and have **1.4** l
 stock at `low` keeps 2.1 of that journey intact while still handing them a better horse than they get
 now. That is the whole reason for the band change in §7, and it is the number to revisit first if
 breeding starts to feel pointless.
+
+**The same numbers as a player actually experiences them** — that is, after the specialist and after
+choosing 2 of 4 (§3.2), which is the version to quote to the operator:
+
+| | A player's own horses |
+|---|---|
+| Today | ~2.6 of 5 |
+| Fixed, minting at `low` | ~3.3 of 5 |
+| Fixed, minting at `mid` | ~4.1 of 5 |
+| Ceiling | 5 of 5 |
+
+`mid` would put a brand-new founding horse within one trait of perfect on the day it arrives. **`low`
+is a real step up from today without eating the journey**, and this is the clearest single argument
+for it.
 
 Two smaller effects, both measured and both accepted:
 
