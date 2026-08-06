@@ -450,6 +450,8 @@ Polygenic predispositions get a row at birth with `state = at_risk` and a herita
 
 Decay is a later config flag reading `last_trained_game_day`, which already exists. No schema change needed to add it.
 
+**Specified 2026-08-06 in `docs/slices/0027-training.md`, not yet built.** That document widens the key from `discipline_code` to `programme_code` — either a `disciplines.code` or the reserved string `'conformation'` — because the operator's decision that training counts in conformation classes as well as discipline ones cannot be expressed by a discipline-only key. Its §2.1 states the departure and the reasoning. Everything else here stands: one row per horse per code, upserted, no permanent commitment, and no decay in the first pass, with `last_trained_game_day` stored anyway against the flag that does not exist yet. The slice adds a second table alongside it, `training_programmes`, for the in-progress enrolment — the level is permanent and the programme is not, and §12.1's snapshot rule applies to the programme's length, which is why they are not one row.
+
 ---
 
 ## 5. Breeding
