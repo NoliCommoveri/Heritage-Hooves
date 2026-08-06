@@ -338,7 +338,7 @@ describeWithSqlite('requestClassEntry (slice 0025 stage 4 §7.5a), against a rea
     expect(entries.map((e) => e.horse_id).sort()).toEqual([100, 101]);
   });
 
-  it("once a stable's per-class cap is reached, a further request refuses rather than minting a parallel class", async () => {
+  it("once a stable's per-class cap is reached, a further request mints a parallel class rather than refusing", async () => {
     const db = freshDb();
     const env = makeEnv(db);
     const config = await readConfig(env);
@@ -351,15 +351,42 @@ describeWithSqlite('requestClassEntry (slice 0025 stage 4 §7.5a), against a rea
       expect(result).toEqual({ ok: true });
     }
 
+    // 2026-08-06 walkback (migration 0175) of the slice 0025 stage 4 refusal: with the household
+    // entering four-plus horses at a time, a full class now mints a second, parallel one of the same
+    // (class_key, rank) instead of refusing the fourth horse outright.
     const fourth = await requestClassEntry(env, { classKey, horseId: 103, gameDay: 0, gameDaysPerYear: config.values.game_days_per_year, conformationConfig: config.values, config });
-    expect(fourth).toEqual({ ok: false, reason: 'entry_cap_reached' });
+    expect(fourth).toEqual({ ok: true });
 
-    // Deliberate departure from a literal reading of the slice document, recorded in the build log:
-    // a stable at its own cap is refused rather than getting a second concurrently-open class of the
-    // same catalogue row, which would reintroduce exactly the fragmentation "join before minting"
-    // exists to avoid.
-    const liveClasses = db.prepare(`SELECT id FROM show_classes WHERE class_key = '${classKey}' AND status = 'scheduled'`).all() as { id: number }[];
-    expect(liveClasses).toHaveLength(1);
+    const liveClasses = db.prepare(`SELECT id FROM show_classes WHERE class_key = '${classKey}' AND status = 'scheduled' ORDER BY id ASC`).all() as { id: number }[];
+    expect(liveClasses).toHaveLength(2);
+
+    const entriesInFirst = db.prepare(`SELECT horse_id FROM show_entries WHERE class_id = ${String(liveClasses[0].id)}`).all() as { horse_id: number }[];
+    expect(entriesInFirst.map((e) => e.horse_id).sort()).toEqual([100, 101, 102]);
+    const entriesInSecond = db.prepare(`SELECT horse_id FROM show_entries WHERE class_id = ${String(liveClasses[1].id)}`).all() as { horse_id: number }[];
+    expect(entriesInSecond.map((e) => e.horse_id)).toEqual([103]);
+  });
+
+  it('a fifth horse joins the second (still-open) parallel class rather than minting a third', async () => {
+    const db = freshDb();
+    const env = makeEnv(db);
+    const config = await readConfig(env);
+    seedPlayer(db);
+    for (const id of [100, 101, 102, 103, 104]) seedAdultHorse(db, id);
+
+    for (const id of [100, 101, 102, 103]) {
+      const result = await requestClassEntry(env, { classKey, horseId: id, gameDay: 0, gameDaysPerYear: config.values.game_days_per_year, conformationConfig: config.values, config });
+      expect(result).toEqual({ ok: true });
+    }
+    // Four horses in: three fill the first class, the fourth mints and lands in a second.
+    const fifth = await requestClassEntry(env, { classKey, horseId: 104, gameDay: 0, gameDaysPerYear: config.values.game_days_per_year, conformationConfig: config.values, config });
+    expect(fifth).toEqual({ ok: true });
+
+    // Still only two live classes - the fifth horse joined the second (oldest with room), not a
+    // freshly minted third.
+    const liveClasses = db.prepare(`SELECT id FROM show_classes WHERE class_key = '${classKey}' AND status = 'scheduled' ORDER BY id ASC`).all() as { id: number }[];
+    expect(liveClasses).toHaveLength(2);
+    const entriesInSecond = db.prepare(`SELECT horse_id FROM show_entries WHERE class_id = ${String(liveClasses[1].id)}`).all() as { horse_id: number }[];
+    expect(entriesInSecond.map((e) => e.horse_id).sort()).toEqual([103, 104]);
   });
 
   it('an Open-ranked horse and a Novice-ranked horse land in two different classes for the same catalogue row', async () => {

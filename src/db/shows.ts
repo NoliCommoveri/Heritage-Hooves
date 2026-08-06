@@ -1245,7 +1245,10 @@ export async function buildShowCatalogue(env: Env, config: Config): Promise<Cata
 export interface CatalogueRowStatus {
   spec: CatalogueClassSpec;
   /** Non-null when a live class matching this catalogue entry and the horse's own current rank is
-   * already open - the "join" case. Null means entering would mint a new class - the "start" case. */
+   * already open with room for this stable - the "join" case, always the oldest such class (2026-08-06
+   * walkback: several parallel classes can share a (class_key, rank), and the earliest one with room
+   * is always tried first). Null means every matching live class is already full for this stable, or
+   * none exists yet - entering would mint a new parallel class, the "start" case. */
   liveClassId: number | null;
   entryCount: number;
   /** Days from now until judging - either the live class's real deadline, or the window a freshly
@@ -1290,14 +1293,24 @@ export async function buildCatalogueStatusForHorse(
   const openEntryClassIds = new Set(openEntries.map((e) => e.classId));
 
   // Every currently-open class in the game, in one query - matched against the catalogue in memory
-  // below rather than one WHERE lookup per row.
+  // below rather than one WHERE lookup per row. Ordered oldest-first (ascending id, which is
+  // insertion order) so several parallel classes sharing a (class_key, rank) - the operator's
+  // 2026-08-06 walkback of the entry_cap_reached refusal, migration 0175 - group with the earliest
+  // one first, exactly the order a joining request should try them in.
   const liveRows = await env.DB.prepare(
     `SELECT sc.id, sc.class_key, sc.rank, sc.max_entries_per_stable, s.scheduled_game_day,
             (SELECT COUNT(*) FROM show_entries se WHERE se.class_id = sc.id) AS entry_count
      FROM show_classes sc JOIN shows s ON s.id = sc.show_id
-     WHERE sc.status = 'scheduled'`
+     WHERE sc.status = 'scheduled'
+     ORDER BY sc.id ASC`
   ).all<{ id: number; class_key: string; rank: ClassRank; max_entries_per_stable: number; scheduled_game_day: number; entry_count: number }>();
-  const liveByKey = new Map((liveRows.results ?? []).map((r) => [`${r.class_key}:${r.rank}`, r]));
+  const liveByKey = new Map<string, typeof liveRows.results>();
+  for (const row of liveRows.results ?? []) {
+    const key = `${row.class_key}:${row.rank}`;
+    const bucket = liveByKey.get(key);
+    if (bucket) bucket.push(row);
+    else liveByKey.set(key, [row]);
+  }
 
   const liveClassIds = (liveRows.results ?? []).map((r) => r.id);
   const stableCountByClassId = new Map<number, number>();
@@ -1314,10 +1327,15 @@ export async function buildCatalogueStatusForHorse(
   return catalogue.map((spec) => {
     const targetRank: ShowRank = spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? (ranks.get(spec.classKey) ?? 'novice') : 'novice';
     const liveRankKey = spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? targetRank : 'none';
-    const live = liveByKey.get(`${spec.classKey}:${liveRankKey}`) ?? null;
+    const candidates = liveByKey.get(`${spec.classKey}:${liveRankKey}`) ?? [];
+
+    // Oldest-first: the first candidate this stable still has room in. None with room (or none at
+    // all) means a request would mint a new parallel class rather than being refused - the
+    // entry_cap_reached walkback.
+    const live = candidates.find((c) => (stableCountByClassId.get(c.id) ?? 0) < c.max_entries_per_stable) ?? null;
 
     const stableCount = live ? (stableCountByClassId.get(live.id) ?? 0) : 0;
-    const alreadyEntered = live ? openEntryClassIds.has(live.id) : false;
+    const alreadyEntered = candidates.some((c) => openEntryClassIds.has(c.id));
     const maxEntriesPerStable = live ? live.max_entries_per_stable : config.values.show_max_entries_per_stable;
 
     const result = checkEligibility(
@@ -1396,10 +1414,10 @@ async function getOrCreateShowForDay(env: Env, scheduledGameDay: number, gameDay
 }
 
 /** Mints exactly one new class for this catalogue spec and rank, in its own (found-or-created)
- * show. Returns null on a unique-index collision (idx_show_classes_open_key, migration 0165) -
- * another request minted the identical (class_key, rank) between requestClassEntry's own lookup and
- * this insert - the caller re-reads and joins what won the race rather than erroring. */
-async function mintClassForSpec(env: Env, spec: CatalogueClassSpec, rank: ClassRank, gameDay: number, config: Config): Promise<number | null> {
+ * show. Migration 0175 dropped the (class_key, rank) uniqueness this used to race against - several
+ * scheduled classes can now share a (class_key, rank), so a concurrent mint of the identical
+ * (class_key, rank) is just another parallel class, not a collision to recover from. */
+async function mintClassForSpec(env: Env, spec: CatalogueClassSpec, rank: ClassRank, gameDay: number, config: Config): Promise<number> {
   const scheduledGameDay = gameDay + config.values.show_entry_window_game_days;
   const show = await getOrCreateShowForDay(env, scheduledGameDay, gameDay);
 
@@ -1412,55 +1430,53 @@ async function mintClassForSpec(env: Env, spec: CatalogueClassSpec, rank: ClassR
   const judge = judgePool[makeRng(deriveSeed(seed, 'judge')).int(judgePool.length)];
   const prizeSchedule = JSON.stringify(config.values.show_prize_schedule);
 
-  try {
-    const result = await env.DB
-      .prepare(
-        `INSERT INTO show_classes (
-           show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, class_key, rank,
-           min_age_game_days, max_age_game_days, sex_restriction, crosses_eligible, requires_gait, target_field_size,
-           max_entries_per_stable, judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?, ?)`
-      )
-      .bind(
-        show.id,
-        spec.name,
-        spec.classType,
-        spec.breedId,
-        spec.disciplineCode,
-        spec.abilityTraitCode,
-        spec.ageBand,
-        spec.classKey,
-        rank,
-        spec.minAgeGameDays,
-        spec.maxAgeGameDays,
-        spec.crossesEligible,
-        spec.requiresGait,
-        config.values.show_target_field_size,
-        config.values.show_max_entries_per_stable,
-        judge.id,
-        spec.idealVector,
-        spec.abilityWeights,
-        config.values.show_ideal_falloff,
-        spec.noiseSd,
-        deriveSeed(seed, 'class'),
-        prizeSchedule
-      )
-      .run();
-    return result.meta.last_row_id;
-  } catch (err) {
-    if (isUniqueConstraintError(err)) return null;
-    throw err;
-  }
+  const result = await env.DB
+    .prepare(
+      `INSERT INTO show_classes (
+         show_id, name, class_type, breed_id, discipline_code, ability_trait_code, age_band, class_key, rank,
+         min_age_game_days, max_age_game_days, sex_restriction, crosses_eligible, requires_gait, target_field_size,
+         max_entries_per_stable, judge_id, ideal_vector, ability_weights, ideal_falloff, noise_sd, status, judged_game_day, rng_seed, prize_schedule
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', NULL, ?, ?)`
+    )
+    .bind(
+      show.id,
+      spec.name,
+      spec.classType,
+      spec.breedId,
+      spec.disciplineCode,
+      spec.abilityTraitCode,
+      spec.ageBand,
+      spec.classKey,
+      rank,
+      spec.minAgeGameDays,
+      spec.maxAgeGameDays,
+      spec.crossesEligible,
+      spec.requiresGait,
+      config.values.show_target_field_size,
+      config.values.show_max_entries_per_stable,
+      judge.id,
+      spec.idealVector,
+      spec.abilityWeights,
+      config.values.show_ideal_falloff,
+      spec.noiseSd,
+      deriveSeed(seed, 'class'),
+      prizeSchedule
+    )
+    .run();
+  return result.meta.last_row_id;
 }
 
 /**
- * The horse page's "Enter in Show Jumping" button (§7.5a). Joins the live class matching this
- * catalogue entry and the horse's own current rank if one is open and this stable has room in it;
- * mints exactly one new class otherwise. `classKey` is a CatalogueClassSpec.classKey (also the value
- * the picker's hidden form field carries) - identical to what buildCatalogueStatusForHorse already
- * returned this same horse for this same row, so a stale page can never target the wrong catalogue
- * entry, only a now-stale eligibility answer (re-checked here exactly as enterHorseInClass always
- * has, "never trust the submitted value").
+ * The horse page's "Enter in Show Jumping" button (§7.5a). Joins the oldest live class matching this
+ * catalogue entry and the horse's own current rank that still has room for this stable; mints a new
+ * parallel class otherwise - several scheduled classes can share a (class_key, rank) since the
+ * 2026-08-06 walkback (migration 0175) of the original slice 0025 stage 4 decision to refuse instead,
+ * which the operator asked back out once real play meant entering four-plus horses at a time.
+ * `classKey` is a CatalogueClassSpec.classKey (also the value the picker's hidden form field carries)
+ * - identical to what buildCatalogueStatusForHorse already returned this same horse for this same
+ * row, so a stale page can never target the wrong catalogue entry, only a now-stale eligibility
+ * answer (re-checked here exactly as enterHorseInClass always has, "never trust the submitted
+ * value").
  */
 export async function requestClassEntry(
   env: Env,
@@ -1486,28 +1502,29 @@ export async function requestClassEntry(
   const targetRank: ClassRank =
     spec.classType === 'breed_conformation' || spec.classType === 'discipline' ? await horseRankForClass(env, horse.id, spec.classKey) : 'none';
 
-  // At most two passes: the first either joins the live class the check above already found, or
-  // mints one (it found none because there wasn't one). If the mint loses a race (mintClassForSpec
-  // returns null - another request minted the identical class_key+rank first), the second pass
-  // re-reads and joins whatever the winner created.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const live = await env.DB
-      .prepare(`SELECT id FROM show_classes WHERE class_key = ? AND rank = ? AND status = 'scheduled'`)
-      .bind(spec.classKey, targetRank)
-      .first<{ id: number }>();
-    const classId = live ? live.id : await mintClassForSpec(env, spec, targetRank, params.gameDay, params.config);
-    if (classId === null) continue;
+  // Oldest joinable class first (ascending id, i.e. insertion order): a live 'scheduled' class of
+  // this exact (class_key, rank) whose entry count for THIS stable is still under its own
+  // max_entries_per_stable. No match - every live one is full for this stable, or none exists yet -
+  // mints a new parallel class rather than refusing.
+  const live = await env.DB
+    .prepare(
+      `SELECT sc.id FROM show_classes sc
+       WHERE sc.class_key = ? AND sc.rank = ? AND sc.status = 'scheduled'
+         AND (SELECT COUNT(*) FROM show_entries se WHERE se.class_id = sc.id AND se.entered_by_stable_id = ?) < sc.max_entries_per_stable
+       ORDER BY sc.id ASC LIMIT 1`
+    )
+    .bind(spec.classKey, targetRank, horse.owner_stable_id)
+    .first<{ id: number }>();
+  const classId = live ? live.id : await mintClassForSpec(env, spec, targetRank, params.gameDay, params.config);
 
-    return enterHorseInClass(env, {
-      classId,
-      horseId: horse.id,
-      gameDay: params.gameDay,
-      gameDaysPerYear: params.gameDaysPerYear,
-      conformationConfig: params.conformationConfig,
-      config: params.config,
-    });
-  }
-  return { ok: false, reason: 'class_closed' };
+  return enterHorseInClass(env, {
+    classId,
+    horseId: horse.id,
+    gameDay: params.gameDay,
+    gameDaysPerYear: params.gameDaysPerYear,
+    conformationConfig: params.conformationConfig,
+    config: params.config,
+  });
 }
 
 // ---------------------------------------------------------------------------
