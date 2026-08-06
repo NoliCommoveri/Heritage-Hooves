@@ -479,6 +479,111 @@ function scenario7() {
   console.log('  before acting on it.');
 }
 
+// ---------------------------------------------------------------------------
+// SCENARIO 8 — the proposed fix, measured
+// ---------------------------------------------------------------------------
+// Operator, 2026-08-06: keep slice 0019's guaranteed conformation specialist, and set the bands to
+// 25 / 50 / 75 read as "the chance a conformation trait lands on target".
+//
+// So a horse is built: each of the five conformation traits independently lands on target with
+// probability = the band, and is otherwise drawn flat (an unselected trait, chance 0.50 per allele
+// — NOT the band, which no longer means an allele frequency for conformation). Then slice 0019's
+// specialist overwrites one conformation trait onto target regardless, which is what makes the
+// guarantee a guarantee.
+//
+// Expected traits on target is therefore 1 + 4 x band, not 5 x band.
+
+const PROPOSED_BANDS = { low: 0.25, mid: 0.50, high: 0.75 };
+const UNSELECTED = 0.50;   // the flat draw for a trait that did not land on target
+
+function drawProposedHorse(onTargetChance, keepSpecialist = true) {
+  const expressed = {};
+  const onTarget = {};
+  for (const t of TRAITS) onTarget[t] = rand() < onTargetChance;
+  if (keepSpecialist) {
+    // Slice 0019: one conformation trait, chosen at random, is on target no matter what.
+    onTarget[TRAITS[Math.floor(rand() * TRAITS.length)]] = true;
+  }
+  let count = 0;
+  for (const t of TRAITS) {
+    let pot;
+    if (onTarget[t]) {
+      count++;
+      const centre = Math.round(IDEAL[t].target / 5);
+      pot = Math.max(0, Math.min(20, centre + (rand() < 0.5 ? -1 : 1) * (rand() < 0.5 ? 0 : 1)));
+    } else {
+      pot = drawPotential(UNSELECTED);
+    }
+    expressed[t] = Math.round(ANCHOR + (geneticValue(pot) - ANCHOR) * 1.0);
+  }
+  return { expressed, count };
+}
+
+function scenario8(runs = 200000) {
+  console.log('\n=== 8. The proposed fix, measured ===');
+  console.log('Bands read as "chance a conformation trait is on target": 25 / 50 / 75.');
+  console.log('Slice 0019\'s guaranteed conformation specialist is KEPT.\n');
+  console.log('  Band     on target   mean raw   SD     today');
+
+  const out = {};
+  for (const [name, p] of Object.entries(PROPOSED_BANDS)) {
+    rand = mulberry32(8000 + name.length);
+    let sum = 0, sumSq = 0, kSum = 0;
+    for (let i = 0; i < runs; i++) {
+      const h = drawProposedHorse(p);
+      const r = rawScore(h.expressed, JUDGES[0]);
+      sum += r; sumSq += r * r; kSum += h.count;
+    }
+    const mean = sum / runs;
+    out[name] = { mean, sd: Math.sqrt(sumSq / runs - mean * mean), k: kSum / runs };
+
+    rand = mulberry32(8500 + name.length);
+    let todaySum = 0;
+    for (let i = 0; i < runs; i++) todaySum += rawScore(drawBredHorse(BAND[name], 1), JUDGES[0]);
+    console.log(
+      `  ${name.padEnd(8)} ${out[name].k.toFixed(2)} of 5    ${mean.toFixed(1)}     ` +
+      `${out[name].sd.toFixed(1)}    ${(todaySum / runs).toFixed(1)}`
+    );
+  }
+
+  console.log('\n  Bands are now monotonic, evenly spaced, and mean the same thing for every breed.');
+
+  // The thing to check: does the ceiling leave breeding anywhere to go?
+  rand = mulberry32(8900);
+  let perfect = 0;
+  for (let i = 0; i < runs; i++) perfect += rawScore(drawBredHorse(BAND.mid, 5), JUDGES[0]);
+  const ceiling = perfect / runs;
+  console.log(`\n  Headroom check — a perfectly bred horse (5 of 5 on target) scores ${ceiling.toFixed(1)}.`);
+  console.log(`    Today a mid-band founding horse starts at 73.4, leaving ${(ceiling - 73.4).toFixed(1)} points to breed for.`);
+  console.log(`    Proposed, it starts at ${out.mid.mean.toFixed(1)}, leaving ${(ceiling - out.mid.mean).toFixed(1)} points.`);
+  console.log(`    Show noise SD is ${SHOW_NOISE_SD.toFixed(1)}. Breeding progress worth less than that is invisible.`);
+
+  // And what that does to a class between a founding horse and a well-bred one.
+  console.log('\n  Can a founding-grade horse still be beaten by a better-bred one?\n');
+  console.log('  Band     founder beats a 5-of-5 horse      (today)');
+  for (const [name, p] of Object.entries(PROPOSED_BANDS)) {
+    let wins = 0;
+    rand = mulberry32(8100 + name.length);
+    for (let i = 0; i < runs; i++) {
+      const judge = JUDGES[Math.floor(rand() * JUDGES.length)];
+      const mine = finalScore(rawScore(drawProposedHorse(p).expressed, judge), 1.0);
+      const theirs = finalScore(rawScore(drawBredHorse(BAND.mid, 5), judge), 1.0);
+      if (mine > theirs) wins++;
+    }
+    let todayWins = 0;
+    rand = mulberry32(8700 + name.length);
+    for (let i = 0; i < runs; i++) {
+      const judge = JUDGES[Math.floor(rand() * JUDGES.length)];
+      const mine = finalScore(rawScore(drawBredHorse(BAND[name], 1), judge), 1.0);
+      const theirs = finalScore(rawScore(drawBredHorse(BAND.mid, 5), judge), 1.0);
+      if (mine > todayWins && mine > theirs) todayWins++;
+      else if (mine > theirs) todayWins++;
+    }
+    console.log(`  ${name.padEnd(8)} ${pct(wins, runs).padStart(10)}                  ${pct(todayWins, runs).padStart(6)}`);
+  }
+  console.log('\n  A number climbing towards 50% means breeding has stopped mattering.');
+}
+
 console.log('Training effect on show scores — docs/slices/0027-training.md §11');
 console.log('Quarter Horse conformation, five traits, three judges, 200,000 classes per row.');
 scenario1();
@@ -488,4 +593,5 @@ scenario4();
 scenario5();
 scenario6();
 scenario7();
+scenario8();
 console.log('');
