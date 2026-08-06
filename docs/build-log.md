@@ -6,6 +6,14 @@ This file used to be CLAUDE.md §11. It moved out because it had grown too large
 
 ---
 
+**2026-08-06 — Slice 0021 Part G, the world reset, was run.** Reported by the operator in conversation. No code changed; this records a state change a future session cannot see from the repository.
+
+- **Slice 0021 is now complete.** Parts A-F shipped 2026-08-04; Part G was always the operator's own step — a full `world`-scope reset from `/admin`, per that slice's §8 — because until it ran, no existing horse had a `head_profile` genotype or any of the ten new colour/pattern loci. Every horse in the game now carries all thirteen colour/pattern loci and the fifth conformation trait, and the children have new founding stock.
+- **The reset is spent, and that changes the plan for `docs/fixes/quality-band-on-target.md`.** That document had proposed landing alongside this reset so one reset covered both; it must now be planned as a change landing into a live population. Its §9 is rewritten accordingly and recommends landing the fix and then granting every child a fresh founding batch — no second reset, nothing lost, and no new code, since the batch-grant mechanism already exists. **Grant those batches after the migration, not before**: `import_offers.polygenic_one_chance` is a snapshot column, so a batch granted early generates under the old rules.
+- **Worth keeping in proportion.** The gap the fix opens between an existing horse and a new one is about four score points (Paso Fino: 72 today, 76 at the `low` band after), against a show-noise SD of 5. An existing horse is less than one bad day from the judge behind a new one. A future session should not describe this to the operator as their children's barns being obsoleted, because it is not that.
+
+---
+
 **2026-08-06 — Training reviewed and specified (`docs/slices/0027-training.md`). Nothing built.** A spec session, not a build one. Training had been referenced by ten documents, two engine signatures and a promised `show_entries` column without ever being designed; this collects the scattered commitments and resolves them. Four things a future session should know without reading the whole slice:
 
 - **Training was missing from the build order entirely** (overview §13), between Market and Tack. Added there. It was in `docs/horse-game-schema.md` §4.6 and §6.4, in slice 0012 §2.4's "the column arrives with the training slice", in slice 0009's turn-cost list, in `ACTION_COSTS`' own comment, and in both scorers' signatures — but in no list of things to build. Worth a glance at the other §13 entries for the same failure.

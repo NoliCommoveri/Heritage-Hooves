@@ -226,18 +226,42 @@ Two smaller effects, both measured and both accepted:
 
 ---
 
-## 9. Existing horses, and when to land this
+## 9. Existing horses, and how to land this
 
 **Nothing about a living horse changes.** A genotype is written once at birth and never recomputed,
 so this reaches horses generated after it deploys and no others.
 
-That is also the problem: for a while the barn holds two populations, and the new arrivals are
-visibly better than the horses the children have been breeding for weeks. **Slice 0021 Part G's world
-reset has not been run yet** (CLAUDE.md §10) — that is the natural moment for this, and landing it
-first means one reset covers both.
+**The world reset is spent.** An earlier draft of this section proposed landing alongside slice 0021
+Part G's reset so that one reset covered both; the operator ran that reset on 2026-08-06 and the
+children already have their new horses. That option is gone, and this must now be planned as a change
+landing into a live population.
 
-If it ships without a reset, say so in plain words on `/admin` rather than letting a child work it
-out from losing.
+**The good news is that the gap is small.** A Paso Fino minted today sits at 2.1 traits right,
+scoring 72; one minted at the `low` band after the fix sits at 2.9, scoring 76. **Four points, against
+a show-noise SD of 5** — so an existing horse is less than one bad day from the judge behind a new
+one, not obsolete. This is emphatically not the situation where a child's whole barn becomes junk, and
+it should not be presented to them as one.
+
+Three ways to land it. **The third is recommended.**
+
+1. **Run a second reset.** Cleanest population, and the children have held their current horses for
+   only a day or two, so it is the cheapest moment there will ever be. But it throws away a grant they
+   have just been excited about, and a second reset inside a week teaches that nothing is permanent —
+   which is the opposite of what a breeding game is for.
+2. **Land it and say nothing.** The mix persists for generations, because the children's own foals
+   inherit from the horses they already have. Not recommended, but survivable given the four-point
+   gap.
+3. **Land it, then grant every child a fresh founding batch.** No reset, nothing lost. The batch
+   mechanism already exists and an operator can grant one from `/admin`, so this needs no new code.
+   Each child keeps the horses they have and gets new ones drawn under the corrected rules, and the
+   better stock spreads through their own breeding from there — which is the game working, not a
+   patch on it.
+
+`import_offers.polygenic_one_chance` is a snapshot column (`mintOffer`, CLAUDE.md §5.5), so a pending
+founding offer keeps the number it was minted with. It needs a sibling,
+`import_offers.conformation_on_target_chance`, or an offer granted before the fix will be generated
+against a field that no longer means what it did. **For option 3 this matters directly: grant the new
+batches *after* the migration lands, not before, or they will be generated under the old rules.**
 
 `import_offers.polygenic_one_chance` is a snapshot column (`mintOffer`, CLAUDE.md §5.5), so a pending
 founding offer keeps the number it was minted with. It needs a sibling,
