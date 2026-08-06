@@ -89,6 +89,35 @@ Chance a conformation trait lands on target, by band (scenario 7):
 | Icelandic | **42.6%** | 32.5% | 19.2% | 50% |
 | Fjord | 33.0% | 32.5% | 28.8% | 50% |
 
+### 3.1 Confirmed against the live population, 2026-08-06
+
+The operator exported every horse in the game (101 generated horses across 15 stables, plus 6
+home-bred foals) after the Part G reset. It matches, and it is better evidence than the simulation.
+
+**The band's effect on a horse's score, measured directly.** The band raises a horse's allele count
+and does nothing else, so correlating allele count against the judge's score tests it without having
+to guess anything:
+
+| Breed | n | Weighted-avg target | Correlation of alleles with score |
+|---|---|---|---|
+| Quarter Horse | 28 | 50.1 | **−0.30** |
+| Paso Fino | 44 | 52.0 | −0.07 |
+| German Warmblood | 29 | 64.6 | **+0.77** |
+
+Exactly what §1 predicts from each breed's weighted-average target: for the Quarter Horse a higher
+band produces a **worse** horse, for the Paso Fino it does nothing, and only for the German
+Warmblood — whose standard genuinely wants a big horse — does it help. **One dial, three different
+meanings, none of them the one on the label.**
+
+**Unselected horses land where predicted.** NPC breeding stables average 2.15 traits right and the
+consignment yard 2.21, against the predicted 2.1–2.2. The show barn reads higher (2.42) only because
+four of every ten of its horses are minted at `high`, which for two of the three breeds in play is
+not an improvement.
+
+**Slice 0019's specialist is working perfectly: 0 of 101 horses have zero traits right.** That is the
+guarantee doing exactly its job, and it is the reason `low` at 2.9 traits right is still a decent
+horse rather than a bad one.
+
 Three consequences worth naming separately:
 
 - **No cell is near its band**, and the worst-served breeds are the ones with the most distinctive
@@ -102,7 +131,11 @@ Three consequences worth naming separately:
   novice and open at `mid` and champion at `high`. For a Paso Fino that is 2.1 traits right at
   novice and 2.3 at champion — both scoring 72. **The champion field the children have been
   competing against is not better than the novice field.** For a Quarter Horse it is actively worse
-  (2.2 → 2.1).
+  (2.2 → 2.1). The live export (§3.1) agrees: splitting the show barn's Quarter Horses by allele
+  count puts the four likeliest champions at a mean score of 68.8 against the other six's 81.8. Treat
+  that gap as directional only — four horses is far too few to trust the size of it, and which four
+  are actually champions is inferred rather than known. The **−0.30 correlation above is the reliable
+  measurement**; this is the same finding seen from the angle a child would experience it.
 
 ---
 
@@ -203,6 +236,35 @@ Measured for the Paso Fino (scenario 8; the other breeds land within a point):
 | Consignment dealer | `mid`, **hardcoded** | **`low`**, via a new `consignment_quality_band` key | The hardcode (`src/db/consignment.ts`, `cfg.quality_bands.mid ?? 0.5`) is its own small defect; fix it here rather than leaving one band name in code |
 | `npc_show_barn_rank_plan` | novice/open `mid`, champion `high` | **unchanged** | The plan was always right; the numbers behind it were not. Champions become 4.3 traits right against a player's 2.9, so the ladder finally points up |
 | `/admin/horses` create form | flat 50/50, no band | **unchanged** | A neutral control on purpose (slice 0005 §6.6) |
+
+---
+
+## 7.1 Two things the live export found that no simulation would have
+
+Both come from the 2026-08-06 population dump (§3.1) and neither was predicted.
+
+**Players hold better horses than the generator makes, because they choose.** Player stables average
+**2.63** traits right against NPC breeding stables' 2.15 — while carrying an *identical* allele count
+(50.6 vs 50.4). It is not a better band; it is that a founding grant shows four mares and keeps two,
+two stallions and keeps one (`founding_mare_candidates`/`_claims`, migration 0025). Selection is
+worth about half a trait.
+
+Every measurement in `docs/slices/0027-training.md` §10.1 modelled the generator's raw output and so
+**understated a player horse's standing against the NPC-bred field**. It did not model the show barn,
+which is the field that actually matters, so the training numbers stand — but a future session
+measuring anything about player-versus-NPC quality must model the claim step or it will be wrong in
+the player's favour by roughly this much.
+
+**Home-bred foals start behind the founding stock.** The six foals born in-game average **1.83**
+traits right against their founding parents' 2.32. This is expected rather than broken — slice 0019's
+specialist is a gift to *generated* horses, and a foal inherits genes, not the guarantee — but it
+means a child's first home-bred crop is measurably worse than the horses they were given, which is
+the opposite of the feeling the game wants. Six foals is far too few to conclude anything; **watch
+this number as the population grows.**
+
+**It also bears directly on §7's band choice.** Raising founding stock widens this gap: mint at `mid`
+(3.6 traits right) and the first foals look worse still by comparison. Minting at `low` (2.9) keeps
+the gap close to today's. That is a second, independent reason for the same decision.
 
 ---
 
