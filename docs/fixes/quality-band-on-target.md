@@ -1,5 +1,16 @@
 # Fix: the quality band never looks at the breed
 
+> **SUPERSEDED, 2026-08-06, by `docs/fixes/conformation-breed-type.md`. Do not build §4 onward.**
+>
+> The operator read this document and reported that the defect goes deeper than the generator: an
+> Arabian whose head standard is 8 can be minted at 90, so the *scale itself* is breed-blind, not
+> just the band that draws on it. That document changes the thing this one patches around, and would
+> make every line of §4–§12 below dead code the day it landed.
+>
+> **§1–§3 are not superseded.** The diagnosis is correct, and §3.1's measurements against the live
+> 2026-08-06 population are still the best evidence in the repository — the successor quotes them.
+> §3.2's warning about how to explain this to the children is still the right warning.
+
 Operator-reported, 2026-08-06, on reading `docs/analysis/training-effect.mjs` scenario 6:
 
 > *"mid was supposed to mean that a horse was on target for a conformation trait 50% of the time."*
