@@ -60,6 +60,8 @@
 //   --specialist <mode>   fixed | carrier | none — how generous slice 0019's founding gift is.
 //   --drift <p>           chance an inherited allele steps one rung. Buys new alleles from nothing,
 //                         at the cost of the exact foal prediction. 0 = off.
+//   --inbreeding <x>      COI depression factor, 1.0 live. 0 switches it off, so a line can be
+//                         judged on its genes without realization's pull toward 50 on top.
 //   --noise-sd, --modifier-step    the two adjusters that sit on top of the genes.
 //
 // WHAT IS MODELLED
@@ -123,6 +125,11 @@ const ANCHOR_BI = 50;                // anchorFor(), bidirectional
 const MATURITY_YEARS = 5;            // conformation_maturity_years,              migration 0031
 const REALIZATION_AT_BIRTH = 0.55;   // conformation_realization_at_birth,        migration 0031
 const INBREEDING_FACTOR = 1.0;       // inbreeding_depression_factor,             migration 0031
+                                     // ^ the live default. --inbreeding overrides it; 0 switches
+                                     //   COI depression off entirely, which is how you look at a
+                                     //   line's GENES without realization's pull toward 50 sitting
+                                     //   on top of them. It changes nothing about founding stock
+                                     //   (COI is 0 there) and everything from generation 2 on.
 const LABEL_MIN = { outstanding: 90, good: 75, acceptable: 55, weak: 30 };  // migration 0135
 const ABILITY_SPECIALIST_POTENTIAL = 15;  // founding_ability_specialist_potential, migration 0102
 const SPECIALIST_OFFSETS = [-1, 0, 1];    // generate.ts, slice 0019 §7
@@ -175,6 +182,8 @@ const PROP = {
   // not in the game" without a ring escape, at the cost of the exact Punnett square. 0 = off.
   driftChance: 0,
   driftClamped: true,        // keep drifted alleles inside reachPoints of the breed standard
+
+  inbreedingFactor: INBREEDING_FACTOR,   // --inbreeding; 0 = COI depression off
 
   // §7.3's reframed slice 0019 conformation specialist.
   //   'fixed'   one trait homozygous at the breed target — the fix document as written
@@ -428,7 +437,7 @@ function noiseFor(state, seed) {
 }
 const clamp99 = (v) => Math.min(99, Math.max(1, v));
 const realization = (ageYears, coi) =>
-  Math.min(1, REALIZATION_AT_BIRTH + (1 - REALIZATION_AT_BIRTH) * (ageYears / MATURITY_YEARS)) * (1 - coi * INBREEDING_FACTOR);
+  Math.min(1, REALIZATION_AT_BIRTH + (1 - REALIZATION_AT_BIRTH) * (ageYears / MATURITY_YEARS)) * (1 - coi * PROP.inbreedingFactor);
 const expressedValue = (gv, real, anchor) => Math.round(anchor + (gv - anchor) * real);
 
 /** The full arithmetic for one conformation trait, kept as data so the card can print every step. */
@@ -646,6 +655,7 @@ const TUNABLE = {
   'target-chance': ['ringTargetChance', Number],
   'hole': ['ringHoleRungs', Number],
   'drift': ['driftChance', Number],
+  'inbreeding': ['inbreedingFactor', Number],
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
 };
@@ -787,7 +797,8 @@ function cmdBreed(state, path, a, b, foals) {
   if (!sire || !dam) { console.error('Both ids must exist.'); process.exit(1); }
   const coi = kinship(state, a, b);
   console.log(`#${a} ${sire.name} x #${b} ${dam.name} — ${foals} foals   (COI ${(coi * 100).toFixed(1)}%)`);
-  if (coi > 0) console.log(`  Inbreeding depression is live: realization x ${(1 - coi * INBREEDING_FACTOR).toFixed(3)}, pulling every trait toward 50.`);
+  if (coi > 0 && PROP.inbreedingFactor > 0) console.log(`  Inbreeding depression is live: realization x ${(1 - coi * PROP.inbreedingFactor).toFixed(3)}, pulling every trait toward 50.`);
+  else if (coi > 0) console.log(`  Inbreeding depression is OFF (--inbreeding 0). COI ${(coi * 100).toFixed(1)}% costs this foal nothing.`);
   console.log('');
 
   const made = [];
@@ -841,9 +852,19 @@ const fixedCount = (h) => CONF_TRAITS.filter((t) => {
 }).length;
 
 function statsFor(state, horses) {
-  let score = 0, on = 0, fixed = 0, dev = 0, wrongBreed = 0, carries = 0;
+  let score = 0, on = 0, fixed = 0, dev = 0, wrongBreed = 0, carries = 0, blind = 0, blindOf = 0;
   for (const h of horses) {
     const parts = CONF_TRAITS.map((t) => confParts(state, h, t));
+    // The false signal, measured: traits that READ Outstanding while carrying no correct allele.
+    // A child selecting on looks breeds these and gets scatter. The finer the ladder, the more
+    // allele pairs average to the right answer without either allele being right.
+    if (state.engine === 'proposed') {
+      for (const p of parts) {
+        if (!onTarget(p.score)) continue;
+        blindOf++;
+        if (!h.genotype.type[p.trait].includes(nearestRung(BREEDS[h.breed].ideal[p.trait][0]))) blind++;
+      }
+    }
     score += conformationScore(state, h);
     on += parts.filter((p) => onTarget(p.score)).length;
     dev += parts.reduce((a, p) => a + p.dist, 0) / CONF_TRAITS.length;
@@ -854,7 +875,7 @@ function statsFor(state, horses) {
     }
   }
   const n = horses.length;
-  return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n };
+  return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n, blind: blindOf ? blind / blindOf : 0 };
 }
 
 /**
@@ -891,8 +912,8 @@ function cmdSweep(flags) {
   console.log(`FOUNDING STOCK, ${n} horses per row | engine ${engine} | ${tuningNote(tuning)}`);
   if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, reach +/-${PROP.reachPoints}, mode ${PROP.foundingMode}, specialist ${PROP.specialist}`);
   console.log('');
-  console.log('  breed             band | score  on target  FIXED  carries | mean dev  wrong-breed | barn of ' + barn + ' missing an allele');
-  console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  ----------- | ------------------------');
+  console.log('  breed             band | score  on target  FIXED  carries | mean dev  wrong-breed  looks-right-carries-nothing');
+  console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  -----------  ---------------------------');
   for (const breed of breeds) {
     for (const band of bands) {
       const state = { engine, breed, band, seed, horses: [] };
@@ -900,7 +921,7 @@ function cmdSweep(flags) {
       const miss = engine === 'proposed'
         ? barnMissRate(state, barn, 400, deriveSeed(seed, `miss_${breed}_${band}`))
         : { any: NaN, perBarn: NaN };
-      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)} | ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}% of barns, ${miss.perBarn.toFixed(2)} traits` : 'n/a'}`);
+      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 12)}   [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}%` : 'n/a'}]`);
     }
   }
   console.log('');
@@ -910,6 +931,8 @@ function cmdSweep(flags) {
   console.log('  carries     traits holding at least one correct allele — the raw material for FIXED');
   console.log('  mean dev    mean |expressed - standard| across the five traits (fix doc §5.1)');
   console.log('  wrong-breed share of horses with at least one trait more than 25 points off (§1.1)');
+  console.log('  looks-right share of Outstanding-reading traits whose horse carries NO correct allele —');
+  console.log('              the false signal a child selecting on looks cannot see through');
   console.log('  missing     share of starting barns with NO copy of the right allele for some trait,');
   console.log('              i.e. a trait that child can never breed correct without buying in.');
 }
@@ -1024,7 +1047,7 @@ function cmdPedigree(state, id) {
     if (x.sire) { walk(state.horses[x.sire - 1], depth + 1, prefix + '  |- '); walk(state.horses[x.dam - 1], depth + 1, prefix + '  |- '); }
   };
   walk(h, 0, '  ');
-  console.log(`\n  Inbreeding coefficient: ${(h.coi * 100).toFixed(2)}%  ->  realization x ${(1 - h.coi * INBREEDING_FACTOR).toFixed(3)}`);
+  console.log(`\n  Inbreeding coefficient: ${(h.coi * 100).toFixed(2)}%  ->  realization x ${(1 - h.coi * PROP.inbreedingFactor).toFixed(3)}${PROP.inbreedingFactor === 0 ? '  (depression off)' : ''}`);
 }
 
 function cmdSummary(state) {
