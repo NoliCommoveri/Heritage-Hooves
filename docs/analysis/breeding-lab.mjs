@@ -211,6 +211,7 @@ const PROP = {
   // allele anywhere in the barn about a third of the time - a trait that child can never breed
   // right. Round-robin makes coverage a certainty, and costs nothing else.
   specialistRoundRobin: false,
+  mateRule: 'best',          // 'best' | 'spread' — see cmdDynasty
   ringTargetChance: 0.06,    // ring only: P(an allele IS exactly the target rung)
   ringHoleSuppression: 0,    // ring only: weight multiplier for alleles inside the hole (0 = hard hole)
   ringHoleRungs: 1,          // ring only: rungs either side of target also excluded (0 = target only)
@@ -879,6 +880,7 @@ const TUNABLE = {
   'target-chance': ['ringTargetChance', Number],
   'hole': ['ringHoleRungs', Number],
   'hole-suppression': ['ringHoleSuppression', Number],
+  'mate': ['mateRule', String],
   'round-robin': ['specialistRoundRobin', (v) => v !== 'false' && v !== '0'],
   'quota-spread': ['quotaSpread', (v) => v !== 'false' && v !== '0'],
   'drift': ['driftChance', Number],
@@ -1427,6 +1429,10 @@ function cmdDynasty(flags) {
   const looksAt = new Array(rounds + 1).fill(0);   // runs whose FIRST looks-finished horse is round r
   const fixedAt = new Array(rounds + 1).fill(0);
   let looksNever = 0, fixedNever = 0, totalFoals = 0;
+  // Per-generation ledger: what the parents were worth, what the foals came out at, and the gap.
+  // The mid-parent figure is the average of the ACTUAL sire and dam of each foal, not the herd
+  // average, so "gain" is the honest answer to "did this mating move the line forward".
+  const gen = Array.from({ length: rounds + 1 }, () => ({ n: 0, foal: 0, mid: 0, on: 0, fixed: 0, coi: 0, best: 0, runs: 0 }));
 
   for (let run = 0; run < runs; run++) {
     const state = { engine, breed, band, seed: Number(flags.seed ?? 31337), horses: [] };
@@ -1440,6 +1446,15 @@ function cmdDynasty(flags) {
       enrol(addHorse(state, { genotype: f.genotype, ageYears: MATURITY_YEARS, specialists: f.specialists, seed: s }),
         i < nMares ? 'F' : 'M');
     }
+    {   // Generation F: the founding batch stands as its own parent-less row.
+      const e = gen[0];
+      for (const h of state.horses) {
+        e.n++; e.foal += conformationScore(state, h); e.mid += conformationScore(state, h);
+        e.on += CONF_TRAITS.filter((t) => onTarget(confParts(state, h, t).score)).length;
+        e.fixed += fixedCount(h);
+      }
+      e.runs++; e.best += Math.max(...state.horses.map((h) => conformationScore(state, h)));
+    }
     for (const h of state.horses) {
       if (firstLooks === null && isAllOutstanding(state, h)) firstLooks = 0;
       if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = 0;
@@ -1452,11 +1467,23 @@ function cmdDynasty(flags) {
       if (!mares.length || !studs.length) break;
 
       const made = [];
-      for (const mare of mares) {
-        // Best stallion she is not closely related to; if they are all close, the least related one.
+      mares.forEach((mare, mi) => {
+        // 'best'   every mare to the highest-ranked stallion she is not closely related to. This is
+        //          what a player optimising each mating does, and it concentrates the whole
+        //          generation behind one sire - which inflates the mid-parent average and so makes
+        //          regression to the mean look like a defect in the genetics.
+        // 'spread' mares dealt round-robin across the available stallions. Same herd, far less
+        //          selection intensity on the sire side; the difference between the two rows is
+        //          how much of the parent-to-foal deficit is simply selection working.
         const k = studs.map((s) => kinship(state, mare.id, s.id, memo));
-        let pick = studs.findIndex((_, i) => k[i] <= 0.125);
-        if (pick < 0) pick = k.indexOf(Math.min(...k));
+        let pick;
+        if (PROP.mateRule === 'spread') {
+          pick = mi % studs.length;
+          if (k[pick] > 0.125) { const alt = studs.findIndex((_, i) => k[i] <= 0.125); if (alt >= 0) pick = alt; }
+        } else {
+          pick = studs.findIndex((_, i) => k[i] <= 0.125);
+          if (pick < 0) pick = k.indexOf(Math.min(...k));
+        }
         const stud = studs[pick];
 
         const fs = deriveSeed(deriveSeed(state.seed, `dyn_${run}_${r}_${mare.id}`), 'foal');
@@ -1466,7 +1493,15 @@ function cmdDynasty(flags) {
         mare.births++;
         made.push(foal);
         totalFoals++;
-      }
+
+        const e = gen[r];
+        e.n++;
+        e.foal += conformationScore(state, foal);
+        e.mid += (conformationScore(state, stud) + conformationScore(state, mare)) / 2;
+        e.on += CONF_TRAITS.filter((t) => onTarget(confParts(state, foal, t).score)).length;
+        e.fixed += fixedCount(foal);
+        e.coi += foal.coi;
+      });
       for (let i = 0; i < outcross; i++) {
         const bs = deriveSeed(deriveSeed(state.seed, `dyn_buy_${run}_${r}`), `${i}`);
         const f = mintFounder(state, bs);
@@ -1477,7 +1512,9 @@ function cmdDynasty(flags) {
         if (firstLooks === null && isAllOutstanding(state, h)) firstLooks = r;
         if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = r;
       }
-      if (firstLooks !== null && (firstFixed !== null || engine !== 'proposed')) break;
+      if (made.length) { gen[r].runs++; gen[r].best += Math.max(...made.map((h) => conformationScore(state, h))); }
+      // NOTE: no early break. The per-generation ledger needs every round run to the end, and
+      // stopping at the first finished horse would silently truncate the later rows.
     }
 
     if (firstLooks === null) looksNever++; else looksAt[firstLooks]++;
@@ -1497,6 +1534,18 @@ function cmdDynasty(flags) {
   console.log(select === 'tested' ? 'Selection is on TESTED genotype.' : 'Selection is on visible score — a child who has not tested cannot see genes.');
   console.log(`${runs} runs, ${rounds} rounds each, ${(totalFoals / runs).toFixed(0)} foals bred per run on average.\n`);
 
+  console.log('  gen |  parents   foals    gain | on target  FIXED   best foal   COI');
+  console.log('  --- |  -------   -----    ---- | ---------  -----   ---------   ---');
+  for (let r = 0; r <= rounds; r++) {
+    const e = gen[r];
+    if (!e.n) continue;
+    const mid = e.mid / e.n, foal = e.foal / e.n, g = foal - mid;
+    console.log(`  ${padL(r === 0 ? 'F' : r, 3)} | ${padL(mid.toFixed(1), 8)} ${padL(foal.toFixed(1), 7)} ` +
+      `${padL((g >= 0 ? '+' : '') + g.toFixed(1), 7)} | ${padL((e.on / e.n).toFixed(2), 6)} of 5 ` +
+      `${padL((e.fixed / e.n).toFixed(2), 6)}  ${padL((e.best / e.runs).toFixed(1), 9)}   ${padL(((e.coi / e.n) * 100).toFixed(1) + '%', 5)}`);
+  }
+  console.log('\n  "parents" is the mean of each foal\'s own sire and dam, so "gain" is what the mating');
+  console.log('  actually bought over the two horses that went into it. Row F is the founding batch.\n');
   console.log('  gen | first horse Outstanding on all 5 | first horse FIXED on all 5');
   console.log('      |  this gen    cumulative          |  this gen    cumulative');
   console.log('  --- | ---------    ----------          | ---------    ----------');
