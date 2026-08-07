@@ -1056,20 +1056,36 @@ Reported together from the deployed game, fixed together, sharing no code. Both 
 - **Two findings nobody was looking for.** (1) **A player who never buys the conformation test plateaus at generation 1** — eight generations of selection on visible score move traits-finished 1.33 → 1.41, because a 10/10 horse and a 2/18 horse express the same value and are indistinguishable. Selecting on the tested genotype instead reaches 4.45. The test is therefore load-bearing, not optional depth, which raises the stakes on that document's §12.1/§12.2 pricing decisions. (2) **Inbreeding's cost scales with how distinctive a breed is** — COI multiplies realization, which pulls toward 50, so at equal genetic achievement (~4.3 traits fixed, ~45% COI) a Quarter Horse scores 87.4 and an Arabian 79.3. Recorded for slice 0018; do **not** answer it by re-anchoring `realization()` on the breed target, which would make an inbred horse score *better*.
 - **Bench additions.** `sweep` (mint thousands of founders and characterise them: score, traits on target, traits FIXED, traits carrying, mean deviation, wrong-breed share, and the dead-barn rate) and `programme` (run a breeding programme to generation N, `--select score|tested`, `--outcross n` to model buying in). Tuning dials — `--reach`, `--rung-step`, `--concentration`, `--founding-mode ring`, `--target-chance`, `--hole`, `--specialist`, `--drift`, `--noise-sd`, `--modifier-step` — are stored on the lab by `new` and replayed by later commands, so a saved population always reads back under the rules it was minted with. Defaults reproduce the fix document byte-for-byte; the `peak` pool keeps §4.4's renormalise-at-the-end arithmetic verbatim so the baseline this bench reports is the one that document measured.
 
-## 2026-08-07 — the parent-to-foal deficit, measured, and a coax dial in the bench
+## 2026-08-07 — the parent-to-foal deficit, and a third expression rule
 
-`docs/analysis/breeding-lab.mjs` gained `--coax <n>` / `--coax-policy <finish|worst>`: a home-bred
-foal may have `n` of its conformation alleles moved **one rung toward its own breed standard**, at
-birth, once for life. Toward-standard-only is the property that matters — it is why this is safe
-where `--drift` was not (`docs/fixes/conformation-founding-quality.md` §5): breed type strictly
-improves and an NPC stable that never buys the programme never moves. Founders are never coaxed
-(they arrive 4-8 years old, past any young-horse window), so `sweep` is unaffected and every
-pre-existing measurement in the fix documents still reproduces byte-for-byte.
+**Read this before touching conformation, and before quoting a number out of
+`conformation-breed-type.md` or `conformation-founding-quality.md`.** The move off the averaging
+expression rule was decided in conversation on 2026-08-07 and is recorded in no design document;
+`PROP.expression` in the bench is still `'average'` by default (commit `e1746b7` added the dial
+without moving the default). **Every measurement in those two fix documents therefore predates the
+decision and is measured under the old rule.** That distinction turned out to matter enormously.
 
-Findings written up in `docs/fixes/foals-worse-than-parents.md`. The headline for anyone working
-near conformation: **about 85% of "foals come out worse than their parents" is not genetics.** It is
-(a) selecting on a tent-shaped score, where a heterozygote straddling the standard is
-indistinguishable from a homozygote on it, and (b) inbreeding depression on conformation expression,
-which makes a genetically *perfect* herd read worse than a mediocre one. (b) is a third independent
-argument for slice 0018's central proposal and the two recommendations in that document do not work
-without it.
+`docs/analysis/breeding-lab.mjs` gained:
+
+- `--coax <n>` / `--coax-policy <finish|worst>` — a home-bred foal may have `n` conformation alleles
+  moved **one rung toward its own breed standard**, at birth, once for life. Toward-standard-only is
+  why this is safe where `--drift` was not (`conformation-founding-quality.md` §5): breed type
+  strictly improves and an NPC stable that never buys the programme never moves. Founders are never
+  coaxed, so `sweep` and every pre-existing figure reproduce unchanged (verified: Arabian/low still
+  reads 89.2 / 3.05 / 1.34 / 2.95).
+- `--expression worst` and `--expression best` alongside `average` and `random`. Under `worst` a
+  horse shows whichever allele is **further** from its breed standard — faults dominant.
+
+Findings in `docs/fixes/foals-worse-than-parents.md`. Three that a future session needs:
+
+1. **The "selecting on looks plateaus at generation 1" result** — `conformation-founding-quality.md`
+   §3, FIXED moving 1.33 → 1.41 over eight generations — **is an artifact of averaging, not a
+   structural property.** Under `worst` the same child doing the same thing reaches 4.08.
+2. **Under `worst`, a trait reading Outstanding is homozygous at the standard, always.** What the
+   child sees and what the programme accumulates become the same number, so `dynasty`'s `on target`
+   and `FIXED` columns print identically. **If they ever diverge, something is pulling expression off
+   the allele value** — almost certainly inbreeding depression.
+3. **Inbreeding depression on conformation expression breaks the "displayed number is a real value"
+   guarantee**, on top of making a genetically perfect herd read worse than a mediocre one. Third
+   independent argument for slice 0018's central proposal, and the first that says the new expression
+   rule does not work at all without it.

@@ -246,6 +246,14 @@ const PROP = {
   //              seed and fixed for life; the twenty-allele modifier and noise then adjust that
   //              number. Mendelian dominance with the dominant allele picked per horse rather
   //              than per allele. Nothing about inheritance changes — only what a horse shows.
+  //   'worst'    the horse shows whichever of its two alleles is FURTHER from its breed standard.
+  //              Faults dominant, quality recessive. Added 2026-08-07: it is the only rule under
+  //              which the shown number is both a real allele AND deterministic, so a horse reading
+  //              Outstanding is necessarily homozygous at the standard — a child can identify a
+  //              finished trait by looking, and cannot fake one.
+  //   'best'     the horse shows whichever allele is CLOSER to the standard. Quality dominant —
+  //              the mirror, and the same shape as the game's existing disease carriers: every
+  //              good-looking horse may be hiding a fault, and only a test says which.
   expression: 'average',
 
   // Hard ceiling on how many of its five conformation traits a FOUNDING horse may read Outstanding
@@ -708,6 +716,17 @@ const expressedValue = (gv, real, anchor) => Math.round(anchor + (gv - anchor) *
  */
 const expressedSide = (seed, trait) => streamFor(seed, `type_expression_${trait}`).int(2);
 
+/**
+ * Which of the two allele VALUES the horse shows, for the deterministic rules. `worst` and `best`
+ * are measured against the horse's own breed standard, so the same pair reads differently for two
+ * breeds — which is correct: an allele is only a fault relative to the standard it is judged by.
+ */
+function dominantValue(values, target, rule) {
+  const [a, b] = values;
+  const far = Math.abs(a - target) >= Math.abs(b - target);
+  return rule === 'worst' ? (far ? a : b) : (far ? b : a);
+}
+
 /** The full arithmetic for one conformation trait, kept as data so the card can print every step. */
 function confParts(state, horse, trait) {
   const g = horse.genotype;
@@ -717,7 +736,9 @@ function confParts(state, horse, trait) {
     typeAlleles = g.type[trait].map(rungValue);
     typeValue = PROP.expression === 'random'
       ? typeAlleles[expressedSide(horse.seed, trait)]
-      : (typeAlleles[0] + typeAlleles[1]) / 2;
+      : PROP.expression === 'worst' || PROP.expression === 'best'
+        ? dominantValue(typeAlleles, targetFor(state, horse.breed, trait), PROP.expression)
+        : (typeAlleles[0] + typeAlleles[1]) / 2;
     modifier = (countOnes(g.poly[trait]) - LOCI_PER_TRAIT) * PROP.modifierStep;
   } else {
     modifier = countOnes(g.poly[trait]) * TODAY.alleleStep;
@@ -829,6 +850,9 @@ function predictTrait(state, sire, dam, trait, coi) {
         // The foal takes a from one parent and b from the other, then shows one of them, 50/50.
         m.set(rungValue(a), (m.get(rungValue(a)) ?? 0) + 0.125);
         m.set(rungValue(b), (m.get(rungValue(b)) ?? 0) + 0.125);
+      } else if (PROP.expression === 'worst' || PROP.expression === 'best') {
+        const v = dominantValue([rungValue(a), rungValue(b)], target, PROP.expression);
+        m.set(v, (m.get(v) ?? 0) + 0.25);
       } else {
         const v = (rungValue(a) + rungValue(b)) / 2;
         m.set(v, (m.get(v) ?? 0) + 0.25);
@@ -972,7 +996,7 @@ function tuningFromFlags(flags) {
  * sit on a whole rung. This set is the real vocabulary of the system.
  */
 function achievableDistances() {
-  const step = PROP.expression === 'random' ? PROP.rungStep : PROP.rungStep / 2;
+  const step = PROP.expression === 'average' ? PROP.rungStep / 2 : PROP.rungStep;
   const out = [];
   for (let d = 0; d <= PROP.reachPoints * 2 + 1e-9; d += step) out.push(d);
   return out;
@@ -1004,7 +1028,7 @@ function applyTuning(tuning) {
   if (PROP.outstandingWithin != null) LABEL_MIN.outstanding = 100 - PROP.outstandingWithin * FALLOFF;
   if (!['peak', 'ring', 'quota', 'pairs'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak", "ring", "quota" or "pairs"'); process.exit(1); }
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
-  if (!['average', 'random'].includes(PROP.expression)) { console.error('--expression must be "average" or "random"'); process.exit(1); }
+  if (!['average', 'random', 'worst', 'best'].includes(PROP.expression)) { console.error('--expression must be "average", "random", "worst" or "best"'); process.exit(1); }
   if (!['finish', 'worst'].includes(PROP.coaxPolicy)) { console.error('--coax-policy must be "finish" or "worst"'); process.exit(1); }
 }
 /** One line naming every dial that is NOT at its documented default, so output is self-describing. */
@@ -1647,7 +1671,7 @@ function cmdBands(flags) {
   console.log(`Ladder: step ${PROP.rungStep}, expression ${PROP.expression}, modifier +/-${(LOCI_PER_TRAIT * PROP.modifierStep).toFixed(2)}, noise SD ${PROP.noiseSd}\n`);
 
   const k = Math.max(1, PROP.rungsPerBand ?? 1);
-  const unit = PROP.expression === 'random' ? 'rung' : 'half-rung';
+  const unit = PROP.expression === 'average' ? 'half-rung' : 'rung';
   console.log(`  Each word covers ${k} ${unit}${k > 1 ? 's' : ''} of distance from the standard.\n`);
   console.log('  distance      what the horse is showing                     word');
   console.log('  ------------  -------------------------------------------   -----------');
