@@ -7,7 +7,7 @@ and specifies the whole stage.
 
 Every decision below is settled. Where a number is a first guess it says so (§11).
 
-Next free migration number is `0176`, **unless `docs/fixes/quality-band-on-target.md` lands first**,
+Next free migration number is `0176`, **unless `docs/slices/0028-conformation-genetics.md` lands first**,
 which it should (see below) — that fix claims `0176`–`0178` and this slice shifts up. Migration
 numbers are claimed at build time, not when a document is written (overview §13). Every migration
 also needs registering in `src/db/migrations.ts` (CLAUDE.md §8).

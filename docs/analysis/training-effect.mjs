@@ -452,7 +452,7 @@ function scenario7() {
     console.log(`  ${code.padEnd(7)}${cells.join('  ')}        50.0%`);
   }
 
-  // One breed in full, trait by trait — this is the table docs/fixes/quality-band-on-target.md §2
+  // One breed in full, trait by trait — the breed-blind-band defect, docs/slices/0028-conformation-genetics.md §1
   // is built from. Paso Fino by default because it states the contradiction most cleanly: it wants
   // a high-set neck (14 alleles) AND a short back (6), and one dial cannot do both.
   const detail = process.env.BREED ?? 'PF';
