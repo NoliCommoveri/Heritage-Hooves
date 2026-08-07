@@ -326,6 +326,14 @@ The thing `quality-band-on-target.md` §8 was rightly anxious about.
 | founding stock at `high` | 3.6 |
 | **ceiling, a perfect horse** | **5.0** |
 
+> **Correction, 2026-08-07.** This table is measured **without §7.3's own reframed conformation
+> specialist**, which `conformation-architecture.mjs` does not model. With the specialist included
+> as specified, founding stock at `low` reads **3.04** traits on target — this table's own `mid`
+> figure — and arrives with **1.34 of 5 traits already homozygous at the standard**, i.e. finished.
+> The headroom below is therefore overstated by about half a trait. See
+> `docs/fixes/conformation-founding-quality.md` §2, and §7 there for the recommended fix (demote
+> the specialist from homozygous to carrier), which restores this table's numbers for real.
+
 Minting founding stock at `low` leaves **2.5 traits of journey** — more than today's real 2.1, and
 far more than the 1.4 that document warned about. The recommendation is `low`, for the same reason
 it gave and one more: the journey is now *legible*, so 2.5 traits of it is 2.5 traits of decisions
@@ -374,6 +382,11 @@ and no needing eight foals to find out what a pairing does.
    trait's type locus is set homozygous at the breed's target rung**, so the horse is not merely good
    at it but *breeds on* for it. That is a better gift than the current ±1-allele version and it
    costs nothing extra. The ability specialist is untouched.
+   **Amended 2026-08-07:** measured, homozygous is too generous — it hands over 1.34 of the 5-trait
+   endgame at mint. Build it as **one allele at the target rung, the other drawn from the pool**:
+   the horse still carries the correct gene (so a small barn is never short of the raw material, the
+   thing a rarer pool cannot guarantee) but has not been given the finished trait. See
+   `docs/fixes/conformation-founding-quality.md` §7.
 4. **`import_offers` needs the band snapshotted** the same way `polygenic_one_chance` is today
    (CLAUDE.md §5.5), so a pending founding offer generates under the rules it was minted with.
 
@@ -495,6 +508,14 @@ Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
 ## 12. What needs the operator before anyone builds
 
 Per CLAUDE.md §2, these are genuinely undecided and the build should stop for them.
+
+> **2026-08-07:** decisions 3 and 4 are now answered with measurements in
+> `docs/fixes/conformation-founding-quality.md` (§7: keep step 8, and demote the specialist rather
+> than lower the band; §6: the finer ladder and the operator's "hole" proposal both measured and
+> recommended against). Decisions 1 and 2 are **more load-bearing than this section assumed** — §3
+> there shows a player who never tests plateaus at generation 1 and never fixes a single trait, so
+> the pricing of the test decides whether the endgame is reachable at all. A sixth question, on
+> inbreeding's uneven cost across breeds, is recorded in §4 there and belongs to slice 0018.
 
 1. **Is the conformation test one purchase per locus, or one panel for the whole horse?** Five
    separate purchases per horse is a real money sink and lets a child test only the trait they care
