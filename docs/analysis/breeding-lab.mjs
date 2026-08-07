@@ -190,6 +190,14 @@ const PROP = {
   //   'carrier' one target allele, the other drawn from the pool — good but not finished
   //   'none'    no conformation specialist at all
   specialist: 'fixed',
+
+  // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
+  //   'average'  the fix document as written: the mean of the two, co-dominant.
+  //   'random'   the horse EXPRESSES ONE OF ITS TWO ALLELES, drawn once at birth from its own
+  //              seed and fixed for life; the twenty-allele modifier and noise then adjust that
+  //              number. Mendelian dominance with the dominant allele picked per horse rather
+  //              than per allele. Nothing about inheritance changes — only what a horse shows.
+  expression: 'average',
 };
 
 // The ladder is derived from base/step so `--rung-step 4` is a real experiment rather than an
@@ -440,6 +448,13 @@ const realization = (ageYears, coi) =>
   Math.min(1, REALIZATION_AT_BIRTH + (1 - REALIZATION_AT_BIRTH) * (ageYears / MATURITY_YEARS)) * (1 - coi * PROP.inbreedingFactor);
 const expressedValue = (gv, real, anchor) => Math.round(anchor + (gv - anchor) * real);
 
+/**
+ * Which of a horse's two graded alleles it shows, under `expression: 'random'`. Drawn once from
+ * the horse's OWN seed, so it is the same answer every time this is called — a horse does not
+ * change shape between two renders of its own card.
+ */
+const expressedSide = (seed, trait) => streamFor(seed, `type_expression_${trait}`).int(2);
+
 /** The full arithmetic for one conformation trait, kept as data so the card can print every step. */
 function confParts(state, horse, trait) {
   const g = horse.genotype;
@@ -447,7 +462,9 @@ function confParts(state, horse, trait) {
   let typeValue = null, typeAlleles = null, modifier;
   if (state.engine === 'proposed') {
     typeAlleles = g.type[trait].map(rungValue);
-    typeValue = (typeAlleles[0] + typeAlleles[1]) / 2;
+    typeValue = PROP.expression === 'random'
+      ? typeAlleles[expressedSide(horse.seed, trait)]
+      : (typeAlleles[0] + typeAlleles[1]) / 2;
     modifier = (countOnes(g.poly[trait]) - LOCI_PER_TRAIT) * PROP.modifierStep;
   } else {
     modifier = countOnes(g.poly[trait]) * TODAY.alleleStep;
@@ -555,8 +572,14 @@ function predictTrait(state, sire, dam, trait, coi) {
     const m = new Map();
     let on = 0;
     for (const a of sire.genotype.type[trait]) for (const b of dam.genotype.type[trait]) {
-      const v = (rungValue(a) + rungValue(b)) / 2;
-      m.set(v, (m.get(v) ?? 0) + 0.25);
+      if (PROP.expression === 'random') {
+        // The foal takes a from one parent and b from the other, then shows one of them, 50/50.
+        m.set(rungValue(a), (m.get(rungValue(a)) ?? 0) + 0.125);
+        m.set(rungValue(b), (m.get(rungValue(b)) ?? 0) + 0.125);
+      } else {
+        const v = (rungValue(a) + rungValue(b)) / 2;
+        m.set(v, (m.get(v) ?? 0) + 0.25);
+      }
       if (a === targetRung && b === targetRung) on += 0.25;
     }
     typeOutcomes = [...m.entries()];
@@ -658,6 +681,7 @@ const TUNABLE = {
   'inbreeding': ['inbreedingFactor', Number],
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
+  'expression': ['expression', String],
 };
 function tuningFromFlags(flags) {
   const t = {};
@@ -673,6 +697,7 @@ function applyTuning(tuning) {
   for (const [k, v] of Object.entries(tuning ?? {})) PROP[k] = v;
   if (!['peak', 'ring'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak" or "ring"'); process.exit(1); }
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
+  if (!['average', 'random'].includes(PROP.expression)) { console.error('--expression must be "average" or "random"'); process.exit(1); }
 }
 /** One line naming every dial that is NOT at its documented default, so output is self-describing. */
 function tuningNote(tuning) {
@@ -853,6 +878,10 @@ const fixedCount = (h) => CONF_TRAITS.filter((t) => {
 
 function statsFor(state, horses) {
   let score = 0, on = 0, fixed = 0, dev = 0, wrongBreed = 0, carries = 0, blind = 0, blindOf = 0;
+  // The mirror of `blind`: traits holding a correct allele that do NOT read Outstanding — a good
+  // gene a child cannot see and would cull. Under 'average' a het horse shows half its good allele;
+  // under 'random' it shows either all of it or none of it.
+  let hidden = 0, hiddenOf = 0;
   for (const h of horses) {
     const parts = CONF_TRAITS.map((t) => confParts(state, h, t));
     // The false signal, measured: traits that READ Outstanding while carrying no correct allele.
@@ -860,9 +889,9 @@ function statsFor(state, horses) {
     // allele pairs average to the right answer without either allele being right.
     if (state.engine === 'proposed') {
       for (const p of parts) {
-        if (!onTarget(p.score)) continue;
-        blindOf++;
-        if (!h.genotype.type[p.trait].includes(nearestRung(BREEDS[h.breed].ideal[p.trait][0]))) blind++;
+        const holds = h.genotype.type[p.trait].includes(nearestRung(BREEDS[h.breed].ideal[p.trait][0]));
+        if (onTarget(p.score)) { blindOf++; if (!holds) blind++; }
+        if (holds) { hiddenOf++; if (!onTarget(p.score)) hidden++; }
       }
     }
     score += conformationScore(state, h);
@@ -875,7 +904,8 @@ function statsFor(state, horses) {
     }
   }
   const n = horses.length;
-  return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n, blind: blindOf ? blind / blindOf : 0 };
+  return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n,
+    blind: blindOf ? blind / blindOf : 0, hidden: hiddenOf ? hidden / hiddenOf : 0 };
 }
 
 /**
@@ -912,8 +942,10 @@ function cmdSweep(flags) {
   console.log(`FOUNDING STOCK, ${n} horses per row | engine ${engine} | ${tuningNote(tuning)}`);
   if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, reach +/-${PROP.reachPoints}, mode ${PROP.foundingMode}, specialist ${PROP.specialist}`);
   console.log('');
-  console.log('  breed             band | score  on target  FIXED  carries | mean dev  wrong-breed  looks-right-carries-nothing');
-  console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  -----------  ---------------------------');
+  console.log('  breed             band | score  on target  FIXED  carries | mean dev  wrong-breed  looks-right   carries-');
+  console.log('                         |                                  |                       carries-      but-looks-');
+  console.log('                         |                                  |                       nothing       wrong');
+  console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  -----------  -----------   ----------');
   for (const breed of breeds) {
     for (const band of bands) {
       const state = { engine, breed, band, seed, horses: [] };
@@ -921,7 +953,7 @@ function cmdSweep(flags) {
       const miss = engine === 'proposed'
         ? barnMissRate(state, barn, 400, deriveSeed(seed, `miss_${breed}_${band}`))
         : { any: NaN, perBarn: NaN };
-      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 12)}   [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}%` : 'n/a'}]`);
+      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 11)}   ${padL((s.hidden * 100).toFixed(1) + '%', 10)}  [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}%` : 'n/a'}]`);
     }
   }
   console.log('');
@@ -1038,6 +1070,75 @@ function cmdProgramme(flags) {
   console.log('  type-gene game; the demoted twenty-allele modifier is what remains to chase after it.');
 }
 
+/**
+ * LEGIBILITY — added 2026-08-07 for the expression-rule question.
+ *
+ * The fix document's own headline test (§5.2): take two UNRELATED horses that both read Outstanding
+ * on all five traits, roll foals, and ask how often the foal matches them. This is the number that
+ * says whether a child can reason about a pairing from what they can see. COI is 0 throughout
+ * (unrelated founders), so nothing here is inbreeding depression.
+ */
+function cmdLegibility(flags) {
+  const engine = flags.engine ?? 'proposed';
+  const breed = (flags.breed ?? 'AR').toUpperCase();
+  const band = flags.band ?? 'low';
+  const pairs = Number(flags.pairs ?? 300);
+  const foals = Number(flags.foals ?? 20);
+  const seed = Number(flags.seed ?? 7171);
+  const tuning = tuningFromFlags(flags);
+  applyTuning(tuning);
+
+  const state = { engine, breed, band, seed, horses: [] };
+  const mature = (h) => ({ ...h, ageYears: MATURITY_YEARS, coi: 0 });
+
+  // Mint until we have enough parents reading Outstanding on all five.
+  const elite = [];
+  for (let i = 0; elite.length < pairs * 2 && i < 400000; i++) {
+    const s = deriveSeed(seed, `elite_${i}`);
+    const f = mintFounder(state, s);
+    const h = mature({ id: i + 1, breed, gen: 1, sire: null, dam: null, seed: s, genotype: f.genotype, specialists: f.specialists });
+    if (CONF_TRAITS.every((t) => onTarget(confParts(state, h, t).score))) elite.push(h);
+  }
+  if (elite.length < 2) { console.error('Not enough Outstanding-on-all-five founders to form a pair.'); process.exit(1); }
+
+  let allFive = 0, nFoals = 0, sumOn = 0, sumScore = 0;
+  const perTrait = CONF_TRAITS.map(() => ({ on: 0, sumSq: 0, sum: 0, n: 0 }));
+  const pairSds = [];
+  for (let p = 0; p + 1 < elite.length && p / 2 < pairs; p += 2) {
+    const sire = elite[p], dam = elite[p + 1];
+    const vals = CONF_TRAITS.map(() => []);
+    for (let i = 0; i < foals; i++) {
+      const fs = deriveSeed(deriveSeed(seed, `leg_${p}_${i}`), 'foal');
+      const foal = mature({ id: 0, breed, gen: 2, sire: 1, dam: 2, seed: fs, genotype: makeFoal(state, sire.genotype, dam.genotype, fs) });
+      const parts = CONF_TRAITS.map((t) => confParts(state, foal, t));
+      const on = parts.filter((q) => onTarget(q.score)).length;
+      nFoals++; sumOn += on; sumScore += conformationScore(state, foal);
+      if (on === CONF_TRAITS.length) allFive++;
+      parts.forEach((q, k) => {
+        if (onTarget(q.score)) perTrait[k].on++;
+        perTrait[k].sum += q.mature; perTrait[k].sumSq += q.mature * q.mature; perTrait[k].n++;
+        vals[k].push(q.mature);
+      });
+    }
+    // Within-pairing SD: the spread of foals from ONE cross, which is what a player experiences.
+    for (const v of vals) {
+      const m = v.reduce((a, b) => a + b, 0) / v.length;
+      pairSds.push(Math.sqrt(v.reduce((a, b) => a + (b - m) * (b - m), 0) / v.length));
+    }
+  }
+
+  console.log(`LEGIBILITY — ${BREEDS[breed].name}, band ${band}, engine ${engine} | ${tuningNote(tuning)}`);
+  if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, reach +/-${PROP.reachPoints}, expression ${PROP.expression}`);
+  console.log(`Both parents read Outstanding on all five. Unrelated, COI 0. ${nFoals} foals from ${Math.floor(nFoals / foals)} pairings.\n`);
+  console.log(`  Foal matches both parents on ALL FIVE traits : ${(allFive / nFoals * 100).toFixed(1)}%`);
+  console.log(`  Mean traits on target in a foal              : ${(sumOn / nFoals).toFixed(2)} of 5   (parents: 5.00)`);
+  console.log(`  Mean conformation score of a foal            : ${(sumScore / nFoals).toFixed(1)}`);
+  console.log(`  Within-pairing SD of a trait's mature value  : ${(pairSds.reduce((a, b) => a + b, 0) / pairSds.length).toFixed(1)} points  (show noise SD is ${SHOW_NOISE_SD})`);
+  console.log('');
+  console.log('  trait            P(foal Outstanding)');
+  CONF_TRAITS.forEach((t, k) => console.log(`  ${pad(t, 16)} ${padL((perTrait[k].on / perTrait[k].n * 100).toFixed(1) + '%', 8)}`));
+}
+
 function cmdPedigree(state, id) {
   const h = state.horses[id - 1];
   if (!h) { console.error(`No horse #${id}.`); process.exit(1); }
@@ -1096,6 +1197,7 @@ switch (cmd) {
   case 'summary': cmdSummary(loadState(statePath)); break;
   case 'sweep': cmdSweep(flags); break;
   case 'programme': case 'program': cmdProgramme(flags); break;
+  case 'legibility': cmdLegibility(flags); break;
   case 'reset':
     if (existsSync(statePath)) { unlinkSync(statePath); console.log(`Deleted ${statePath}.`); }
     else console.log('Nothing to delete.');
