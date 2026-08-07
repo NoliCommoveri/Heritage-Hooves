@@ -100,28 +100,58 @@ describe('foalPotentialDistribution', () => {
   });
 });
 
-describe('foalExpressedDistribution and centralInterval', () => {
-  const config = { conformation_maturity_years: 5, conformation_realization_at_birth: 0.3, inbreeding_depression_factor: 0.5 };
+// Slice 0028 §2.3/§5 step 12: foalExpressedDistribution now reads a type-gene pair
+// (genotype.mendelian.NL) alongside the polygenic modifier block - horseWith() above only sets
+// .polygenic, so these tests build their own genotypes with both.
+function horseWithType(bits: string, typePair: [string, string]): Genotype {
+  const genotype = horseWith(bits);
+  genotype.mendelian.NL = typePair;
+  return genotype;
+}
 
-  it('sums to 1 and stays inside the expressed range', () => {
-    const distribution = foalExpressedDistribution({ sire: ALL_HETEROZYGOUS, dam: ALL_HETEROZYGOUS, trait: TRAIT, coi: 0, noiseSd: 6, config });
+const TARGET = 50;
+const MODIFIER_STEP = 0.1;
+
+describe('foalExpressedDistribution and centralInterval', () => {
+  it('sums to 1 and stays inside the clamped 1..99 expressed range', () => {
+    const sire = horseWithType('10'.repeat(LOCI_PER_TRAIT), ['42', '58']);
+    const dam = horseWithType('10'.repeat(LOCI_PER_TRAIT), ['46', '54']);
+    const distribution = foalExpressedDistribution({ sire, dam, trait: TRAIT, target: TARGET, modifierStep: MODIFIER_STEP, noiseSd: 0.5 });
     let total = 0;
     for (const [value, probability] of distribution) {
       total += probability;
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThanOrEqual(100);
+      expect(value).toBeGreaterThanOrEqual(1);
+      expect(value).toBeLessThanOrEqual(99);
     }
     expect(total).toBeCloseTo(1, 6);
   });
 
-  it('a fixed pairing with no noise collapses to a single value', () => {
-    const distribution = foalExpressedDistribution({ sire: ALL_ONES, dam: ALL_ONES, trait: TRAIT, coi: 0, noiseSd: 0, config });
+  it('a fixed pairing (both parents homozygous at the same rung) with no noise collapses to a single value', () => {
+    const sire = horseWithType('1'.repeat(LOCI_PER_TRAIT * 2), ['50', '50']);
+    const dam = horseWithType('1'.repeat(LOCI_PER_TRAIT * 2), ['50', '50']);
+    const distribution = foalExpressedDistribution({ sire, dam, trait: TRAIT, target: TARGET, modifierStep: MODIFIER_STEP, noiseSd: 0 });
     expect(distribution.size).toBe(1);
+    // potential 20 -> modifier (20-10)*0.1 = 1.0, shown 50 (on target) -> 51.
+    expect([...distribution.keys()][0]).toBe(51);
+  });
+
+  it('faults dominant: the foal always shows the allele FURTHER from target, never the closer one', () => {
+    // Sire homozygous 42 (8 off), dam homozygous 58 (8 off too) - every possible foal pair is
+    // (42, 58), which is a tie in distance either way (both 8 off), so the shown value is always
+    // one of {42, 58} via shownValueFor's stable tie-break (the lower value), never 50.
+    const sire = horseWithType('0'.repeat(LOCI_PER_TRAIT * 2), ['42', '42']);
+    const dam = horseWithType('0'.repeat(LOCI_PER_TRAIT * 2), ['58', '58']);
+    const distribution = foalExpressedDistribution({ sire, dam, trait: TRAIT, target: TARGET, modifierStep: MODIFIER_STEP, noiseSd: 0 });
+    // potential 0 -> modifier (0-10)*0.1 = -1.0, shown 42 (the tie-break) -> 41.
+    expect(distribution.size).toBe(1);
+    expect([...distribution.keys()][0]).toBe(41);
   });
 
   it('the central interval covers at least the coverage asked for, and widens with noise', () => {
-    const tight = foalExpressedDistribution({ sire: ALL_ONES, dam: ALL_ZEROS, trait: TRAIT, coi: 0, noiseSd: 2, config });
-    const loose = foalExpressedDistribution({ sire: ALL_ONES, dam: ALL_ZEROS, trait: TRAIT, coi: 0, noiseSd: 12, config });
+    const sire = horseWithType('10'.repeat(LOCI_PER_TRAIT), ['30', '70']);
+    const dam = horseWithType('10'.repeat(LOCI_PER_TRAIT), ['34', '66']);
+    const tight = foalExpressedDistribution({ sire, dam, trait: TRAIT, target: TARGET, modifierStep: MODIFIER_STEP, noiseSd: 0.5 });
+    const loose = foalExpressedDistribution({ sire, dam, trait: TRAIT, target: TARGET, modifierStep: MODIFIER_STEP, noiseSd: 6 });
 
     const tightBand = centralInterval(tight, 0.8);
     const looseBand = centralInterval(loose, 0.8);

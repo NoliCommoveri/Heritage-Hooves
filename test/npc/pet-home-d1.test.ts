@@ -548,7 +548,7 @@ describeWithSqlite('sellHorseToPetHome (the player entry point)', () => {
     seedPlayerStable(db);
     seedHorse(db, 204, PLAYER);
     db.exec(
-      `INSERT INTO import_offers (id, stable_id, account_id, source, status, quality_band, polygenic_one_chance,
+      `INSERT INTO import_offers (id, stable_id, account_id, source, status, quality_band, ability_one_chance,
                                   mare_candidates, mare_claims, stallion_candidates, stallion_claims,
                                   age_min_game_days, age_max_game_days, granted_game_day, rng_seed, created_real_ts)
        VALUES (700,${String(PLAYER)},1,'founding','claimed','mid',0.5,4,2,4,2,1000,2000,0,1,0)`

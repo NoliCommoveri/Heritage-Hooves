@@ -46,23 +46,66 @@ export interface ConfigValues {
   gestation_days_sd: number;
   twin_double_ovulation_rate: number;
   twin_both_continue_rate: number;
+  /** Slice 0028 §2.7, migration 0183. Mare prenatal care: charged on the covering the moment a
+   * player commits (before the foal exists), plus one turn (ACTION_COSTS.prenatal_care). Live - a
+   * price change affects the next covering only; pregnancies.prenatal_care snapshots whether THIS
+   * pregnancy bought it, same as gestation_days_mean/sd are read live but the roll is snapshotted. */
+  prenatal_care_cost: number;
+  /** Slice 0028 §2.8, migration 0184. The share of NPC coverings that buy mare prenatal care -
+   * charged to the stable's own real balance like any other cost (deliberately not special-cased),
+   * so a stable that stops earning stops buying it. Neither this nor npc_tested_share below raises
+   * the NPC ceiling (activeNpcCeilingRow) - they only stop an NPC line going stale BELOW it. */
+  npc_prenatal_care_chance: number;
+  /** Slice 0028 §2.8, migration 0184. Roughly this share of an NPC stable's horses are treated as
+   * conformation-panel-tested for mate-selection/market-ranking purposes (expressedFor,
+   * src/db/npcBreeding.ts) - which half is derived deterministically from the horse's own rng_seed
+   * against the stable's, never drawn per decision, so a stable's opinion of one of its own horses
+   * never flickers between two ticks. */
+  npc_tested_share: number;
   /** Slice 0005 §2.3/§4: a founding batch's shape and the age range its candidates arrive in. */
   founding_mare_candidates: number;
   founding_mare_claims: number;
   founding_stallion_candidates: number;
   founding_stallion_claims: number;
-  /** The band name a fresh founding batch mints at by default - see quality_bands below. */
+  /** The band name a fresh founding batch mints at by default - see quality_bands below. Migration
+   * 0181: 'low', not 'mid' (slice 0028 §2.6: "Founding stock mints at band low"). */
   founding_quality_band: string;
-  /** Band name -> polygenic_one_chance (the probability any given polygenic allele is a '1'). */
-  quality_bands: Record<string, number>;
+  /** Slice 0028 §2.5, migration 0178: band name -> a fixed profile of type-gene pair-specs (§2.5's
+   * "dealt, not drawn") plus the ability-only polygenic chance (renamed from a single shared
+   * polygenic_one_chance - see generate.ts's own abilityOneChance comment for why the split was
+   * forced rather than cosmetic). `pairs` is read by typeGene.ts's dealForBand; do not widen a
+   * bucket index past 3 (alleleBuckets().length - 1) without re-checking REACH_RUNGS. */
+  quality_bands: Record<string, { pairs: [number, number][]; ability_one_chance: number }>;
+  /** Migration 0181: the consignment dealer's own band, split off founding_quality_band so the two
+   * can be retuned independently - 'mid' (§2.6: "the consignment dealer's... working band"). Amendment
+   * 0017a §5.8 had the dealer read quality_bands.mid directly by a hardcoded literal; this replaces
+   * that literal with a real key. */
+  consignment_quality_band: string;
   founding_age_min_game_days: number;
   founding_age_max_game_days: number;
   /** 0 means never (slice 0005 §6.2) - no tick stage sweeps offers yet; checked at claim time only. */
   founding_offer_expiry_game_days: number;
-  /** Slice 0006 §4.2. Read only at birth/candidate-generation; the realised roll is then snapshotted
-   * onto horses.environmental_noise, so changing this never moves a horse already alive. */
+  /** Slice 0006 §4.2, narrowed to CONFORMATION traits only by slice 0028 §4 rule 6 (migration 0179) -
+   * ability traits read ability_noise_sd below instead. Read only at birth/candidate-generation; the
+   * realised roll is then snapshotted onto horses.environmental_noise, so changing this never moves
+   * a horse already alive. */
   conformation_noise_sd: number;
-  /** Slice 0006 §4.3. Live - read fresh on every page view. */
+  /** Slice 0028 §4 rule 6, migration 0179: ability traits' own noise SD, split off
+   * conformation_noise_sd so dropping the conformation number (6 -> 0.5) does not silently tighten
+   * every discipline class's noise too. Same value (6) conformation_noise_sd held before this slice. */
+  ability_noise_sd: number;
+  /** Slice 0028 §2.3, migration 0179: the +/-1.0-range modifier step multiplied against a
+   * conformation trait's (potential - 10) polygenic count. Structural in spirit (moving it changes
+   * what "the tie-breaker" means) but kept live, like every other conformation number here, so the
+   * operator can retune it from /admin/config with no deploy. */
+  conformation_modifier_step: number;
+  /** Slice 0028 §5 step 10, migration 0179. The conformation panel's price - one panel per horse
+   * (§9 open question 2, decided: priced low on purpose, see §3.4/§3.5's "the market pays +2
+   * generations if a child tests"). Read live, at the point of purchase, same as genotype_test_cost. */
+  conformation_test_cost: number;
+  /** Slice 0006 §4.3. Ability-only now (slice 0028 §2.4: conformation is no longer realized by age
+   * at all - conformationValues stopped calling realization()). Kept as a live config key rather than
+   * renamed, since renaming a config key is a migration for no behavioural gain (§2.4's own note). */
   conformation_maturity_years: number;
   conformation_realization_at_birth: number;
   /** Live - see CLAUDE.md's conformation entry: changing this re-scores every already-inbred horse

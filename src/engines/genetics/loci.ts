@@ -13,9 +13,25 @@
 // exactly (codes, alleles, order) - the migration is what a player-facing admin might edit
 // (teaching_text), this file is what the engine actually computes with, and they must agree.
 
+// The conformation type-gene ladder (slice 0028 §2.1/§2.2): a rung every RUNG_STEP points, from
+// RUNG_BASE up. Defined here, self-contained, rather than in src/engines/conformation/typeGene.ts
+// (which owns the rest of the ladder's maths) because typeGene.ts needs the rest of the genetics
+// engine (TraitCode, IdealVector) and this file must stay import-free to avoid a cycle back through
+// genotype.ts. typeGene.ts imports these three constants from here instead of restating them.
+export const TYPE_GENE_RUNG_BASE = 2;
+export const TYPE_GENE_RUNG_STEP = 4;
+export const TYPE_GENE_RUNG_COUNT = 25;
+const TYPE_GENE_ALLELES: readonly string[] = Array.from({ length: TYPE_GENE_RUNG_COUNT }, (_, rung) => String(TYPE_GENE_RUNG_BASE + rung * TYPE_GENE_RUNG_STEP));
+// The middle rung (index 12 of 0-24) = 2 + 12*4 = 50.
+const TYPE_GENE_WILD_TYPE = TYPE_GENE_ALLELES[12];
+
 export interface Locus {
   code: string;
-  alleles: readonly [string, string];
+  /** Two alleles for every locus in this file except the five type-gene loci appended at the end
+   * (slice 0028 §2.1), which carry 25 - one per rung of the conformation ladder
+   * (src/engines/conformation/typeGene.ts). Widened from `readonly [string, string]` for exactly
+   * those five; every other locus still only ever stores two. */
+  alleles: readonly string[];
   /**
    * The allele a horse reads as, at both copies, when it predates this locus entirely (the
    * missing-locus rule, genotype.ts's getMendelianPair - slice 0002 §4.2). For four of these five
@@ -69,6 +85,25 @@ export const LOCI: readonly Locus[] = [
   { code: 'DWARF', alleles: ['N', 'Dw'], wildType: 'N' },
   { code: 'HYDRO', alleles: ['N', 'Hy'], wildType: 'N' },
   { code: 'DSLD', alleles: ['N', 'Dsld'], wildType: 'N' },
+  // Five conformation type loci, slice 0028 §2.1 - one per conformation trait (NL=neck_length,
+  // SA=shoulder_angle, BL=back_length, HS=hock_set, HP=head_profile), replacing the old breed-blind
+  // polygenic-only expression with a real Mendelian gene per trait. Appended after DSLD (the true
+  // end of LOCI at the time this landed), never inserted earlier - this file's own append-only rule
+  // above, not literally "right after PATN1" as an earlier draft of the slice document said, since
+  // seven disease loci already sit between PATN1 and here.
+  //
+  // 25 alleles each, named for their own value on the trait's 1-99 scale, a rung every
+  // TYPE_GENE_RUNG_STEP (4) points: "2","6","10",...,"98" - src/engines/conformation/typeGene.ts
+  // owns the rest of the ladder's maths; this array is just the allele list in canonical ascending
+  // order, which is what makes sortAllelePair's indexOf-based ordering work. wildType is "50", the
+  // middle rung - a hand-created horse or one predating this locus reads as homozygous there (the
+  // missing-locus rule, genotype.ts's getMendelianPair), same as slice 0005 §6.6's neutral-control
+  // rule already gives a hand-created horse everywhere else.
+  { code: 'NL', alleles: TYPE_GENE_ALLELES, wildType: TYPE_GENE_WILD_TYPE },
+  { code: 'SA', alleles: TYPE_GENE_ALLELES, wildType: TYPE_GENE_WILD_TYPE },
+  { code: 'BL', alleles: TYPE_GENE_ALLELES, wildType: TYPE_GENE_WILD_TYPE },
+  { code: 'HS', alleles: TYPE_GENE_ALLELES, wildType: TYPE_GENE_WILD_TYPE },
+  { code: 'HP', alleles: TYPE_GENE_ALLELES, wildType: TYPE_GENE_WILD_TYPE },
 ] as const;
 
 // Ancestors beyond this many generations are treated as unrelated founders (pedigree.ts). This is

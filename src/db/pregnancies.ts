@@ -35,6 +35,8 @@ export interface PregnancyRow {
    * is null - see the comment on foalDuePregnancies' query below. */
   cancelled_game_day: number | null;
   cancelled_reason: string | null;
+  /** Slice 0028 §2.7, migration 0183. Copied from the covering at conception, for display only. */
+  prenatal_care: number;
 }
 
 export async function getActivePregnancyForMare(env: Env, mareId: number): Promise<PregnancyRow | null> {
@@ -65,6 +67,10 @@ export interface BuildPregnancyInsertInput {
   foalRngSeed: number;
   gestationDaysMean: number;
   gestationDaysSd: number;
+  /** Slice 0028 §2.7, migration 0183. Copied over from the covering for the record only - the
+   * genotype effect is already baked into `genotype` above by the time this is called
+   * (src/db/coverings.ts's applyPrenatalRatchet runs before this function). */
+  prenatalCare: boolean;
 }
 
 export interface PregnancyInsertResult {
@@ -94,8 +100,8 @@ export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyIns
   const statement = env.DB.prepare(
     `INSERT INTO pregnancies (
        covering_id, dam_id, sire_id, conceived_game_day, gestation_days, due_game_day, status,
-       rolled_genotype, rolled_coi, rng_seed, foal_rng_seed, foal_id, last_processed_tick_seq, created_real_ts
-     ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, NULL, NULL, ?)`
+       rolled_genotype, rolled_coi, rng_seed, foal_rng_seed, foal_id, last_processed_tick_seq, created_real_ts, prenatal_care
+     ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?, NULL, NULL, ?, ?)`
   ).bind(
     input.coveringId,
     input.damId,
@@ -107,7 +113,8 @@ export function buildPregnancyInsertStatement(env: Env, input: BuildPregnancyIns
     input.coi,
     pregnancySeed,
     input.foalRngSeed,
-    nowSeconds
+    nowSeconds,
+    input.prenatalCare ? 1 : 0
   );
 
   return { statement, dueGameDay };

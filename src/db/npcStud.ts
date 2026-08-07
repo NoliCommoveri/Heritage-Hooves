@@ -37,10 +37,10 @@ import { createStudListing, getActiveStudListingForHorse, withdrawStudListing } 
 
 async function ensureListingForStallion(
   env: Env,
-  params: { stable: StableRow; stallion: HorseRow; ceiling: number; target: SelectionTarget; gameDay: number; config: Config }
+  params: { stable: StableRow; stallion: HorseRow; ceiling: number; target: SelectionTarget; gameDay: number; config: Config; breedById: Map<number, BreedRow> }
 ): Promise<void> {
   const cfg = params.config.values;
-  const quality = qualityFor(params.stallion, params.target, params.gameDay, params.config);
+  const quality = qualityFor(params.stallion, params.target, params.gameDay, params.config, params.breedById);
   const existing = await getActiveStudListingForHorse(env, params.stallion.id);
 
   if (quality > params.ceiling) {
@@ -78,7 +78,7 @@ async function runOneStablePolicy(
   );
 
   for (const stallion of stallions) {
-    await ensureListingForStallion(env, { stable, stallion, ceiling, target, gameDay, config });
+    await ensureListingForStallion(env, { stable, stallion, ceiling, target, gameDay, config, breedById });
   }
 }
 

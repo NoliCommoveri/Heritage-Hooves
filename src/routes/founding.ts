@@ -13,13 +13,14 @@ import {
   type ImportOfferRow,
   type ClaimOfferResult,
 } from '../db/founding';
-import { getBreedsInPlay } from '../db/breeds';
+import { getBreedsInPlay, getBreedById } from '../db/breeds';
 import { getConformationTraits } from '../db/quantitativeTraits';
 import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import { deriveSeed } from '../lib/rng';
 import { describeHorse } from '../engines/genetics/describe';
 import { conformationValues, conformationDisplayRows, rollEnvironmentalNoise } from '../engines/conformation/model';
+import { parseIdealVector } from '../engines/showing/score';
 import { validateHorseNamePart } from '../lib/validation';
 
 async function loadOwnedStable(ctx: RequestContext, stableId: number): Promise<StableRow | Response> {
@@ -60,6 +61,10 @@ async function renderPage(
 
   if (offer && offer.status === 'open') {
     const [rows, traitRows] = await Promise.all([getCandidatesForOffer(ctx.env, offer.id), getConformationTraits(ctx.env)]);
+    // Slice 0028 §2.3: every candidate in this offer is the same breed, so its ideal_vector is
+    // resolved once, outside the map, rather than per candidate.
+    const offerBreed = offer.breed_id ? await getBreedById(ctx.env, offer.breed_id) : undefined;
+    const offerIdeal = offerBreed?.ideal_vector ? parseIdealVector(offerBreed.ideal_vector) : null;
     const candidates = rows.map((candidate) => {
       const genotype = parseGenotype(candidate.genotype);
       const patternSeed = deriveSeed(candidate.rng_seed, 'pattern_expression');
@@ -70,8 +75,7 @@ async function renderPage(
       // this is exactly the noise the claimed horse will get (buildFoundingHorseInsertStatement
       // rolls it from the same rngSeed, unchanged on claim).
       const noise = rollEnvironmentalNoise(candidate.rng_seed, ctx.config.values.conformation_noise_sd);
-      // A founding candidate has no pedigree, so coi is always 0 here.
-      const conformation = conformationDisplayRows(conformationValues(genotype, noise, ageYears, 0, ctx.config.values), traitRows);
+      const conformation = conformationDisplayRows(conformationValues(genotype, noise, ctx.config.values, offerIdeal), traitRows);
       return { candidate, description, gaited: phenotype.gaited, conformation };
     });
     return htmlResponse(renderFoundingPage({ world: ctx.world, isAdmin, actionsLeft, gameDaysPerYear, stable, offer, candidates, ...extra }));

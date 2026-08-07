@@ -30,7 +30,10 @@ export interface ImportOfferRow {
   status: ImportOfferStatus;
   breed_id: number | null;
   quality_band: string;
-  polygenic_one_chance: number;
+  /** Renamed from polygenic_one_chance by migration 0182 (slice 0028 rule 8): after the quality-band
+   * split (migration 0178) this column only ever drove the ABILITY polygenic draw, never
+   * conformation - see generate.ts's own abilityOneChance comment. */
+  ability_one_chance: number;
   mare_candidates: number;
   mare_claims: number;
   stallion_candidates: number;
@@ -114,8 +117,8 @@ export interface MintOfferParams {
 export async function mintOffer(env: Env, params: MintOfferParams): Promise<{ id: number }> {
   const v = params.config.values;
   const band = params.band ?? v.founding_quality_band;
-  const polygenicOneChance = v.quality_bands[band];
-  if (polygenicOneChance === undefined) throw new Error(`mintOffer: unknown quality band "${band}"`);
+  const bandConfig = v.quality_bands[band];
+  if (bandConfig === undefined) throw new Error(`mintOffer: unknown quality band "${band}"`);
 
   const seed = randomSeed();
   const nowSeconds = nowUtcSeconds();
@@ -124,7 +127,7 @@ export async function mintOffer(env: Env, params: MintOfferParams): Promise<{ id
   const result = await env.DB.prepare(
     `INSERT INTO import_offers (
        stable_id, account_id, source, granted_by_account_id, status, breed_id,
-       quality_band, polygenic_one_chance, mare_candidates, mare_claims, stallion_candidates, stallion_claims,
+       quality_band, ability_one_chance, mare_candidates, mare_claims, stallion_candidates, stallion_claims,
        age_min_game_days, age_max_game_days, granted_game_day, generated_game_day, claimed_game_day,
        expires_game_day, rng_seed, created_real_ts
      ) VALUES (?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`
@@ -135,7 +138,7 @@ export async function mintOffer(env: Env, params: MintOfferParams): Promise<{ id
       params.source,
       params.grantedByAccountId,
       band,
-      polygenicOneChance,
+      bandConfig.ability_one_chance,
       v.founding_mare_candidates,
       v.founding_mare_claims,
       v.founding_stallion_candidates,
@@ -179,6 +182,13 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
   // Migration 0141: the breed's ability leaning, likewise parsed once per offer rather than per
   // candidate. Null (no leaning decided) parses to {} and every trait draws at the band chance.
   const abilityBias = parseAbilityBias(breed.ability_bias);
+  // Slice 0028 §2.5: the offer's own quality_band (already snapshotted at mint time) resolves to
+  // this batch's pair-specs from the LIVE config - config.values.quality_bands can be retuned after
+  // an offer is minted, same as every other live tunable this generator reads (CLAUDE.md §5.5 only
+  // requires snapshotting what changes an ALREADY-OPEN offer's candidates; nothing here is minted
+  // until this function runs).
+  const bandConfig = config.values.quality_bands[offer.quality_band];
+  if (!bandConfig) throw new Error(`chooseBreedForOffer: unknown quality band "${offer.quality_band}"`);
 
   const slots: ('mare' | 'stallion')[] = [
     ...Array<'mare'>(offer.mare_candidates).fill('mare'),
@@ -199,7 +209,11 @@ export async function chooseBreedForOffer(env: Env, offerId: number, breedId: nu
     const candidateSeed = deriveSeed(offer.rng_seed, `candidate_${String(index)}`);
     const generated = generateCandidate({
       pool,
-      polygenicOneChance: offer.polygenic_one_chance,
+      abilityOneChance: offer.ability_one_chance,
+      typeGenePairSpecs: bandConfig.pairs,
+      // §2.6: round-robin across this whole batch (mares then stallions, slots' own order) - the
+      // batch IS the founding batch the rule means, so the slot index is exactly the right cycle.
+      roundRobinIndex: index,
       robustnessOneChance: config.values.robustness_one_chance,
       ageMinGameDays: offer.age_min_game_days,
       ageMaxGameDays: offer.age_max_game_days,

@@ -206,6 +206,11 @@ async function mintConsignmentCandidate(
   env: Env,
   batchSeed: number,
   index: number,
+  /** This candidate's 0-based position WITHIN its own breed's slice of the batch (resets to 0 per
+   * breed, unlike `index` above which runs across the whole batch) - slice 0028 §2.6's round-robin
+   * cycle, so a small consignment_horses_per_breed still covers every trait within one breed rather
+   * than picking up wherever the previous breed's global index left off. */
+  roundRobinIndex: number,
   breed: { id: number; code: string; founding_allele_pool: string; ideal_vector: string | null; ability_bias: string | null },
   workingInjections: ConsignmentInjectionRow[],
   appliedThisBatch: Map<number, number>,
@@ -219,13 +224,18 @@ async function mintConsignmentCandidate(
 
   // Slice 0019 Parts A/B: the dealer runs every candidate through generateCandidate exactly like
   // founding.ts's chooseBreedForOffer, so it inherits the specialist for free (§6) - no separate
-  // logic here, just the same two inputs threaded through.
+  // logic here, just the same inputs threaded through.
+  //
+  // Slice 0028 §2.6/§9 point 1: the dealer mints at consignment_quality_band ('mid' - a real config
+  // key now, migration 0181, replacing the old hardcoded `cfg.quality_bands.mid ?? 0.5` literal this
+  // comment used to describe) - mid is where a child buys raw material they cannot breed themselves.
+  const bandConfig = cfg.quality_bands[cfg.consignment_quality_band];
+  if (!bandConfig) throw new Error(`mintConsignmentCandidate: unknown quality band "${cfg.consignment_quality_band}"`);
   const generated = generateCandidate({
     pool,
-    // §3.2: mid quality band, exactly like founding stock - the slant is colour/gait only, never
-    // the polygenic draw. quality_bands is keyed by band name; 'mid' is the founding-stock band
-    // name (slice 0005 §4) and is not itself a consignment-specific config key.
-    polygenicOneChance: cfg.quality_bands.mid ?? 0.5,
+    abilityOneChance: bandConfig.ability_one_chance,
+    typeGenePairSpecs: bandConfig.pairs,
+    roundRobinIndex,
     robustnessOneChance: cfg.robustness_one_chance,
     ageMinGameDays: cfg.founding_age_min_game_days,
     ageMaxGameDays: cfg.founding_age_max_game_days,
@@ -306,6 +316,7 @@ async function mintConsignmentBatch(
         env,
         batchSeed,
         index,
+        n,
         breed,
         workingInjections,
         appliedThisBatch,

@@ -11,8 +11,10 @@
 
 import { makeRng, deriveSeed, type Rng } from '../../lib/rng';
 import { potential, TRAITS, type TraitCode } from '../genetics/polygenic';
-import type { Genotype } from '../genetics/genotype';
+import { getMendelianPair, type Genotype } from '../genetics/genotype';
 import { anchorFor, CONFORMATION_TRAITS, ABILITY_TRAITS } from './traits';
+import { TYPE_LOCUS_CODE, shownValueFor, meanValueFor } from './typeGene';
+import type { IdealVector } from '../showing/score';
 
 export type NoiseByTrait = Record<TraitCode, number>;
 
@@ -59,16 +61,52 @@ export function noiseFor(rngSeed: number, storedJson: string | null): NoiseByTra
   return out;
 }
 
-/** §4.1. Clamped to 1..99 so the display bar never pins flush against a label. */
+/** §4.1. Ability traits only, from slice 0028 §4 rule 1 onward - conformation has its own version
+ * below (conformationGeneticValue), split rather than branched, so ability's `potential * 5 + noise`
+ * is untouched by anything this slice does to conformation's expression. Clamped to 1..99 so the
+ * display bar never pins flush against a label. */
 export function geneticValue(genotype: Genotype, trait: TraitCode, noise: number): number {
   const raw = potential(genotype, trait) * 5 + noise;
   return Math.min(99, Math.max(1, raw));
+}
+
+function clamp1to99(raw: number): number {
+  return Math.min(99, Math.max(1, Math.round(raw)));
+}
+
+/**
+ * Slice 0028 §2.3: a conformation trait's expressed value reads the horse's own type-gene pair
+ * (loci.ts's NL/SA/BL/HS/HP, one per trait) rather than the old anchor-50 polygenic potential -
+ * `expressed = worseAllele(pair, target) + (alleleCount - 10) * modifierStep + noise`. The 20-bit
+ * polygenic block (`potential`, unchanged in shape and RNG draw order - slice 0028 §2.3/rule 5) is
+ * demoted to a small +/-1.0 tie-breaker, no longer the whole story.
+ *
+ * `target` is read from the horse's own breed's LIVE ideal_vector, never the ideal_vector
+ * snapshotted onto a show_classes row (§2.3's "which standard?") - judging (scoreEntry,
+ * src/engines/showing/score.ts) measures distance against the class's own snapshot separately; this
+ * is what the horse SHOWS, not what it is scored against, and the two are deliberately different
+ * reads of breeds.ideal_vector that will disagree the moment either one is retuned.
+ *
+ * `useMean` is §2.8's one exception: an NPC stable's own opinion of a horse it has (fictionally)
+ * conformation-panel-tested reads the mean of both alleles rather than the worse-of-pair a look
+ * alone tells you - the same information a tested player has. Defaults to false (the shown value)
+ * everywhere else; npcBreeding.ts's expressedFor is the only caller that ever passes true.
+ */
+export function conformationGeneticValue(genotype: Genotype, trait: TraitCode, noise: number, target: number, modifierStep: number, useMean = false): number {
+  const pair = getMendelianPair(genotype, TYPE_LOCUS_CODE[trait]);
+  const shown = useMean ? meanValueFor(pair) : shownValueFor(pair, target);
+  const modifier = (potential(genotype, trait) - 10) * modifierStep;
+  return clamp1to99(shown + modifier + noise);
 }
 
 export interface RealizationConfig {
   conformation_maturity_years: number;
   conformation_realization_at_birth: number;
   inbreeding_depression_factor: number;
+  /** Slice 0028 §2.3/rule 6. Ability-only now (conformation no longer calls realization() at all -
+   * see conformationValues below), but kept on this one shared interface rather than split, since
+   * abilityValues is the only remaining caller of realization() and this interface is its config. */
+  conformation_modifier_step: number;
 }
 
 /** §4.3. trainingFactor/careFactor default to 1.0 - not built yet (§3), wired in without changing
@@ -86,26 +124,43 @@ export function expressedValue(geneticVal: number, realizationVal: number, ancho
 
 export interface ConformationValue {
   code: TraitCode;
-  /** The value right now, at this horse's current age and COI. */
+  /** The value at this horse's current age - and, since slice 0028 §2.4, at every OTHER age too.
+   * ageYears/coi are no longer inputs to this number at all (see conformationValues below); the
+   * parameter stays on this file's other functions only because abilityValues still needs it. */
   expressed: number;
-  /** The value once fully grown, at this horse's own COI - "will mature to", never a moving target
-   * once the horse actually reaches conformation_maturity_years. */
+  /** Slice 0028 §2.4: identical to `expressed`, always - conformation is no longer realized by age,
+   * so there is nothing left for "will mature to" to say that isn't already said. Kept as a field
+   * (rather than removed) only so render/horses.ts's existing ConformationDisplayRow shape does not
+   * need a second change; the horse page's "will mature to" line itself is dropped. */
   matureExpressed: number;
 }
 
-/** The four displayed measurements (§2.1) for one horse, given its genotype, its stored-or-legacy
- * noise, its age and its COI. Ability and hidden traits are expressed by the same underlying
- * functions but are never asked for here - see CONFORMATION_TRAITS. */
-export function conformationValues(genotype: Genotype, noise: NoiseByTrait, ageYears: number, coi: number, config: RealizationConfig): ConformationValue[] {
-  const matureRealization = realization(config.conformation_maturity_years, coi, config);
-  return CONFORMATION_TRAITS.map((trait) => {
-    const gv = geneticValue(genotype, trait, noise[trait]);
-    const anchor = anchorFor(trait);
-    return {
-      code: trait,
-      expressed: expressedValue(gv, realization(ageYears, coi, config), anchor),
-      matureExpressed: expressedValue(gv, matureRealization, anchor),
-    };
+/**
+ * Slice 0028 §2.4: "conformation is not realized by age at all" - a horse's conformation is §2.3's
+ * formula at every age, from birth, which is what makes §2.3's fault-dominant guarantee actually
+ * true for a foal and not just a mature horse. There is deliberately no ageYears/coi parameter here
+ * any more (unlike abilityValues, which still needs both) - do not add one back in and wire it into
+ * realization(); slice 0028 §4 rule 2 is explicit that both of the obvious ways to do that are
+ * defects. Every call site that used to pass an age/coi pair here simply drops them.
+ *
+ * `ideal` is the horse's own breed's live ideal_vector (parseIdealVector'd by the caller), never the
+ * class snapshot. A trait absent from `ideal` - the breed has no target for it, or has no
+ * ideal_vector at all - is skipped rather than shown against a fabricated anchor of 50, which is
+ * exactly the breed-blind defect (§1) this slice exists to close; such a horse is "not judged" (§7
+ * test 11) and now correctly shows nothing for that trait either.
+ */
+export function conformationValues(
+  genotype: Genotype,
+  noise: NoiseByTrait,
+  config: RealizationConfig,
+  ideal: IdealVector | null,
+  useMean = false
+): ConformationValue[] {
+  if (!ideal) return [];
+  return CONFORMATION_TRAITS.filter((trait) => ideal[trait] !== undefined).map((trait) => {
+    const target = ideal[trait]!.target;
+    const expressed = conformationGeneticValue(genotype, trait, noise[trait], target, config.conformation_modifier_step, useMean);
+    return { code: trait, expressed, matureExpressed: expressed };
   });
 }
 

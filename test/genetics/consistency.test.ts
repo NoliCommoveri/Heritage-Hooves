@@ -4,6 +4,12 @@ import { LOCI } from '../../src/engines/genetics/loci';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../../src/engines/genetics/polygenic';
 import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS, ABILITY_TRAITS } from '../../src/engines/conformation/traits';
+import { TYPE_LOCUS_CODE } from '../../src/engines/conformation/typeGene';
+
+// Slice 0028 §2.5/pool.ts's own POOL_EXEMPT_LOCI: the five type-gene loci are dealt from a breed's
+// ideal_vector, never drawn from a founding_allele_pool - restated here rather than imported, since
+// pool.ts's own set is intentionally not exported (nothing outside parseAllelePool should need it).
+const TYPE_GENE_LOCUS_CODES = new Set(Object.values(TYPE_LOCUS_CODE));
 
 // The test CLAUDE.md §8/§11 asks for: the engine's LOCI constant is the source of truth for
 // iteration order and reproducibility (loci.ts), but a player-facing operator might reword
@@ -14,7 +20,13 @@ import { TRAIT_CATEGORY, TRAIT_DIRECTION, CONFORMATION_TRAITS, ABILITY_TRAITS } 
 // four are last and in the right order, not a separate assertion bolted on beside it.
 describe('LOCI vs the seed migrations (0015 + 0050)', () => {
   it('seeds exactly the codes in LOCI, in the same order, with the same canonical allele order', () => {
-    const migrationNames = ['0015_seed_loci.sql', '0050_seed_disease_loci.sql', '0113_seed_colour_pattern_loci.sql', '0145_seed_breed_disease_loci.sql'];
+    const migrationNames = [
+      '0015_seed_loci.sql',
+      '0050_seed_disease_loci.sql',
+      '0113_seed_colour_pattern_loci.sql',
+      '0145_seed_breed_disease_loci.sql',
+      '0186_seed_type_gene_loci.sql',
+    ];
     const rowPattern = /\('([A-Z0-9]+)',\s*'[^']*',\s*'[^']*',\s*'[^']*',\s*'(\[[^\]]*\])'/g;
     const seeded: { code: string; alleles: string[] }[] = [];
 
@@ -66,6 +78,7 @@ describe('every seeded breed pool vs LOCI', () => {
   it.each(pools.map((p) => [p.code, p.poolJson] as const))('%s pool covers every locus, valid alleles, sums to 1.0', (code, poolJson) => {
     const pool = parseAllelePool(poolJson);
     for (const locus of LOCI) {
+      if (TYPE_GENE_LOCUS_CODES.has(locus.code)) continue; // dealt from ideal_vector, never pooled
       expect(pool[locus.code], `${code} missing locus ${locus.code}`).toBeDefined();
       const freqs = pool[locus.code];
       let sum = 0;

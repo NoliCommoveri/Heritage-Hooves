@@ -8,13 +8,22 @@
 // deliberate, not a bug to work around.
 
 import { LOCI } from '../genetics/loci';
+import { TYPE_LOCUS_CODE } from '../conformation/typeGene';
 
 /** Locus code -> {allele: frequency}. Frequencies for a locus sum to 1.0. */
 export type AllelePool = Record<string, Record<string, number>>;
 
+/** Slice 0028 §2.5/§5 step 6: the five conformation type loci (NL/SA/BL/HS/HP) are a KNOWING
+ * exception to "a pool must list every locus" - they are never drawn from a founding_allele_pool at
+ * all (generateCandidate deals them from the breed's ideal_vector instead, via typeGene.ts's
+ * dealForBand). Exempted explicitly, by code, rather than by loosening the loop below, so a missing
+ * COLOUR locus still throws exactly as before. */
+const POOL_EXEMPT_LOCI = new Set(Object.values(TYPE_LOCUS_CODE));
+
 export function parseAllelePool(json: string): AllelePool {
   const parsed = JSON.parse(json) as AllelePool;
   for (const locus of LOCI) {
+    if (POOL_EXEMPT_LOCI.has(locus.code)) continue;
     const freqs = parsed[locus.code];
     if (!freqs) throw new Error(`founding allele pool missing locus ${locus.code}`);
 

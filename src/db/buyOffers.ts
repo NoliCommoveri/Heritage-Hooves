@@ -170,7 +170,8 @@ export async function evaluateOfferForHorse(env: Env, offer: BuyOfferRow, horse:
   }
 
   const [breeds, disciplines] = await Promise.all([getBreeds(env), getDisciplines(env)]);
-  const target = resolveSelectionTarget(policy, config, new Map(breeds.map((b) => [b.id, b])), new Map(disciplines.map((d) => [d.code, d])));
+  const breedById = new Map(breeds.map((b) => [b.id, b]));
+  const target = resolveSelectionTarget(policy, config, breedById, new Map(disciplines.map((d) => [d.code, d])));
   if (!target) {
     reasons.push('This offer is no longer available.');
     return { eligible: false, quality: null, reasons };
@@ -181,7 +182,7 @@ export async function evaluateOfferForHorse(env: Env, offer: BuyOfferRow, horse:
   // nothing.
   if (reasons.length > 0) return { eligible: false, quality: null, reasons };
 
-  const quality = qualityFor(horse, target, gameDay, config);
+  const quality = qualityFor(horse, target, gameDay, config, breedById);
   if (quality < criteria.minQuality) {
     reasons.push(`Doesn't score highly enough yet - this offer wants at least ${String(Math.round(criteria.minQuality))}, and this horse scores ${String(Math.round(quality))}.`);
     return { eligible: false, quality, reasons };

@@ -180,8 +180,8 @@ async function mintFoundingHorses(
   const ageMaxGameDays = isShowBarn ? params.config.values.npc_show_barn_age_max_game_days : params.config.values.founding_age_max_game_days;
 
   const pool = parseAllelePool(params.breed.founding_allele_pool);
-  const polygenicOneChance = params.config.values.quality_bands[params.band];
-  if (polygenicOneChance === undefined) throw new Error(`mintFoundingHorses: unknown quality band "${params.band}"`);
+  const bandConfig = params.config.values.quality_bands[params.band];
+  if (bandConfig === undefined) throw new Error(`mintFoundingHorses: unknown quality band "${params.band}"`);
 
   const [conditions, lethalTriggers, eligibleAbilityTraits] = await Promise.all([
     getEnabledConditions(env),
@@ -207,7 +207,11 @@ async function mintFoundingHorses(
     const seed = randomSeed();
     const generated = generateCandidate({
       pool,
-      polygenicOneChance,
+      abilityOneChance: bandConfig.ability_one_chance,
+      typeGenePairSpecs: bandConfig.pairs,
+      // Slice 0028 §2.6: this mint call's own loop index is this batch's round-robin cycle - an NPC
+      // top-up batch is a founding batch exactly like a player's, so the same rule applies.
+      roundRobinIndex: i,
       robustnessOneChance: params.config.values.robustness_one_chance,
       ageMinGameDays,
       ageMaxGameDays,
