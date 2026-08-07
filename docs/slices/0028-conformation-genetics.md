@@ -11,6 +11,19 @@ drops to the `low` band (built, migration `0176`), and conformation stops being 
 at all (§2.4) — the second replaces a recommendation this document previously made and the
 measurement refuted.**
 
+**Core built 2026-08-07 (migrations `0177`–`0186`, 938 tests passing).** One more operator decision
+was taken during the build itself, replacing §2.7's original wording below: mare prenatal care is no
+longer "move the foal's worst trait two rungs." Every bred foal now gets a **generational ratchet**
+for free — its single worst conformation gene moves one rung toward its own breed's standard,
+automatically, whether or not anyone paid for anything. Prenatal care's real effect is to **replace**
+that free one-gene move with three *different* genes each moving one rung, rather than doubling up on
+the same one. §2.7 below is rewritten to describe what actually shipped; the original "two rungs, one
+trait" text is gone rather than kept as a superseded alternative, per this document's own header rule.
+**Not yet done:** the world reset this needs (§8) has not been run — no living horse carries a
+type-locus genotype yet, so none of this reaches a real family horse until that happens, and it must
+not be run without asking the operator first. §9 open questions 1, 2 and 4 were resolved during the
+build (see §9); questions 3 and 5 are still genuinely open.
+
 Measured throughout by `docs/analysis/breeding-lab.mjs`, which models both engines
 (`--engine today` and `--engine proposed`). Re-run it after any change. Every table below names the
 command that produced it.
@@ -243,54 +256,57 @@ standard on some trait** — a trait that child could never breed right. Round-r
 Founding stock mints at band **`low`**. `mid` is the consignment dealer's and the show barn's
 working band; `high` is what a Champion field is made of.
 
-### 2.7 Mare prenatal care — the mechanism, not an accelerator
+### 2.7 The generational ratchet, and mare prenatal care as its upgrade
 
-A paid option on a covering that **moves the foal's worst trait two rungs (8 points) toward its
-breed standard**.
+**Operator decision taken during the build (2026-08-07), replacing this section's original "prenatal
+care moves the worst trait two rungs" wording.** The mechanism that ships is a ratchet with a free
+baseline and a paid upgrade, not a single paid effect:
 
-- **Two rungs, not one.** Care is really defined in *points*: 8 points is the step the 8-point
-  ladder measured and the pacing everything else was tuned against. At one rung a line does not
-  finish — measured below.
-- **It hangs off the pregnancy.** `pregnancies` already carries its own `rng_seed` and a snapshotted
-  gestation length; one more snapshotted column is the whole storage cost.
-- **Committed before the foal exists**, so it can never be an undo on a bad roll.
-- **Capped at one per foal by construction.** No lifetime counter, no way to stack.
-- **The mare's genotype is untouched.** One trait in one foal, moved once.
-- **Toward the standard only, never away and never past it.** Two rungs is two applications of the
-  same one-rung step, each of which stops at the target, so it cannot overshoot.
-- **It cannot fail.** No die roll. The cost is the price.
-- **The mechanic picks the trait; the player never chooses.** Whichever trait the foal shows
-  furthest from its own breed standard, resolved at foaling, after the alleles are drawn.
+- **Every bred foal, always, whether or not anyone paid for anything**, has its single worst-placed
+  conformation gene — the trait furthest (in rungs) from its own breed's standard — moved **one rung**
+  closer. A foal already on target for every trait is left untouched. Ties (more than one trait
+  equally worst) are broken by the foal's own seeded RNG. Founding stock is exempt — it keeps §2.5's
+  dealt band unchanged; the ratchet only ever touches a foal that was actually bred.
+  (`applyBaselineRatchet`, `src/engines/conformation/typeGene.ts`.)
+- **Mare prenatal care REPLACES that free move, it does not add to it.** Paid care moves **three
+  different genes, one rung each** — the three traits currently furthest from standard, ranked once
+  up front rather than re-evaluated after each move, so the same trait is never touched twice. A foal
+  with fewer than three traits still off target simply gets fewer moves. (`applyCareRatchet`, same
+  file.)
+- **It hangs off the covering, not the pregnancy.** `coverings.prenatal_care` (migration `0183`) is
+  set at booking and read once, at conception, to pick which of the two ratchets a freshly-combined
+  foal genotype gets (`applyPrenatalRatchet`, `src/db/coverings.ts`). Twins from the same covering
+  both get whichever ratchet was bought — the purchase was never split per foal.
+- **Committed before the foal exists**, so it can never be an undo on a bad roll, and it **cannot
+  fail** — no die roll, the cost is the price.
+- **The mare's genotype is untouched.** The ratchet moves the foal's own freshly-drawn alleles, once,
+  never the parent's.
+- **Toward the standard only, never past it.** `moveOneRungTowardTarget` stops at the target; a trait
+  already on target is never chosen as "worst" (both ratchets filter to `distanceRungs > 0` first).
+- **The mechanic picks the trait(s); the player never chooses.** Resolved at conception, after the
+  alleles are drawn, exactly as originally specified.
 - **Cost: `prenatal_care_cost` (default 500) plus one turn**, charged on the covering at the moment
   the player commits. A live tunable. No refund if the covering does not take.
 
-**It moves the worst TRAIT, not the worst ALLELE.** Under §2.3 a horse shows its worse allele, so
-improving one copy of a homozygous pair leaves the other copy showing and the purchase is invisible —
-about half of all purchases, at random, with nothing on screen to explain it. Moving the trait costs
-one allele step on a heterozygote and two on a homozygote. The extra cost is the point.
+**Why a homozygote still costs the full move.** Under §2.3 a horse shows its worse allele, so on a
+homozygous pair one gene "moving one rung" actually means both copies of that pair move one rung each
+(`moveOneRungTowardTarget` moves whichever allele(s) sit at the pair's own worst distance — both, on a
+homozygote). The purchase is never invisible the way the original single-gene design risked: the
+baseline ratchet already guarantees *some* visible movement on every bred foal, paid or not, and care
+buys two more genes' worth of movement on top of a better-targeted first one.
 
-**The finding that reframes this whole section.** On the 4-point ladder, in a barn running under real
-constraints — twelve stalls, a mare capped at five coverings, the genotype read one round in four —
-a line that never buys care **does not produce an all-Outstanding horse in twenty-five generations
-97% of the time.** It plateaus around 2.0 of 5 traits with COI already past 40%. Mendelian
-inheritance shuffles alleles; it never invents one, and the founding batch simply does not hold
-enough near-target alleles to finish five traits.
-
-| care bought on | first all-Outstanding horse | first all-FIXED horse |
-|---|---|---|
-| no coverings | **97% never get there in 25 generations** | never |
-| 1 covering in 4 | median gen 21 | median >25 |
-| half | median gen 15 | median gen 20 |
-| 3 in 4 | median gen 12 | median gen 16 |
-| every covering | median gen 11 | median gen 14 |
-
-`dynasty --mares 3 --studs 2 --cap 5 --herd 12 --select mixed --coax 2 --coax-chance <r>`
-
-So **`prenatal_care_cost` is the most load-bearing number in this slice.** It does not accelerate the
-endgame, it *is* the endgame, and whatever a child can afford per game year is the pace of the whole
-game. It is also the right place for the pacing to live, since it moves without touching genetics.
-The step size is the second dial: at one rung the median is 18 generations even buying it every
-time, at three rungs it is 8.
+**The reframing this replaces.** The original design's own measurement — that a line which never buys
+care fails to produce an all-Outstanding horse in twenty-five generations 97% of the time, and that
+`prenatal_care_cost` is therefore the pacing dial for the whole game — was measured against the
+original "two rungs, one trait, paid-only" mechanic. The shipped ratchet is a different shape: a free
+floor under every line (nobody is ever fully stuck) with a paid multiplier on top (three genes instead
+of one, still one rung each). **`docs/analysis/breeding-lab.mjs` has not been updated to model the
+ratchet** — the table this section used to carry (`dynasty --mares 3 --studs 2 --cap 5 --herd 12
+--select mixed --coax 2 --coax-chance <r>`) described the old mechanic and would now be actively
+misleading if left in place, so it is removed rather than kept. **Re-running the bench against the
+ratchet, and re-establishing what `prenatal_care_cost` should be under it, is real work a future
+session owes this section** — nothing below §2.8 should be read as still resting on the removed
+numbers.
 
 ### 2.8 NPC breeding stables buy care and test their stock
 
@@ -329,6 +345,12 @@ bred, and the **consignment dealer**, which mints rather than breeds.
 ---
 
 ## 3. What it produces
+
+**§3.1–§3.3 hold regardless of §2.7's mechanism** — they measure founding stock and showing, neither
+of which the ratchet touches. **§3.4 and §3.5 measure a `dynasty` run that bought "two rungs on one
+trait," which is not what shipped** (§2.7) — read their numbers as the shape of the argument (testing
+and stud service are worth generations, buying on looks costs them), not as calibrated figures for the
+ratchet. Re-run once the bench models it.
 
 ### 3.1 Founding stock
 
@@ -445,6 +467,12 @@ Each of these is the obvious next change, and each causes a real defect.
    becomes misleading next to the new one. Say so in the migration.
 9. **Conformation loci are not injectable.** `injection.ts` assumes biallelic; the consignment
    allowlist is colour/gait only. That is a comment plus an assertion, not logic.
+10. **The baseline ratchet (§2.7) runs on EVERY bred foal, unconditionally — it is not "what
+    happens if care wasn't bought."** `applyPrenatalRatchet` always calls one of the two ratchet
+    functions; there is no third "do nothing" branch. Gating the baseline behind a flag, or reading
+    it as a fallback that only exists for symmetry with the paid path, would quietly break the "97%
+    never finish" framing §2.7 is being re-measured against — the baseline is precisely what stops
+    that number from being 100%.
 
 ---
 
@@ -466,15 +494,26 @@ The later steps read the earlier ones.
    the batch.
 6. `parseAllelePool()` — exempt the five, explicitly.
 7. Migrations (§6).
-8. **Mare prenatal care** (§2.7) — a column on `pregnancies`, a checkbox on the covering form, a
-   config key, an `ACTION_COSTS` entry, a ledger kind, and one call in the foaling path. Additive:
-   it touches only new coverings and is the one part of this slice that could land separately.
+8. **The generational ratchet and mare prenatal care** (§2.7, as actually shipped) — a column on
+   `coverings` (not `pregnancies`), a checkbox on the covering form, a config key, an `ACTION_COSTS`
+   entry, a ledger kind, and one call at conception in `resolveOneCovering` (`src/db/coverings.ts`)
+   applying `applyBaselineRatchet` or `applyCareRatchet`. Additive: it touches only new coverings and
+   is the one part of this slice that could land separately.
 9. **NPC care and testing** (§2.8) — two config keys, one change in `expressedFor`, one in the NPC
    covering path. Reads §2.7, so it lands after it.
 10. Testing: a conformation panel on `/horses/:id/test`, reusing
    `horse_knowledge.subject_code = 'locus:NL'` exactly as colour does, in its own `<details>` group.
 11. `inferFromPhenotype` — under §2.3 a horse's shown value **is** its worse allele, so looking tells
     you that one exactly and the test buys the *hidden better* one. One sentence, not a table.
+    **Done as written, and deliberately not as a table:** the test page states this in prose
+    (`src/render/horses.ts`, the conformation panel's own muted line) rather than growing
+    `inferFromPhenotype`'s colour-only possibility-set machinery a sixth branch it does not need — a
+    type-gene "possibility set" would need the breed's live target threaded in (colour's never does)
+    for a mechanically different question (a bounded range, not a masked-by-grey lookup table), and
+    nothing in the codebase currently consumes it. Building it anyway would be exactly the premature
+    abstraction CLAUDE.md warns against. If a future slice wants to price the hidden-better-allele the
+    way `market_carried_allele_premium` prices a hidden colour allele (`appraise.ts`), that is real,
+    scoped work for that slice to add — not implied by this one.
 12. `foalPrediction.ts` — **replaced by something much shorter**. The Poisson-binomial convolution
     goes; a 2×2 Punnett over known alleles crossed with the small modifier distribution is exact.
     It must read **Unknown** for an untested parent (slice 0025's rule, unchanged).
@@ -482,9 +521,16 @@ The later steps read the earlier ones.
     breed's ideal vector. `consignment.ts`'s hardcoded `cfg.quality_bands.mid ?? 0.5` becomes a real
     `consignment_quality_band` key.
 
-The admin create-horse form needs a select rather than radios for a 25-allele locus. It stays a
-neutral control (slice 0005 §6.6): a hand-created horse defaults to the middle rung on all five, not
-to a breed's target.
+**Built.** The admin create-horse form's `<select>` used to be built from `[a1, a2] =
+locus.alleles` — correct for every two-allele locus, but for these five it offered only rungs 0 and 1
+("2" and "6") and never the wildType "50" its own `selected` fallback assumed, so an admin who left
+the field untouched got the *worst* rung on both copies rather than the intended neutral middle. Fixed
+by looping over the locus's full allele list instead of destructuring the first two
+(`src/render/horses.ts`'s `locusFieldset`), which handles both allele-count shapes with one code path
+and makes the wildType default genuinely selectable. The five loci also gained their own admin form
+group (`type_gene` → "Conformation type") rather than falling into "Patterns" through
+`groupKeyFor`'s unknown-category fallback. It stays a neutral control (slice 0005 §6.6): a
+hand-created horse defaults to the middle rung on all five, not to a breed's target.
 
 ---
 
@@ -536,8 +582,10 @@ Next free is `0177`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
    after. The regression that proves rule 5's stream discipline held.
 8. Ability traits are unaffected by the band deal at any setting, and `ability_noise_sd` is what
    moves ability noise (rule 6).
-9. Prenatal care on a **homozygous** worst trait changes the shown value (the invisible-purchase
-   case in §2.6), moves exactly two rungs, and never moves a trait past its target.
+9. **Superseded by the shipped ratchet (§2.7):** every bred foal moves its single worst trait one
+   rung for free (`applyBaselineRatchet`); prenatal care replaces that with three distinct traits
+   moving one rung each (`applyCareRatchet`), never revisiting a trait already on target, never past
+   it. Both are pinned by `test/conformation/typeGene.test.ts`.
 10. `foalPrediction` reads Unknown when either parent's type genes are untested by this viewer.
 11. A breed with no `ideal_vector` still generates (middle rung) and is not judged.
 12. An NPC stable's tested share is **stable across two calls** for the same horse (§2.8) and its
@@ -567,18 +615,30 @@ of this slice and it is worth naming plainly to the operator before anything is 
 
 ## 9. Still open
 
-1. **Confirm the consignment dealer mints at `mid`.** §2.6 says mid; the dealer is where a child buys
-   raw material they cannot breed themselves, and low-band stock is barely better than their own.
-2. **Is the conformation test one purchase per locus, or one panel per horse?** §3.4 and §3.5 both
-   argue for pricing it low and selling it as one panel: it is worth two to five generations, and it
-   is what turns the market from a trap into a gain. Five separate purchases is a bigger money sink
-   but makes a child test the wrong thing.
+1. ~~Confirm the consignment dealer mints at `mid`.~~ **Resolved, built.** `consignment_quality_band`
+   (migration `0181`) is `mid`, a real config key (`src/db/consignment.ts`), replacing the old
+   hardcoded `cfg.quality_bands.mid ?? 0.5` literal.
+2. ~~Is the conformation test one purchase per locus, or one panel per horse?~~ **Resolved
+   pragmatically during the build, not separately confirmed with the operator — worth a sanity
+   check.** Both purchase shapes exist on `/horses/:id/test` (`action=conformation_panel` buys every
+   untested locus; a single `locus_code` buys one), but **a single-locus purchase costs the same
+   `conformation_test_cost` (150) as the whole panel** — there is no per-locus discount, so buying one
+   locus is never cheaper than buying all five, only narrower. In effect this already delivers §3.4's
+   "sell it as one panel, priced low" recommendation: the rational choice is always the panel, the
+   per-locus option exists but has no economic reason to be used. Flag for the operator: is a
+   same-priced single-locus option worth keeping, or should it be removed so the page only ever offers
+   the panel?
 3. **Are a horse's own type genes free once it has shown**, the way conformation *words* already are
    (slice 0022 Part B)? Under §2.3 looking already tells you the worse allele, so the test only buys
    the hidden better one. Middle option: your own horses free, another stable's only by testing.
-4. **Split `ability_noise_sd` off, or accept the tightening?** Rule 6. Written into 0179 above as a
-   split, which is the recommendation, but it has not been confirmed.
-5. **Confirm the second reset** (§8), and that founding grants go out afterwards.
+   **Still open — nothing was built either way**, so today every horse's type genes cost
+   `conformation_test_cost` to test regardless of show history or ownership.
+4. ~~Split `ability_noise_sd` off, or accept the tightening?~~ **Resolved, built.** Migration `0179`
+   splits it: `conformation_noise_sd` drops to 0.5 (conformation traits only), `ability_noise_sd`
+   holds the old shared value of 6, so ability/discipline noise is unchanged by this slice.
+5. **Confirm the second reset** (§8), and that founding grants go out afterwards. **Still open — not
+   run.** No living horse carries a type-locus genotype; nothing in this slice reaches a real family
+   horse until the operator confirms the reset and it is run.
 
 ---
 
@@ -586,7 +646,11 @@ of this slice and it is worth naming plainly to the operator before anything is 
 
 `docs/analysis/breeding-lab.mjs` is the only conformation bench and models both engines. **Its
 defaults still reproduce the 8-point ladder this document originally specified**, so the amended
-design must be asked for on the command line:
+design must be asked for on the command line. **It also does not model §2.7's shipped ratchet** — its
+`--coax`/`--coax-chance` flags still simulate the original "two rungs on one trait, paid only"
+mechanic, which is not what `applyBaselineRatchet`/`applyCareRatchet` do. Every number in §2.7 and
+§3.4/§3.5 that came from a `dynasty` run predates the ratchet and should be treated as illustrative,
+not calibrated, until the bench is updated to match.
 
 ```
 --rung-step 4 --rungs-per-band 2 --labels derived --founding-mode pairs --round-robin 1
