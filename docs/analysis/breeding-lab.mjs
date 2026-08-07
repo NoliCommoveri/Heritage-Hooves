@@ -131,6 +131,10 @@ const INBREEDING_FACTOR = 1.0;       // inbreeding_depression_factor,           
                                      //   on top of them. It changes nothing about founding stock
                                      //   (COI is 0 there) and everything from generation 2 on.
 const LABEL_MIN = { outstanding: 90, good: 75, acceptable: 55, weak: 30 };  // migration 0135
+// ^ outstanding: 90 against FALLOFF 2 means "within 5 points of standard". That width is a DIAL,
+// and it turns out to be a load-bearing one: if it is wider than half a rung, a heterozygote
+// showing the midpoint reads Outstanding exactly like a homozygote, and the label stops telling a
+// player anything about what the horse will pass on. --outstanding-within sets it in points.
 const ABILITY_SPECIALIST_POTENTIAL = 15;  // founding_ability_specialist_potential, migration 0102
 const SPECIALIST_OFFSETS = [-1, 0, 1];    // generate.ts, slice 0019 §7
 // Slice 0019 §4.2 — jump_scope is the one ability trait excluded from the specialist draw.
@@ -682,6 +686,8 @@ const TUNABLE = {
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
   'expression': ['expression', String],
+  'outstanding-within': ['outstandingWithin', Number],
+  'labels': ['labels', String],
 };
 function tuningFromFlags(flags) {
   const t = {};
@@ -693,8 +699,33 @@ function tuningFromFlags(flags) {
   }
   return t;
 }
+/**
+ * The achievable distances from standard, in points, that the TYPE GENES ALONE can produce —
+ * before the modifier and noise touch anything. Under 'average' a horse sits on a half-rung grid
+ * (hom at target = 0, one correct allele = half a rung, and so on); under 'random' it can only ever
+ * sit on a whole rung. This set is the real vocabulary of the system.
+ */
+function achievableDistances() {
+  const step = PROP.expression === 'random' ? PROP.rungStep : PROP.rungStep / 2;
+  const out = [];
+  for (let d = 0; d <= PROP.reachPoints * 2 + 1e-9; d += step) out.push(d);
+  return out;
+}
+/**
+ * Band edges placed at the MIDPOINTS between achievable distances, so each label names exactly one
+ * genetic outcome rather than a range inherited from the old continuous scale. This is the
+ * operator's own instruction (2026-08-07): the numbers should be re-derived from what is possible.
+ */
+function derivedLabelMins() {
+  const d = achievableDistances();
+  const edge = (i) => 100 - ((d[i] + d[i + 1]) / 2) * FALLOFF;
+  return { outstanding: edge(0), good: edge(1), acceptable: edge(2), weak: edge(3) };
+}
+
 function applyTuning(tuning) {
   for (const [k, v] of Object.entries(tuning ?? {})) PROP[k] = v;
+  if (PROP.labels === 'derived') Object.assign(LABEL_MIN, derivedLabelMins());
+  if (PROP.outstandingWithin != null) LABEL_MIN.outstanding = 100 - PROP.outstandingWithin * FALLOFF;
   if (!['peak', 'ring'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak" or "ring"'); process.exit(1); }
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
   if (!['average', 'random'].includes(PROP.expression)) { console.error('--expression must be "average" or "random"'); process.exit(1); }
@@ -1139,6 +1170,210 @@ function cmdLegibility(flags) {
   CONF_TRAITS.forEach((t, k) => console.log(`  ${pad(t, 16)} ${padL((perTrait[k].on / perTrait[k].n * 100).toFixed(1) + '%', 8)}`));
 }
 
+/**
+ * DYNASTY — added 2026-08-07. "How many generations to the first genuinely good horse?"
+ *
+ * Unlike `programme`, this one has SEX and a LIFETIME BREEDING CAP, because both bind hard on the
+ * answer: eight mares capped at four foats each is the real ceiling on how many rolls of the dice a
+ * child gets, and no amount of selection pressure buys more of them.
+ *
+ * One round = one breeding cycle. Every broodmare with allowance left throws one foal; the foals
+ * grow up and compete for a place in next round's herd. A round is a pedigree generation, not a
+ * game year — a founding mare with allowance left can still breed in round 4.
+ *
+ * TWO finish lines are reported, and the gap between them is the whole point of the type gene:
+ *   LOOKS   one horse reading Outstanding on all five traits. What a child sees and celebrates.
+ *   FIXED   one horse homozygous at the standard on all five. It breeds on; the other may not.
+ */
+function cmdDynasty(flags) {
+  const engine = flags.engine ?? 'proposed';
+  const breed = (flags.breed ?? 'AR').toUpperCase();
+  const band = flags.band ?? 'low';
+  const nMares = Number(flags.mares ?? 8);
+  const nStuds = Number(flags.studs ?? 4);
+  const cap = Number(flags.cap ?? 4);
+  const rounds = Number(flags.rounds ?? 12);
+  const runs = Number(flags.runs ?? 400);
+  const outcross = Number(flags.outcross ?? 0);
+  const select = flags.select ?? 'score';
+  if (!['score', 'tested'].includes(select)) { console.error('--select must be "score" or "tested"'); process.exit(1); }
+  const tuning = tuningFromFlags(flags);
+  applyTuning(tuning);
+
+  const isAllOutstanding = (state, h) => CONF_TRAITS.every((t) => onTarget(confParts(state, h, t).score));
+  const isFixed = (h) => fixedCount(h) === CONF_TRAITS.length;
+
+  const looksAt = new Array(rounds + 1).fill(0);   // runs whose FIRST looks-finished horse is round r
+  const fixedAt = new Array(rounds + 1).fill(0);
+  let looksNever = 0, fixedNever = 0, totalFoals = 0;
+
+  for (let run = 0; run < runs; run++) {
+    const state = { engine, breed, band, seed: Number(flags.seed ?? 31337), horses: [] };
+    const memo = new Map();
+    let firstLooks = null, firstFixed = null;
+
+    const enrol = (h, sex) => { h.sex = sex; h.births = 0; return h; };
+    for (let i = 0; i < nMares + nStuds; i++) {
+      const s = deriveSeed(deriveSeed(state.seed, `dyn_run_${run}`), `founder_${i}`);
+      const f = mintFounder(state, s);
+      enrol(addHorse(state, { genotype: f.genotype, ageYears: MATURITY_YEARS, specialists: f.specialists, seed: s }),
+        i < nMares ? 'F' : 'M');
+    }
+    for (const h of state.horses) {
+      if (firstLooks === null && isAllOutstanding(state, h)) firstLooks = 0;
+      if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = 0;
+    }
+
+    const rank = rankerFor(state, select);
+    for (let r = 1; r <= rounds; r++) {
+      const mares = state.horses.filter((h) => h.sex === 'F' && h.births < cap).sort(rank).slice(0, nMares);
+      const studs = state.horses.filter((h) => h.sex === 'M').sort(rank).slice(0, nStuds);
+      if (!mares.length || !studs.length) break;
+
+      const made = [];
+      for (const mare of mares) {
+        // Best stallion she is not closely related to; if they are all close, the least related one.
+        const k = studs.map((s) => kinship(state, mare.id, s.id, memo));
+        let pick = studs.findIndex((_, i) => k[i] <= 0.125);
+        if (pick < 0) pick = k.indexOf(Math.min(...k));
+        const stud = studs[pick];
+
+        const fs = deriveSeed(deriveSeed(state.seed, `dyn_${run}_${r}_${mare.id}`), 'foal');
+        const foal = addHorse(state, { genotype: makeFoal(state, stud.genotype, mare.genotype, fs),
+          ageYears: MATURITY_YEARS, sire: stud.id, dam: mare.id, seed: fs });
+        enrol(foal, streamFor(fs, 'sex')() < 0.5 ? 'F' : 'M');
+        mare.births++;
+        made.push(foal);
+        totalFoals++;
+      }
+      for (let i = 0; i < outcross; i++) {
+        const bs = deriveSeed(deriveSeed(state.seed, `dyn_buy_${run}_${r}`), `${i}`);
+        const f = mintFounder(state, bs);
+        enrol(addHorse(state, { genotype: f.genotype, ageYears: MATURITY_YEARS, specialists: f.specialists, seed: bs }),
+          i % 2 === 0 ? 'F' : 'M');
+      }
+      for (const h of made) {
+        if (firstLooks === null && isAllOutstanding(state, h)) firstLooks = r;
+        if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = r;
+      }
+      if (firstLooks !== null && (firstFixed !== null || engine !== 'proposed')) break;
+    }
+
+    if (firstLooks === null) looksNever++; else looksAt[firstLooks]++;
+    if (firstFixed === null) fixedNever++; else fixedAt[firstFixed]++;
+  }
+
+  const quantile = (at, never, q) => {
+    let c = 0;
+    for (let r = 0; r < at.length; r++) { c += at[r]; if (c / runs >= q) return `${r}`; }
+    return `>${rounds}`;
+  };
+
+  console.log(`DYNASTY — ${BREEDS[breed].name}, band ${band}, engine ${engine} | ${tuningNote(tuning)}`);
+  if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, expression ${PROP.expression}, specialist ${PROP.specialist}`);
+  console.log(`${nMares} founding mares + ${nStuds} founding stallions. Each mare may be bred ${cap} times in her life.`);
+  console.log(`One foal per broodmare per round, best ${nMares} mares and best ${nStuds} stallions kept, ${outcross ? `${outcross} bought in per round` : 'closed herd, nothing bought in'}.`);
+  console.log(select === 'tested' ? 'Selection is on TESTED genotype.' : 'Selection is on visible score — a child who has not tested cannot see genes.');
+  console.log(`${runs} runs, ${rounds} rounds each, ${(totalFoals / runs).toFixed(0)} foals bred per run on average.\n`);
+
+  console.log('  gen | first horse Outstanding on all 5 | first horse FIXED on all 5');
+  console.log('      |  this gen    cumulative          |  this gen    cumulative');
+  console.log('  --- | ---------    ----------          | ---------    ----------');
+  let cl = 0, cf = 0;
+  for (let r = 0; r <= rounds; r++) {
+    cl += looksAt[r]; cf += fixedAt[r];
+    const tag = r === 0 ? '  F' : padL(r, 3);
+    console.log(`  ${tag} | ${padL((looksAt[r] / runs * 100).toFixed(1) + '%', 8)}    ${padL((cl / runs * 100).toFixed(1) + '%', 8)}           | ${padL((fixedAt[r] / runs * 100).toFixed(1) + '%', 8)}    ${padL((cf / runs * 100).toFixed(1) + '%', 8)}`);
+  }
+  console.log('');
+  console.log(`  Outstanding on all 5 — earliest 10% of runs: gen ${quantile(looksAt, looksNever, 0.10)}, median gen ${quantile(looksAt, looksNever, 0.50)}, 90% of runs by gen ${quantile(looksAt, looksNever, 0.90)}`);
+  if (engine === 'proposed') {
+    console.log(`  FIXED on all 5       — earliest 10% of runs: gen ${quantile(fixedAt, fixedNever, 0.10)}, median gen ${quantile(fixedAt, fixedNever, 0.50)}, 90% of runs by gen ${quantile(fixedAt, fixedNever, 0.90)}`);
+  }
+  console.log(`  Runs that never got there in ${rounds} generations: ${(looksNever / runs * 100).toFixed(1)}% (looks), ${(fixedNever / runs * 100).toFixed(1)}% (fixed)`);
+  console.log('\n  "F" is the founding batch itself — a run scoring there was handed a finished horse on day one.');
+}
+
+/**
+ * BANDS — added 2026-08-07 on the operator's instruction that the label thresholds be re-derived
+ * from what the new system can actually produce, rather than carried over from the old scale.
+ *
+ * Prints the vocabulary: what each achievable distance from standard MEANS genetically, what word
+ * it gets, and then the thing that decides whether the word is trustworthy — how often the modifier
+ * and birth noise together push a horse into the wrong band. A label that names a genotype is only
+ * worth having if it names it reliably.
+ */
+function cmdBands(flags) {
+  const breed = (flags.breed ?? 'AR').toUpperCase();
+  const band = flags.band ?? 'low';
+  const n = Number(flags.n ?? 20000);
+  const seed = Number(flags.seed ?? 8080);
+  const tuning = { labels: 'derived', ...tuningFromFlags(flags) };
+  applyTuning(tuning);
+
+  const state = { engine: 'proposed', breed, band, seed, horses: [] };
+  const d = achievableDistances();
+
+  console.log(`LABEL BANDS — ${BREEDS[breed].name}, band ${band} | ${tuningNote(tuning)}`);
+  console.log(`Ladder: step ${PROP.rungStep}, expression ${PROP.expression}, modifier +/-${(LOCI_PER_TRAIT * PROP.modifierStep).toFixed(2)}, noise SD ${PROP.noiseSd}\n`);
+
+  const meaning = PROP.expression === 'random'
+    ? ['both alleles correct, or showing the correct one', 'showing an allele one rung out',
+       'showing an allele two rungs out', 'showing an allele three rungs out']
+    : ['BOTH alleles correct (breeds true)', 'ONE allele correct (a carrier)',
+       'no correct allele, one rung out', 'no correct allele, one and a half rungs out'];
+  console.log('  distance  what it means genetically                  word');
+  console.log('  --------  ----------------------------------------   -----------');
+  const words = ['Outstanding', 'Good', 'Acceptable', 'Weak'];
+  for (let i = 0; i < 4; i++) {
+    console.log(`  ${padL(d[i].toFixed(1), 8)}  ${pad(meaning[i] ?? '', 40)}   ${words[i]}`);
+  }
+  console.log(`  ${padL('>' + d[3].toFixed(1), 8)}  ${pad('further out still', 40)}   Poor`);
+  console.log(`\n  Derived thresholds: Outstanding >=${LABEL_MIN.outstanding.toFixed(1)}, Good >=${LABEL_MIN.good.toFixed(1)}, ` +
+    `Acceptable >=${LABEL_MIN.acceptable.toFixed(1)}, Weak >=${LABEL_MIN.weak.toFixed(1)}`);
+  console.log(`  A horse crosses a boundary if modifier + noise moves it more than ${((d[1] - d[0]) / 2).toFixed(1)} points.\n`);
+
+  // How often does the word a player reads match the word the type genes alone deserve?
+  const purity = (modStep, noiseSd) => {
+    const savedM = PROP.modifierStep, savedN = PROP.noiseSd;
+    PROP.modifierStep = modStep; PROP.noiseSd = noiseSd;
+    let right = 0, total = 0, outstandingHom = 0, outstandingAll = 0;
+    for (const h of mintPopulation(state, n, deriveSeed(seed, `p_${modStep}_${noiseSd}`))) {
+      for (const t of CONF_TRAITS) {
+        const p = confParts(state, h, t);
+        const pureDist = Math.abs(p.typeValue - p.target);
+        const pureLabel = label(Math.max(0, 100 - pureDist * FALLOFF));
+        const shown = label(p.score);
+        total++; if (shown === pureLabel) right++;
+        if (shown === 'Outstanding') {
+          outstandingAll++;
+          const tg = nearestRung(BREEDS[h.breed].ideal[t][0]);
+          if (h.genotype.type[t][0] === tg && h.genotype.type[t][1] === tg) outstandingHom++;
+        }
+      }
+    }
+    PROP.modifierStep = savedM; PROP.noiseSd = savedN;
+    return { agree: right / total, homGivenOutstanding: outstandingAll ? outstandingHom / outstandingAll : 0 };
+  };
+
+  console.log('  How often does the word match what the genes alone deserve, and does "Outstanding"');
+  console.log('  really mean homozygous-at-standard? (rows: modifier range; columns: noise SD)\n');
+  const mods = (flags.mods ?? '0.10,0.15,0.25,0.40,0.75').split(',').map(Number);
+  const noises = (flags.noises ?? '0.5,1,2,3').split(',').map(Number);
+  console.log('    modifier  |' + noises.map((s) => padL(`sd ${s}`, 16)).join(''));
+  console.log('    --------- |' + noises.map(() => '  --------------').join(''));
+  for (const m of mods) {
+    const cells = noises.map((s) => {
+      const r = purity(m, s);
+      return padL(`${(r.agree * 100).toFixed(0)}% / ${(r.homGivenOutstanding * 100).toFixed(0)}%`, 16);
+    });
+    console.log(`    +/-${padL((LOCI_PER_TRAIT * m).toFixed(2), 6)} |` + cells.join(''));
+  }
+  console.log('\n    first number  = word matches the genotype it should name');
+  console.log('    second number = share of Outstanding traits that really are homozygous at standard');
+  console.log('                    (this is the number a child\'s breeding decisions rest on)');
+}
+
 function cmdPedigree(state, id) {
   const h = state.horses[id - 1];
   if (!h) { console.error(`No horse #${id}.`); process.exit(1); }
@@ -1198,6 +1433,8 @@ switch (cmd) {
   case 'sweep': cmdSweep(flags); break;
   case 'programme': case 'program': cmdProgramme(flags); break;
   case 'legibility': cmdLegibility(flags); break;
+  case 'dynasty': cmdDynasty(flags); break;
+  case 'bands': cmdBands(flags); break;
   case 'reset':
     if (existsSync(statePath)) { unlinkSync(statePath); console.log(`Deleted ${statePath}.`); }
     else console.log('Nothing to delete.');
