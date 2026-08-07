@@ -203,6 +203,11 @@ const PROP = {
   //              number. Mendelian dominance with the dominant allele picked per horse rather
   //              than per allele. Nothing about inheritance changes — only what a horse shows.
   expression: 'average',
+
+  // Hard ceiling on how many of its five conformation traits a FOUNDING horse may read Outstanding
+  // on. null = no ceiling. Operator's instruction, 2026-08-07: 4 at the low band, so the first
+  // all-five horse in the game is always one somebody bred.
+  founderMaxOutstanding: null,
 };
 
 // The ladder is derived from base/step so `--rung-step 4` is a real experiment rather than an
@@ -396,6 +401,32 @@ function mintFounder(state, seed) {
   const aSpec = aRng.pick(SPECIALIZABLE);
   const aOff = aRng.pick(SPECIALIST_OFFSETS);
   g.poly[aSpec] = specialistBits(streamFor(seed, 'specialist_alleles_ability'), ABILITY_SPECIALIST_POTENTIAL + aOff);
+
+  // CEILING ON A FOUNDING MINT (operator, 2026-08-07). A founding horse may read Outstanding on at
+  // most `founderMaxOutstanding` of its five conformation traits. This is a hard floor under "there
+  // is room to breed up" that does not go through the pool shape at all: whatever the pool is doing,
+  // no child is handed a finished horse on day one, and the first all-five horse in the game must
+  // be BRED. The specialist trait is never the one demoted — slice 0019's gift stands.
+  const capN = PROP.founderMaxOutstanding;
+  if (state.engine === 'proposed' && capN != null && capN < CONF_TRAITS.length) {
+    const stub = { breed: state.breed, genotype: g, seed, coi: 0, ageYears: MATURITY_YEARS };
+    const capRng = streamFor(seed, 'founder_outstanding_cap');
+    const isOut = (t) => onTarget(confParts(state, stub, t).score);
+    let over = CONF_TRAITS.filter(isOut);
+    // Demote non-specialist traits first, in a seed-derived order, until the horse is under the cap.
+    const order = CONF_TRAITS.filter((t) => t !== cSpec).sort(() => capRng() - 0.5);
+    for (const t of order) {
+      if (over.length <= capN) break;
+      if (!isOut(t)) continue;
+      const pool = poolForTarget(nearestRung(breed.ideal[t][0]), band);
+      const before = g.type[t];
+      for (let tries = 0; tries < 200 && isOut(t); tries++) {
+        g.type[t] = [drawFrom(pool, capRng), drawFrom(pool, capRng)].sort((a, b) => a - b);
+      }
+      if (isOut(t)) g.type[t] = before;   // pool cannot produce a non-Outstanding draw; leave it
+      over = CONF_TRAITS.filter(isOut);
+    }
+  }
 
   const ageRng = streamFor(seed, 'founding_age');
   const ageYears = FOUNDING_AGE_MIN_Y + ageRng() * (FOUNDING_AGE_MAX_Y - FOUNDING_AGE_MIN_Y);
@@ -698,6 +729,7 @@ const TUNABLE = {
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
   'rungs-per-band': ['rungsPerBand', Number],
+  'founder-max-outstanding': ['founderMaxOutstanding', Number],
 };
 function tuningFromFlags(flags) {
   const t = {};
