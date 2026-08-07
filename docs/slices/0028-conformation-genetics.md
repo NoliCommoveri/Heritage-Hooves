@@ -4,11 +4,12 @@
 what exists once this slice lands (§2 onward). Nothing else about conformation genetics is worth
 reading, and the intermediate proposals that led here have been deleted deliberately.**
 
-Decided with the operator 2026-08-07. Per CLAUDE.md §2, treat §2–§8 as standing. §9 is the short
-list of what is genuinely still open.
+Decided with the operator 2026-08-07, amended 2026-08-07 after a second round of measurement.
+Per CLAUDE.md §2, treat §2–§8 as standing. §9 is the short list of what is genuinely still open.
 
 Measured throughout by `docs/analysis/breeding-lab.mjs`, which models both engines
-(`--engine today` and `--engine proposed`). Re-run it after any change.
+(`--engine today` and `--engine proposed`). Re-run it after any change. Every table below names the
+command that produced it.
 
 ---
 
@@ -55,26 +56,56 @@ machinery unchanged (`meiosis`, `combine`, `sortAllelePair`, `getMendelianPair`,
 `parseAllelePool` are all already allele-count-agnostic). The one structural change: `Locus.alleles`
 becomes `readonly string[]`, from `readonly [string, string]`.
 
-### 2.2 The ladder
+Appended **after `PATN1`**, never inserted earlier, for the RNG-order reason `loci.ts` states in its
+own header. Each locus's `wildType` is the middle rung — see §8 on why nothing in the game may be
+left to that default.
 
-Each locus has **13 alleles, named for their own value on the trait's 1–99 scale**:
+### 2.2 The ladder — a rung every 4 points, 25 alleles
+
+Each locus has **25 alleles, named for their own value on the trait's 1–99 scale**:
 
 ```
-2, 10, 18, 26, 34, 42, 50, 58, 66, 74, 82, 90, 98        (a rung every 8 points)
+2, 6, 10, 14, 18, 22, ... 90, 94, 98             (a rung every 4 points)
 ```
 
-Eight points per rung is chosen against the label bands (migration `0135`) so **one rung off target
-is about one word worse**: 0 rungs → Outstanding, 1 → Good, 2 → Acceptable, 3 → Weak, 4+ → Poor.
+An allele may sit at most **6 rungs — 24 points — from its breed's own standard**. That cap, and
+nothing else, is the breed-type guarantee: it is what makes a Roman-nosed Arabian impossible. **Do
+not widen it to tune quality.** Quality is tuned by §2.4's band deal, which changes what a horse is
+dealt *inside* the reach and leaves breed type perfectly intact.
 
-Every target in `breeds.ideal_vector` is re-seeded to its nearest rung. **No target moves more than
-4 points**, inside the tolerance `docs/breed-ideal-vectors.md` §4 claims for itself. Without it there
-is a permanent snap-to-grid error nobody can breed away, and it costs a genetically perfect Paso Fino
-0.6 of a trait (4.36 → 4.97 of 5).
+Note the reach is unchanged **in points** from the 8-point ladder this slice originally proposed —
+the same 24-point window, sampled twice as finely. What the finer sampling buys is §2.3.
+
+**Two rungs to a word.** Against `show_ideal_falloff` 2.0 the ladder and the vocabulary line up
+exactly:
+
+| distance | rungs off standard | word |
+|---|---|---|
+| 0–4 pts | 0–1 | **Outstanding** |
+| 8–12 pts | 2–3 | **Good** |
+| 16–20 pts | 4–5 | **Acceptable** |
+| 24 pts | 6 (the edge of reach) | **Weak** |
+
+**Poor is unreachable inside a breed, and that is worth knowing before someone hunts the bug.** The
+worst distance a horse can reach is 24 points from the genes plus about 2 from the modifier and
+noise; Poor needs more than 35. Measured over 12,000 founding horses the worst seen anywhere is
+**26 points**. Poor survives for exactly two cases and they are both real: a cross-breed horse
+registered under one parent's breed, and a hand-created horse left on the middle rung.
+
+**Move the label edges to the midpoints between achievable distances: 88 / 72 / 56 / 40**
+(`conformation_label_*_min`, migration 0135's four keys). The current 90/75/55/30 puts the Good edge
+one point away from a 3-rung trait's own score, so about one trait in eight slips a word on the
+modifier alone. At the midpoints **the word a player reads matches the genotype it should name
+100% of the time**, up from 97%. This is a pure improvement and costs one extra `json_set`.
+
+Every target in `breeds.ideal_vector` is re-seeded to its nearest rung. On a 4-point ladder **no
+target moves more than 2 points**, comfortably inside the tolerance `docs/breed-ideal-vectors.md` §4
+claims for itself.
 
 ### 2.3 Expression: the horse shows its worse allele
 
-**A horse's displayed value for a trait is whichever of its two alleles is FURTHER from its own breed
-standard.** Faults dominant, quality recessive.
+**A horse's displayed value for a trait is whichever of its two alleles is FURTHER from its own
+breed standard.** Faults dominant, quality recessive.
 
 ```
 expressed = worseAllele + (alleleCount − 10) × conformation_modifier_step + noise
@@ -82,136 +113,247 @@ expressed = worseAllele + (alleleCount − 10) × conformation_modifier_step + n
             conformation_noise_sd      = 0.5
 ```
 
-This is the load-bearing choice in the whole slice, and one sentence says why:
+**Which standard?** The horse's **own breed's live `ideal_vector`** — never the `ideal_vector`
+snapshotted onto a `show_classes` row. The class snapshot stays what it has always been: the thing
+distance is *measured against* at judging. Expression and measurement read different copies on
+purpose, and a comment in `geneticValue()` should say so, because migration 0176 re-snaps every
+target and the two will briefly disagree if anyone wires them together.
 
-> **A trait reading Outstanding is homozygous at the standard. Always. There is no fake.**
+This is the load-bearing choice in the whole slice:
 
-A horse can only look correct when it has nothing worse to show. So what a child *sees* and what a
-breeding programme *accumulates* are the same number — the count of finished traits is visible for
-free, it is exactly the count of traits reading Outstanding, and it cannot fall. A child reads the
-rule as *"you can't hide a fault, but you can hide a virtue."*
+> **You cannot hide a fault, but you can hide a virtue.**
 
-Measured at these settings: the word beneath a trait matches the genotype **100%** of the time, and
-an Outstanding trait really is homozygous-at-standard **100%** of the time. That second number is
-what a child's breeding decisions rest on.
+A horse can only look correct when it has nothing worse to show. What a child *sees* and what a
+breeding programme *accumulates* move together, the count of good traits is visible for free, and it
+cannot fall.
+
+**What the 4-point ladder costs, stated plainly.** On the 8-point ladder Outstanding meant *exactly*
+on target, so an Outstanding trait was homozygous-at-standard 100% of the time. Outstanding now
+covers 0–1 rungs, so:
+
+> **A trait reading Outstanding means both alleles are within one rung of the standard. It is
+> genuinely homozygous-at-standard 55% of the time.**
+
+That is a real loss and it must not be papered over — about one Outstanding trait in five carries no
+correct allele at all. It buys something the 8-point ladder could not: **the word saturates before
+the genes do.** A child gets a horse that looks perfect and still has real breeding left in it, and
+the show score — continuous in distance — goes on separating a field after every word has gone
+Outstanding. That is the answer to §8's own worry about a field of on-type horses compressing
+upward. Measured: `bands --rung-step 4 --rungs-per-band 2`.
 
 The 20-allele polygenic block keeps its exact shape, its exact inheritance (`inheritPolygenic`, not
 one line changed) and its exact RNG streams. Demoted to ±1.0, it is the tie-breaker between two
-horses with identical type genes — the thing still worth chasing after the type genes are fixed.
+horses with identical type genes.
 
 `show_noise_sd` (5) is **not** touched. Uncertainty belongs in the show ring, where everyone can see
 it is luck. It does not belong in the horse.
 
-### 2.4 Breed pools are derived from the standard, never hand-written
+### 2.4 The bands are dealt, not drawn
 
-For these five loci the founding pool is **computed** from `breeds.ideal_vector` and the band, not
-stored in `breeds.founding_allele_pool`:
+A founding horse is **dealt a fixed profile of words**, one pair-spec per trait, shuffled across the
+five traits. Bucket index 0 is Outstanding, 1 Good, 2 Acceptable, 3 Weak; under §2.3 a pair shows
+the *higher* of its two buckets, so the word a spec produces can be read straight off the table with
+no simulation at all.
 
-```
-target rung        gets  conformation_concentration      (0.28 / 0.55 / 0.75 by band)
-one rung away      gets  0.45 × the remainder, split both ways
-two rungs away     gets  0.18 × the remainder
-three rungs away   gets  0.06 × the remainder
-beyond             nothing
-                   then renormalise, truncating at the ends of the ladder
-```
+| band | pair-specs (bucket, bucket) | what a child sees | mean score |
+|---|---|---|---|
+| **low** | `0-0, 1-1, 1-2, 2-2, 3-3` | 1 Outstanding, 1 Good, 2 Acceptable, **1 Weak** | 70.1 |
+| **mid** | `0-0, 0-0, 1-1, 2-2, 3-3` | 2 Outstanding, 1 Good, 1 Acceptable, **1 Weak** | 76.1 |
+| **high** | `0-0, 0-0, 0-0, 1-1, 2-2` | 3 Outstanding, 1 Good, 1 Acceptable, no Weak | 84.5 |
 
-A rule rather than 40 hand-written pools, for one reason: a hand-written pool drifts from the
-standard it describes, and that drift is the defect in §1. Retune a breed target and its pool follows
-in the same migration, with no way to forget.
+Inside a bucket, the exact rung and the side of the standard are drawn; where a breed's target sits
+near an end of the 1–99 scale the side is forced inward rather than clamped onto the target, since
+clamping would quietly manufacture correct alleles the deal never granted.
+
+This replaces the concentration-weighted pool the slice originally specified. The reason is the one
+that motivated deriving pools in the first place, taken one step further: a *distribution* has to be
+re-tuned every time anything else moves, and it delivers a different answer for every breed. A
+**deal** is stated in the vocabulary a child reads, is identical for all eight breeds by
+construction, and is monotonic per trait without anyone having to check. `/admin/npc`'s band picker
+reads `"low — one trait right for the breed, one wrong, three in between."`
+
+**Fairness, which is the reason for dealing rather than drawing.** Four children keeping three
+founders each from a shared batch of twelve: the gap between the luckiest and unluckiest child is
+**2.4 points** — less than the luck in a single show — and **0.00 of 5** in traits on target. Every
+child gets the same shape; only which trait is which varies. Measured: `fairness --rung-step 4`.
 
 This is a knowing exception to `pool.ts`'s "a pool must list every locus" rule. `parseAllelePool`
 must exempt these five **explicitly**, so a missing colour locus still throws.
 
-### 2.5 The band finally means what its name says
+### 2.5 The founding specialist, and why round-robin is now mandatory
 
-The band is the **concentration** of the pool around the breed's own target — one number, one
-meaning, monotonic for every breed automatically because it is defined relative to the breed rather
-than against a fixed scale. `/admin/npc`'s band picker means the same thing whichever breed is in
-the box, which it has never done.
+Slice 0019's conformation specialist becomes an **upgrade of an allele the deal already granted**:
+one allele already in the closest bucket is moved to exactly the breed's target rung. The quota is
+the whole budget; the specialist spends it rather than adding to it.
 
-Both band pickers in `src/render/admin.ts` currently say `"{band} ({n}% chance per allele)"`, which
-becomes untrue; they read `"{band} — about {n} of 5 traits right for the breed"`.
+**The specialist must be assigned round-robin across a founding batch, not drawn per horse.** On the
+8-point ladder this was a nicety. On the 4-point ladder the closest bucket spans 0–1 rungs, so an
+independently-drawn specialist leaves **89% of six-horse barns with no allele within reach of the
+standard on some trait** — a trait that child could never breed right. Round-robin takes it to
+**0%**. Measured: `sweep --rung-step 4 --round-robin 0` against `--round-robin 1`, the
+`barn missing` column.
 
-### 2.6 The founding specialist: carrier, not finished
+Founding stock mints at band **`low`**. `mid` is the consignment dealer's and the show barn's
+working band; `high` is what a Champion field is made of.
 
-Slice 0019's conformation specialist is **reframed, not deleted**. One trait gets **one allele at
-the breed's target rung, the other drawn from the pool** — the horse carries the correct gene, so a
-small barn is never short of raw material, but has not been handed a finished trait.
+### 2.6 Mare prenatal care — the mechanism, not an accelerator
 
-Homozygous-at-target was measured and is too generous: it hands over 1.34 of the 5-trait endgame at
-mint. Carrier hands over 0.42. The ability specialist is untouched.
+A paid option on a covering that **moves the foal's worst trait two rungs (8 points) toward its
+breed standard**.
 
-Founding stock mints at band **`low`** (concentration 0.28): about **2.5 of 5 traits right, and 2.5
-left to breed for**. `mid`/`high` stay at 0.55/0.75 — they are the show barn's and the consignment
-dealer's bands, not the children's.
-
-### 2.7 Mare prenatal care
-
-A paid option on a covering that **moves the foal's worst trait one rung toward its breed standard**.
-
+- **Two rungs, not one.** Care is really defined in *points*: 8 points is the step the 8-point
+  ladder measured and the pacing everything else was tuned against. At one rung a line does not
+  finish — measured below.
 - **It hangs off the pregnancy.** `pregnancies` already carries its own `rng_seed` and a snapshotted
   gestation length; one more snapshotted column is the whole storage cost.
-- **Committed before the foal exists**, so it can never be an undo on a bad roll. The player pays
-  blind — a real decision rather than a correction.
+- **Committed before the foal exists**, so it can never be an undo on a bad roll.
 - **Capped at one per foal by construction.** No lifetime counter, no way to stack.
-- **The mare's genotype is untouched.** One trait in one foal, moved once, at the moment that foal
-  was formed.
-- **Toward the standard only, never away and never past it.** Breed type strictly improves and
-  cannot erode, and an NPC stable that never buys it never moves.
-- **It cannot fail.** No die roll. The cost is the price. If it needs to be slower, the price moves —
-  a lever the player can see and plan around, not the odds.
+- **The mare's genotype is untouched.** One trait in one foal, moved once.
+- **Toward the standard only, never away and never past it.** Two rungs is two applications of the
+  same one-rung step, each of which stops at the target, so it cannot overshoot.
+- **It cannot fail.** No die roll. The cost is the price.
 - **The mechanic picks the trait; the player never chooses.** Whichever trait the foal shows
   furthest from its own breed standard, resolved at foaling, after the alleles are drawn.
 - **Cost: `prenatal_care_cost` (default 500) plus one turn**, charged on the covering at the moment
-  the player commits. A live tunable, set at `/admin/config`. No refund if the covering does not
-  take — the same rule as a stud fee.
+  the player commits. A live tunable. No refund if the covering does not take.
 
-**It moves the worst TRAIT, not the worst ALLELE, and that distinction is not cosmetic.** Under §2.3
-a horse shows its worse allele, so improving one copy of a homozygous pair leaves the other copy
-showing and the purchase is invisible — about half of all purchases, at random, with nothing on
-screen to explain it. Moving the trait costs one allele step on a heterozygote and two on a
-homozygote. The extra cost is the point: the mechanic does twice as much genetic work in exactly
-the case where a line is most stuck.
+**It moves the worst TRAIT, not the worst ALLELE.** Under §2.3 a horse shows its worse allele, so
+improving one copy of a homozygous pair leaves the other copy showing and the purchase is invisible —
+about half of all purchases, at random, with nothing on screen to explain it. Moving the trait costs
+one allele step on a heterozygote and two on a homozygote. The extra cost is the point.
 
-**This is the only mechanism in the design that puts a correct allele into a closed herd.** Mendelian
-inheritance shuffles alleles; it never invents one. A line whose neck alleles are `58` and `82`
-against a standard of `74`, where no horse in three generations owns a `74`, plateaus at 4 of 5
-forever — two coverings with care walk it 58 → 66 → 74 and finish it.
+**The finding that reframes this whole section.** On the 4-point ladder, in a barn running under real
+constraints — twelve stalls, a mare capped at five coverings, the genotype read one round in four —
+a line that never buys care **does not produce an all-Outstanding horse in twenty-five generations
+97% of the time.** It plateaus around 2.0 of 5 traits with COI already past 40%. Mendelian
+inheritance shuffles alleles; it never invents one, and the founding batch simply does not hold
+enough near-target alleles to finish five traits.
 
-**500 is a first guess and is the first number to revisit in real play.** It decides whether a child
-buys care on one mare a year or on all seven, and therefore where a line lands (§3). Pacing lives in
-the price deliberately, so it can be moved without touching the genetics.
+| care bought on | first all-Outstanding horse | first all-FIXED horse |
+|---|---|---|
+| no coverings | **97% never get there in 25 generations** | never |
+| 1 covering in 4 | median gen 21 | median >25 |
+| half | median gen 15 | median gen 20 |
+| 3 in 4 | median gen 12 | median gen 16 |
+| every covering | median gen 11 | median gen 14 |
+
+`dynasty --mares 3 --studs 2 --cap 5 --herd 12 --select mixed --coax 2 --coax-chance <r>`
+
+So **`prenatal_care_cost` is the most load-bearing number in this slice.** It does not accelerate the
+endgame, it *is* the endgame, and whatever a child can afford per game year is the pace of the whole
+game. It is also the right place for the pacing to live, since it moves without touching genetics.
+The step size is the second dial: at one rung the median is 18 generations even buying it every
+time, at three rungs it is 8.
+
+### 2.7 NPC breeding stables buy care and test their stock
+
+**Without this the NPC breeding stables plateau exactly the way a blind player does, and the field
+the children compete against goes stale while the show barn's *minted* stock does not.** That is a
+worse failure than the ceiling problem it superficially resembles: the children would face a
+Champion field of freshly-minted high-band horses backed by breeding stables whose own lines stopped
+improving at 2 of 5.
+
+Two live tunables, both at `/admin/config`, both first guesses:
+
+- **`npc_prenatal_care_chance`** (proposal **0.5**) — the share of NPC coverings that buy mare
+  prenatal care. It is charged to the stable's real balance like any other cost, which means a stable
+  that stops earning stops buying it. That is correct and is deliberately not special-cased: it
+  becomes visible at `/admin/npc` as a stable going quiet, the same signal slice 0017 Part C built
+  that page to give.
+- **`npc_tested_share`** (proposal **0.5**) — roughly half an NPC stable's horses are treated as
+  having had the conformation panel bought. Which half is derived deterministically from the horse's
+  own `rng_seed` against the stable's, **never drawn per decision**, so a stable's opinion of one of
+  its own horses does not flicker between two ticks.
+
+**Where it wires.** `expressedFor` (`src/db/npcBreeding.ts`) is the single input to NPC mate
+selection and is already shared with `src/db/npcMarket.ts`, so both the breeding stage and the
+market ranking pick this up at once. For a *tested* horse, a conformation trait is scored from the
+mean distance of its two alleles rather than from the shown (worse) one — the same information a
+tested player has, computed by the same helper, with no second scoring path (CLAUDE.md §13).
+
+**Neither setting raises the NPC ceiling.** `activeNpcCeilingRow` still caps NPC quality exactly as
+slice 0015 §2.4 built it; these two stop an NPC line going stale *below* the ceiling. Say this in the
+migration comment — the ceiling is the failure mode CLAUDE.md §13 names as most likely to kill the
+project, and the next session must not read "let the NPCs improve" as a licence to remove it.
+
+Two NPC stables need neither: the **show barn**, whose stock is minted to a rank plan and never
+bred, and the **consignment dealer**, which mints rather than breeds.
 
 ---
 
 ## 3. What it produces
 
-Arabian, band `low`, selection on looks alone — no testing, no genotype knowledge. Traits on target,
-which under §2.3 is identically traits permanently fixed.
+### 3.1 Founding stock
 
-| gen | no prenatal care | care bought every covering |
-|---|---|---|
-| founding | 1.35 | 1.35 |
-| 3 | 1.61 | 2.95 |
-| 5 | 2.18 | 4.42 |
-| 8 | **2.90** | **5.00** |
+`sweep --breed all --n 8000 --rung-step 4 --rungs-per-band 2 --labels derived --founding-mode pairs
+--round-robin 1`
 
-Real play sits between the two columns, since cost and turns mean a child will not buy it on every
-covering — which is what makes the price the pacing dial.
+| band | worst 20% | mean | best 20% | traits Outstanding | wrong-breed type | barn dead ends |
+|---|---|---|---|---|---|---|
+| low | 67.4 | **70.1** | 72.8 | 1.00 of 5 | ≤0.5% | 0% |
+| mid | 73.2 | **76.1** | 78.9 | 2.00 of 5 | ≤0.6% | 0% |
+| high | 81.6 | **84.5** | 87.4 | 3.00 of 5 | ≤0.1% | 0% |
 
-Two Outstanding parents, bred together:
+All eight breeds agree to within 0.2 of a trait — the band picker means one thing everywhere, which
+is the defect in §1's closing paragraph closed. The tails sit ±2.7 points from the mean and the bands
+are 6.0 and 8.4 apart, so the bands never overlap on their averages while a lucky low horse still
+beats an unlucky mid one. Against `show_noise_sd` 5 that reads right.
 
-| | foal matches both parents on all five | within-pairing SD |
-|---|---|---|
-| today | 0.9% | 10.6 pts |
-| **this slice** | **100%** | **0.6 pts** |
+### 3.2 Showing
 
-Both parents are homozygous at the standard *by definition of looking that way*, so every foal is.
-**Two great horses cannot produce a worse foal**, which is the complaint this slice answers.
+One horse against a field of seven show-barn horses of that rank, show noise on every entry, twelve
+stalls, genotype read one round in four, care on half the coverings. **This table assumes
+Novice/Open/Champion are minted at low/mid/high** (§9).
 
-Founding stock is uniform across all eight breeds (2.5–2.6 traits on target, wrong-breed type
-≤0.5%), so the band picker means one thing everywhere.
+| generation | Novice win / top-3 | Open win / top-3 | Champion win / top-3 |
+|---|---|---|---|
+| founding | 21% / 52% | 3% / 16% | 0% / 0% |
+| 4 | 49% / 82% | 16% / 45% | 1% / 5% |
+| 7 | 78% / 96% | 41% / 76% | 5% / 22% |
+| 10 | 94% / 99% | 72% / 94% | 22% / 54% |
+| 13 | 99% / 100% | 90% / 99% | 46% / 79% |
+
+A founding horse is **competitive in Novice on day one** — a ribbon in half its starts. Open ribbons
+start landing around generation 4 and Open wins around generation 7. Champion is a long campaign.
+
+### 3.3 Two great horses
+
+Both parents reading Outstanding on a trait are within a rung of the standard by definition of
+looking that way, so a foal of theirs is too. **Two great horses cannot produce a bad foal**, which
+is the complaint this slice answers — but they *can* produce one a rung off, which is the room the
+4-point ladder deliberately leaves.
+
+### 3.4 The market, and what it rewards
+
+`dynasty --herd 12 --select mixed --coax 2 --coax-chance 0.5 --market 4`, 20 generations:
+
+| what the barn does | first all-Outstanding horse |
+|---|---|
+| no market at all | median gen 15 |
+| buying + stud service, mid then high | median gen **17** |
+| stud service only, no buying | median gen **13** |
+| buying only, no stud service | median gen 18 |
+| buying + stud service, testing every round | median gen **11** |
+
+**Buying on looks actively costs you generations, and it is not churn** — thinning the market to one
+horse a round gives the same answer. A mid-band horse on the shelf shows two Outstanding traits while
+carrying nothing accumulated, and at 4 points a rung Outstanding only means within-one-rung; a
+generation-eight home-bred that looks worse is often carrying far better genes. On the three rounds
+in four where a child cannot see genotypes, they sell the good horse and buy the pretty one.
+
+**Stud service is unambiguous gain** — it never displaces anything, so a barn keeps every allele it
+has accumulated *and* gets outside blood, at no cost in stalls. It is also the only thing measured
+here that holds COI down.
+
+Together: **the market pays +2 generations if a child tests and costs 3 if they do not.** That makes
+the conformation panel pay for itself twice — once on your own foals, once on what you buy — and it
+is the strongest argument in this document for pricing the panel low (§9).
+
+### 3.5 What the conformation test is worth
+
+Twelve stalls, no care, first all-Outstanding horse: never testing, median gen 21+; one round in
+four, gen 15; every round, gen 13. On the softer "first mid-band foal" bar at eight stalls: never
+testing gen 10, one in eight gen 9, one in four gen 7, one in two gen 6, every round gen 5.
 
 ---
 
@@ -219,25 +361,39 @@ Founding stock is uniform across all eight breeds (2.5–2.6 traits on target, w
 
 Each of these is the obvious next change, and each causes a real defect.
 
-1. **Do not re-anchor `realization()` off 50 onto the breed target.** Inbreeding depression is a
-   multiplier on realization, so anchoring on the target makes **an inbred horse score better**,
-   undoing the health slice's central dilemma. Leave `realization()`, `anchorFor()` and
-   `inbreeding_depression_factor` alone — this slice touches none of them.
+1. **`geneticValue()` is shared with ability traits and must be split, not branched.**
+   `abilityValues` calls it too (`src/engines/conformation/model.ts:126`), and ability must keep
+   `potential × 5` exactly (§7 test 7). Conformation's version needs the breed target as an
+   argument; ability's must not grow one.
 2. **Inbreeding depression must come off conformation expression** (slice 0018's proposal). With it
    live, a horse's displayed value is its allele pulled some distance toward 50 — so it is no longer
-   any allele the horse owns, and §2.3's guarantee is false. Watch for it: `dynasty`'s `on target`
-   and `FIXED` columns print identically under this design, and if they ever diverge, this is why.
-3. **The polygenic loop must keep drawing its exact 20 bits per trait**, in place, even though the
+   any allele the horse owns, and §2.3's guarantee is false. **This is a prerequisite, not a
+   warning**: it is not in §5's build order because it is slice 0018's to land, and this slice's
+   numbers all assume it is already gone (`--inbreeding 0` is the bench's default for that reason).
+3. **Do not re-anchor `realization()` off 50 onto the breed target while COI is still a multiplier
+   on it.** Inbreeding depression multiplies realization, so anchoring on the target makes an inbred
+   horse score *better*. Once rule 2 has landed this objection disappears — see §9.
+4. **On-target and FIXED now diverge by design.** The earlier draft of this document said the
+   `dynasty` command's two columns print identically and that a divergence means rule 2 has been
+   violated. That diagnostic is dead: at 4 points a rung, Outstanding covers a horse that is not yet
+   homozygous, so `on target` legitimately runs ahead of `FIXED` by roughly a factor of three. Do
+   not "fix" it.
+5. **The polygenic loop must keep drawing its exact 20 bits per trait**, in place, even though the
    value is demoted (slice 0019 §7's rule). Skip them and every existing RNG stream shifts — colour,
    disease, ability, age all change for the same seed.
-4. **`conformation_noise_sd` is shared with ability.** `rollEnvironmentalNoise` draws
-   Normal(0, sd) for **all fourteen traits** from that one key. Dropping it 6 → 0.5 silently tightens
-   every discipline class too. Either accept it, or split the key (`ability_noise_sd`, staying at 6)
-   and have `drawNoise` take one SD per trait category. **Decide this before the migration lands** —
-   it is a conformation change leaking into ability, not an ability question.
-5. **`import_offers` needs the band snapshotted** (CLAUDE.md §5.5), so a pending founding offer
-   generates under the rules it was minted with.
-6. **Conformation loci are not injectable.** `injection.ts` assumes biallelic; the consignment
+6. **`conformation_noise_sd` is shared with ability.** `rollEnvironmentalNoise` draws Normal(0, sd)
+   for **all fourteen traits** from that one key. Dropping it 6 → 0.5 silently tightens every
+   discipline class too. Split it (`ability_noise_sd`, staying at 6) and have `drawNoise` take one SD
+   per trait category. **Decide before 0178 lands** — it is a conformation change leaking into
+   ability, not an ability question.
+7. **Noise is rounded to a whole number and stored** (`drawNoise`, `model.ts:27`). At SD 0.5 that is
+   a three-point distribution, ~68% exactly zero — not a Gaussian. The bench models this faithfully,
+   so the measurements hold; just know that the ±1.0 modifier, not noise, is the real tie-breaker.
+   `LEGACY_NOISE_SD` becomes dead after the reset.
+8. **`import_offers` needs the concentration/band snapshotted** (CLAUDE.md §5.5). It already carries
+   `polygenic_one_chance`; after 0177's split that column holds only the ability half and its name
+   becomes misleading next to the new one. Say so in the migration.
+9. **Conformation loci are not injectable.** `injection.ts` assumes biallelic; the consignment
    allowlist is colour/gait only. That is a comment plus an assertion, not logic.
 
 ---
@@ -246,31 +402,34 @@ Each of these is the obvious next change, and each causes a real defect.
 
 The later steps read the earlier ones.
 
-1. `Locus.alleles` → `readonly string[]`; five conformation loci appended to `LOCI`.
+1. `Locus.alleles` → `readonly string[]`; five conformation loci appended to `LOCI`, `wildType` the
+   middle rung.
 2. **`src/engines/conformation/typeGene.ts`** — new pure module: the ladder, `shownAlleleFor(pair,
-   target)`, `poolForTarget(targetRung, concentration)`. Everything imports it; nothing restates it.
-3. `geneticValue()` in `src/engines/conformation/model.ts` — reads the type locus per §2.3 plus the
-   demoted modifier. The one function that changes the meaning of a horse's number, and every screen
-   already goes through it.
-4. `generateCandidate()` — draw the five type pairs from the derived pool; specialist per §2.6. The
-   polygenic loop is untouched (rule 3).
+   target)`, `dealForBand(band, ideal, rng)`. Everything imports it; nothing restates it.
+3. `geneticValue()` in `src/engines/conformation/model.ts` — split per rule 1; the conformation
+   version reads the type locus per §2.3 plus the demoted modifier, against the horse's own breed's
+   live `ideal_vector`.
+4. `generateCandidate()` — deal the five type pairs per §2.4; specialist per §2.5, round-robin across
+   the batch.
 5. `parseAllelePool()` — exempt the five, explicitly.
 6. Migrations (§6).
-7. **Mare prenatal care** (§2.7) — a column on `pregnancies`, a checkbox on the covering form, a
+7. **Mare prenatal care** (§2.6) — a column on `pregnancies`, a checkbox on the covering form, a
    config key, an `ACTION_COSTS` entry, a ledger kind, and one call in the foaling path. Additive:
    it touches only new coverings and is the one part of this slice that could land separately.
-8. Testing: a conformation panel on `/horses/:id/test`, reusing
+8. **NPC care and testing** (§2.7) — two config keys, one change in `expressedFor`, one in the NPC
+   covering path. Reads §2.6, so it lands after it.
+9. Testing: a conformation panel on `/horses/:id/test`, reusing
    `horse_knowledge.subject_code = 'locus:NL'` exactly as colour does, in its own `<details>` group.
-9. `inferFromPhenotype` — under §2.3 a horse's shown value **is** its worse allele, so looking tells
-   you that one exactly and the test buys the *hidden better* one. One sentence, not a table.
-10. `foalPrediction.ts` — **replaced by something much shorter**. The Poisson-binomial convolution
+10. `inferFromPhenotype` — under §2.3 a horse's shown value **is** its worse allele, so looking tells
+    you that one exactly and the test buys the *hidden better* one. One sentence, not a table.
+11. `foalPrediction.ts` — **replaced by something much shorter**. The Poisson-binomial convolution
     goes; a 2×2 Punnett over known alleles crossed with the small modifier distribution is exact.
     It must read **Unknown** for an untested parent (slice 0025's rule, unchanged).
-11. Everything that mints a horse (`src/db/founding.ts`, `npc.ts`, `consignment.ts`) passes the
+12. Everything that mints a horse (`src/db/founding.ts`, `npc.ts`, `consignment.ts`) passes the
     breed's ideal vector. `consignment.ts`'s hardcoded `cfg.quality_bands.mid ?? 0.5` becomes a real
     `consignment_quality_band` key.
 
-The admin create-horse form needs a select rather than radios for a 13-allele locus. It stays a
+The admin create-horse form needs a select rather than radios for a 25-allele locus. It stays a
 neutral control (slice 0005 §6.6): a hand-created horse defaults to the middle rung on all five, not
 to a breed's target.
 
@@ -280,15 +439,22 @@ to a breed's target.
 
 Next free is `0176`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
 
-- **0176** — `breeds.ideal_vector` targets snapped to the ladder, all eight breeds, five traits.
-- **0177** — `quality_bands` reshaped to two numbers per band: `conformation_concentration`
-  (0.28 / 0.55 / 0.75) and `ability_one_chance` (0.42 / 0.50 / 0.58, **today's values, unchanged**).
-  The single number is currently *also* the ability allele frequency that `breeds.ability_bias`
-  offsets, so moving it would silently undo slice 0024. This split is forced, not cosmetic.
-- **0178** — `conformation_modifier_step` 0.10, `conformation_noise_sd` 0.5, `conformation_test_cost`.
-- **0179** — `founding_quality_band` → `low`, new `consignment_quality_band` → `low`.
-- **0180** — `import_offers.conformation_concentration`, snapshot column.
-- **0181** — `pregnancies.prenatal_care` snapshot column, `prenatal_care_cost` = 500.
+- **0176** — `breeds.ideal_vector` targets snapped to the 4-point ladder, all eight breeds, five
+  traits. No target moves more than 2 points.
+- **0177** — `quality_bands` reshaped from one number per band to a band **deal** (§2.4's five
+  pair-specs) plus `ability_one_chance` (0.42 / 0.50 / 0.58, **today's values, unchanged**). The
+  single number is currently *also* the ability allele frequency that `breeds.ability_bias` offsets,
+  so moving it would silently undo slice 0024. This split is forced, not cosmetic.
+- **0178** — `conformation_modifier_step` 0.10, `conformation_noise_sd` 0.5, `ability_noise_sd` 6
+  (rule 6), `conformation_test_cost`.
+- **0179** — `conformation_label_outstanding_min` 88, `..._good_min` 72, `..._acceptable_min` 56,
+  `..._weak_min` 40 (§2.2).
+- **0180** — `founding_quality_band` → `low`, new `consignment_quality_band` → `mid`.
+- **0181** — `import_offers` band snapshot column (rule 8).
+- **0182** — `pregnancies.prenatal_care` snapshot column, `prenatal_care_cost` = 500.
+- **0183** — `npc_prenatal_care_chance` 0.5, `npc_tested_share` 0.5 (§2.7). Comment must state that
+  neither raises the NPC ceiling.
+- **0184** — `npc_show_barn_rank_plan` novice/open/champion → low/mid/high bands (§9).
 
 ---
 
@@ -296,20 +462,26 @@ Next free is `0176`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
 
 1. Every breed's snapped target sits **exactly on a rung** — read off the migration on disk, not
    hand-copied, the way `test/showing/breed-aptitude.test.ts` already does.
-2. A generated horse of every breed is within 3 rungs of its target on every conformation trait, at
+2. A generated horse of every breed is within 6 rungs of its target on every conformation trait, at
    every band. This is the test that would have caught the original defect.
-3. The band is **monotonic per breed and per trait** — asserted per trait, never on the average,
-   since averaging is what hid the original bug.
-4. A trait reading Outstanding is homozygous at the standard, over many seeds. §2.3's guarantee,
-   pinned.
+3. Every band deals **exactly its stated word profile**, per trait, for every breed — 1/2/3 traits
+   Outstanding and a Weak at low and mid. Asserted per trait, never on the average, since averaging
+   is what hid the original bug.
+4. A trait reading Outstanding has **both alleles within one rung** of the standard, over many
+   seeds. §2.3's guarantee as it now actually stands — do not write the older, stronger assertion.
 5. Two homozygous-identical parents produce a foal with the identical type pair, every time.
-6. The same seed produces the **same ability traits, age, colour and disease genotype** before and
-   after. The regression that proves rule 3's stream discipline held.
-7. Ability traits are unaffected by `conformation_concentration` at any value.
-8. Prenatal care on a **homozygous** worst trait changes the shown value (the invisible-purchase
-   case in §2.7), and never moves a trait past its target.
-9. `foalPrediction` reads Unknown when either parent's type genes are untested by this viewer.
-10. A breed with no `ideal_vector` still generates (middle rung) and is not judged.
+6. A round-robin founding batch of five or more leaves **no trait without an exact-target allele**
+   (§2.5).
+7. The same seed produces the **same ability traits, age, colour and disease genotype** before and
+   after. The regression that proves rule 5's stream discipline held.
+8. Ability traits are unaffected by the band deal at any setting, and `ability_noise_sd` is what
+   moves ability noise (rule 6).
+9. Prenatal care on a **homozygous** worst trait changes the shown value (the invisible-purchase
+   case in §2.6), moves exactly two rungs, and never moves a trait past its target.
+10. `foalPrediction` reads Unknown when either parent's type genes are untested by this viewer.
+11. A breed with no `ideal_vector` still generates (middle rung) and is not judged.
+12. An NPC stable's tested share is **stable across two calls** for the same horse (§2.7) and its
+    quality still respects `activeNpcCeilingRow`.
 
 ---
 
@@ -321,8 +493,8 @@ deriving each horse's pair from its expressed value does not work: today's value
 not on breed targets, so every Arabian would be permanently Poor-headed. **Grant the new founding
 batches after the migrations land, not before** — `import_offers` snapshots the band.
 
-Scores compress upward: a field of on-type horses is a closer field, so `show_noise_sd` decides a
-larger share of classes. That is the dial to reach for if it grates, not this one.
+Slice 0021 Part G spent the last reset on 2026-08-06, so this is a second one. That is the real price
+of this slice and it is worth naming plainly to the operator before anything is built.
 
 `foalPrediction.ts` gets substantially shorter, so this deletes real code as well as adding it.
 
@@ -330,32 +502,63 @@ larger share of classes. That is the dial to reach for if it grates, not this on
 
 ## 9. Still open
 
-1. **Is the conformation test one purchase per locus, or one panel per horse?** Five purchases is a
-   real money sink and lets a child test only what they care about; one panel is kinder and simpler
-   to explain. Either way this is the test a child wants on every horse they consider buying.
-2. **Are a horse's own type genes free once it has shown**, the way conformation *words* already are
+1. **Confirm Novice / Open / Champion are minted at low / mid / high.** `npc_show_barn_rank_plan`
+   currently reads mid / mid / high, which puts a *mid-band* field in front of a founding horse in a
+   Novice class — 3% wins where low would give 21%. §3.2's whole table assumes the change. This is
+   almost certainly the cause of any "we are not competitive" feeling in real play, and it is a
+   one-line config edit rather than a genetics problem.
+2. **Confirm the consignment dealer mints at `mid`.** §2.5 says mid; the dealer is where a child buys
+   raw material they cannot breed themselves, and low-band stock is barely better than their own.
+3. **The age curve breaks §2.3's guarantee and needs a decision before build.**
+   `realization()` pulls a conformation value toward anchor 50, and every screen and the judge read
+   `expressed` at the horse's *current* age, not `matureExpressed`. At the adult class's own minimum
+   age the curve is still at 0.82, so a homozygous-at-8 Arabian head reads about 16 — Good, not
+   Outstanding — and the young-horse classes slice 0025 built are worse. The bench does not see this
+   because it scores off `mature`. Three ways out: labels and judging read `matureExpressed`; the
+   type gene is not realized by age at all and only the ±1 modifier is; or — the one I would
+   recommend — **once rule 2 has taken COI off conformation expression, anchor the conformation age
+   curve on the breed target instead of 50**, which makes a foal read near breed-typical and converge
+   on its own genotype by maturity, and which rule 3's objection no longer blocks. **Unmeasured.**
+4. **Is the conformation test one purchase per locus, or one panel per horse?** §3.4 and §3.5 both
+   argue for pricing it low and selling it as one panel: it is worth two to five generations, and it
+   is what turns the market from a trap into a gain. Five separate purchases is a bigger money sink
+   but makes a child test the wrong thing.
+5. **Are a horse's own type genes free once it has shown**, the way conformation *words* already are
    (slice 0022 Part B)? Under §2.3 looking already tells you the worse allele, so the test only buys
-   the hidden better one — which makes free-after-a-start cheaper than it used to be. Middle option:
-   your own horses free, another stable's only by testing.
-3. **Rung step 8 (13 alleles)?** A step of 10 gives 11 alleles and a cleaner one-step-one-band story,
-   at the cost of a coarser ladder and larger target snapping. Everything above is measured at 8.
-4. **Split `ability_noise_sd` off, or accept the tightening?** Rule 4. Needs deciding before 0178.
-5. **Confirm the reset**, and that founding grants go out afterwards.
+   the hidden better one. Middle option: your own horses free, another stable's only by testing.
+6. **Split `ability_noise_sd` off, or accept the tightening?** Rule 6. Written into 0178 above as a
+   split, which is the recommendation, but it has not been confirmed.
+7. **Confirm the second reset** (§8), and that founding grants go out afterwards.
 
 ---
 
 ## 10. The bench
 
-`docs/analysis/breeding-lab.mjs` is the only conformation bench and models both engines. It defaults
-to this slice's decided settings, so a bare run measures what is specified above.
+`docs/analysis/breeding-lab.mjs` is the only conformation bench and models both engines. **Its
+defaults still reproduce the 8-point ladder this document originally specified**, so the amended
+design must be asked for on the command line:
 
 ```
-node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8              # the design
-node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8 --coax 1     # ... with prenatal care
-node docs/analysis/breeding-lab.mjs breed 12 to 16 --foals 4 --prenatal 1      # one covering, four foals
-node docs/analysis/breeding-lab.mjs bands --breed AR                           # does the word match the genes?
-node docs/analysis/breeding-lab.mjs sweep --breed all                          # founding stock, all breeds
+--rung-step 4 --rungs-per-band 2 --labels derived --founding-mode pairs --round-robin 1
+--pairs-low 0-0,1-1,1-2,2-2,3-3 --pairs-mid 0-0,0-0,1-1,2-2,3-3 --pairs-high 0-0,0-0,0-0,1-1,2-2
+```
+
+```
+# founding stock, all eight breeds: score spread, word census, barn dead ends
+node docs/analysis/breeding-lab.mjs sweep --breed all --n 8000 <the flags above>
+
+# does the word match the genes, and does Outstanding mean homozygous?
+node docs/analysis/breeding-lab.mjs bands --breed AR --rung-step 4 --rungs-per-band 2
+
+# a real barn: 12 stalls, mares capped at 5, genotype read 1 round in 4, care on half
+node docs/analysis/breeding-lab.mjs dynasty --breed AR --mares 3 --studs 2 --cap 5 --herd 12 \
+  --select mixed --coax 2 --coax-chance 0.5 --market 4 --stud-service 1 <the flags above>
+
+# four children, three founders each, out of one batch of twelve
+node docs/analysis/breeding-lab.mjs fairness --breed AR <the flags above>
 ```
 
 It is a simulation of a system that has not been built, with its own PRNG and its own copy of the
-game's constants — and that copy can drift. Every constant in it names its source.
+game's constants — and that copy can drift. Every constant in it names its source. Money is not
+modelled: `--buy-per-round` is the stand-in for a budget, and it is the first thing to distrust in
+§3.4.
