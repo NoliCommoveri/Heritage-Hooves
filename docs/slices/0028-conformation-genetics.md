@@ -6,6 +6,10 @@ reading, and the intermediate proposals that led here have been deleted delibera
 
 Decided with the operator 2026-08-07, amended 2026-08-07 after a second round of measurement.
 Per CLAUDE.md §2, treat §2–§8 as standing. §9 is the short list of what is genuinely still open.
+**Two decisions taken 2026-08-07 after this document's first draft: the show barn's Novice tier
+drops to the `low` band (built, migration `0176`), and conformation stops being realized by age
+at all (§2.4) — the second replaces a recommendation this document previously made and the
+measurement refuted.**
 
 Measured throughout by `docs/analysis/breeding-lab.mjs`, which models both engines
 (`--engine today` and `--engine proposed`). Re-run it after any change. Every table below names the
@@ -70,7 +74,7 @@ Each locus has **25 alleles, named for their own value on the trait's 1–99 sca
 
 An allele may sit at most **6 rungs — 24 points — from its breed's own standard**. That cap, and
 nothing else, is the breed-type guarantee: it is what makes a Roman-nosed Arabian impossible. **Do
-not widen it to tune quality.** Quality is tuned by §2.4's band deal, which changes what a horse is
+not widen it to tune quality.** Quality is tuned by §2.5's band deal, which changes what a horse is
 dealt *inside* the reach and leaves breed type perfectly intact.
 
 Note the reach is unchanged **in points** from the 8-point ladder this slice originally proposed —
@@ -116,7 +120,7 @@ expressed = worseAllele + (alleleCount − 10) × conformation_modifier_step + n
 **Which standard?** The horse's **own breed's live `ideal_vector`** — never the `ideal_vector`
 snapshotted onto a `show_classes` row. The class snapshot stays what it has always been: the thing
 distance is *measured against* at judging. Expression and measurement read different copies on
-purpose, and a comment in `geneticValue()` should say so, because migration 0176 re-snaps every
+purpose, and a comment in `geneticValue()` should say so, because migration 0177 re-snaps every
 target and the two will briefly disagree if anyone wires them together.
 
 This is the load-bearing choice in the whole slice:
@@ -131,12 +135,16 @@ cannot fall.
 on target, so an Outstanding trait was homozygous-at-standard 100% of the time. Outstanding now
 covers 0–1 rungs, so:
 
-> **A trait reading Outstanding means both alleles are within one rung of the standard. It is
-> genuinely homozygous-at-standard 55% of the time.**
+> **A trait reading Outstanding means both alleles are within one rung of the standard. In founding
+> stock it is genuinely homozygous-at-standard about 30% of the time**, rising toward two thirds in a
+> line that has been bred for that trait (measured: gen 8 of §3.4's barn reads 1.45 traits Outstanding
+> against 0.94 fixed).
 
 That is a real loss and it must not be papered over — about one Outstanding trait in five carries no
-correct allele at all. It buys something the 8-point ladder could not: **the word saturates before
-the genes do.** A child gets a horse that looks perfect and still has real breeding left in it, and
+correct allele at all. The 30% is measured under §2.5's dealt bands; an earlier draft of this section
+said 55%, which was measured under the concentration-weighted pool that §2.5 replaced.
+
+It buys something the 8-point ladder could not: **the word saturates before the genes do.** A child gets a horse that looks perfect and still has real breeding left in it, and
 the show score — continuous in distance — goes on separating a field after every word has gone
 Outstanding. That is the answer to §8's own worry about a field of on-type horses compressing
 upward. Measured: `bands --rung-step 4 --rungs-per-band 2`.
@@ -148,7 +156,46 @@ horses with identical type genes.
 `show_noise_sd` (5) is **not** touched. Uncertainty belongs in the show ring, where everyone can see
 it is luck. It does not belong in the horse.
 
-### 2.4 The bands are dealt, not drawn
+### 2.4 Conformation is not realized by age at all
+
+**`conformationValues` stops calling `realization()`. A horse's conformation is §2.3's formula at
+every age, from birth.** `abilityValues` keeps `realization()` exactly as it is today.
+
+The problem this solves: `realization()` pulls a value toward an anchor by an age curve that is 0.55
+at birth and only reaches 1.0 at five years, and every screen and the judge read the value at the
+horse's *current* age. So below maturity a horse does not read as its own genotype, and §2.3's whole
+guarantee is a maturity guarantee rather than a guarantee. At the adult classes' own minimum age the
+curve is still 0.82, which reads a homozygous-at-8 Arabian head as about 16 — Good, not Outstanding —
+and the young-horse classes slice 0025 built are worse.
+
+**Anchoring the curve on the breed target instead of 50 does not fix it.** That was this document's
+own recommendation and the measurement refuted it: it swaps one error for its mirror, so a young
+horse reads too *good* rather than too bad, and the word still matches the genotype only 35% of the
+time at a year old under either anchor (`bands --anchor target --age 1`). Any age curve on a
+Mendelian type gene makes the word unfaithful; only removing it makes the word true.
+
+Three things fall out of this, and they are the reason it is the right answer rather than merely the
+simplest:
+
+- **The guarantee holds at every age, not just at maturity** — word fidelity is 100% for a foal, a
+  yearling and a broodmare alike. A child can read a foal the day it is born, which is what the whole
+  of §2.3 is for.
+- **It satisfies §5's rules 2 and 3 at the same time.** Inbreeding depression cannot be on
+  conformation expression if realization is not applied to conformation at all, which is what slice
+  0018's proposal asked for — and `realization()`, `anchorFor()` and `inbreeding_depression_factor`
+  are themselves untouched, so nothing an inbred horse does gets *better*. Depression goes on
+  continuing to apply to ability expression, where a real dilemma survives and where slice 0018 can
+  still move it.
+- **A type gene is a fact about the horse.** It does not develop. Ability genuinely does — a
+  two-year-old is slower than a five-year-old — which is why the curve stays there and only there.
+
+The costs, both small and both real. `conformation_maturity_years` and
+`conformation_realization_at_birth` become ability-only settings and want a comment saying so rather
+than a rename (renaming a config key is a migration for no behavioural gain). And
+`ConformationValue.matureExpressed` becomes identical to `expressed`, so **the horse page's "will
+mature to" line is dropped for conformation traits** — it would be printing the same number twice.
+
+### 2.5 The bands are dealt, not drawn
 
 A founding horse is **dealt a fixed profile of words**, one pair-spec per trait, shuffled across the
 five traits. Bucket index 0 is Outstanding, 1 Good, 2 Acceptable, 3 Weak; under §2.3 a pair shows
@@ -180,7 +227,7 @@ child gets the same shape; only which trait is which varies. Measured: `fairness
 This is a knowing exception to `pool.ts`'s "a pool must list every locus" rule. `parseAllelePool`
 must exempt these five **explicitly**, so a missing colour locus still throws.
 
-### 2.5 The founding specialist, and why round-robin is now mandatory
+### 2.6 The founding specialist, and why round-robin is now mandatory
 
 Slice 0019's conformation specialist becomes an **upgrade of an allele the deal already granted**:
 one allele already in the closest bucket is moved to exactly the breed's target rung. The quota is
@@ -196,7 +243,7 @@ standard on some trait** — a trait that child could never breed right. Round-r
 Founding stock mints at band **`low`**. `mid` is the consignment dealer's and the show barn's
 working band; `high` is what a Champion field is made of.
 
-### 2.6 Mare prenatal care — the mechanism, not an accelerator
+### 2.7 Mare prenatal care — the mechanism, not an accelerator
 
 A paid option on a covering that **moves the foal's worst trait two rungs (8 points) toward its
 breed standard**.
@@ -245,7 +292,7 @@ game. It is also the right place for the pacing to live, since it moves without 
 The step size is the second dial: at one rung the median is 18 generations even buying it every
 time, at three rungs it is 8.
 
-### 2.7 NPC breeding stables buy care and test their stock
+### 2.8 NPC breeding stables buy care and test their stock
 
 **Without this the NPC breeding stables plateau exactly the way a blind player does, and the field
 the children compete against goes stale while the show barn's *minted* stock does not.** That is a
@@ -365,14 +412,17 @@ Each of these is the obvious next change, and each causes a real defect.
    `abilityValues` calls it too (`src/engines/conformation/model.ts:126`), and ability must keep
    `potential × 5` exactly (§7 test 7). Conformation's version needs the breed target as an
    argument; ability's must not grow one.
-2. **Inbreeding depression must come off conformation expression** (slice 0018's proposal). With it
-   live, a horse's displayed value is its allele pulled some distance toward 50 — so it is no longer
-   any allele the horse owns, and §2.3's guarantee is false. **This is a prerequisite, not a
-   warning**: it is not in §5's build order because it is slice 0018's to land, and this slice's
-   numbers all assume it is already gone (`--inbreeding 0` is the bench's default for that reason).
-3. **Do not re-anchor `realization()` off 50 onto the breed target while COI is still a multiplier
-   on it.** Inbreeding depression multiplies realization, so anchoring on the target makes an inbred
-   horse score *better*. Once rule 2 has landed this objection disappears — see §9.
+2. **Do not put `realization()` back on conformation, in any form.** §2.4 takes it off entirely, and
+   both of the obvious ways to put it back are defects. Leaving it as it is means a horse's displayed
+   value is its allele pulled toward 50, so it is no longer any allele the horse owns and §2.3's
+   guarantee is false below maturity. Re-anchoring it on the breed target is worse than it looks: it
+   swaps the error for its mirror (young horses read too *good*), it was measured at 35% word
+   fidelity at a year old, and while COI is still a multiplier on realization it makes an **inbred
+   horse score better**, which undoes the health slice's central dilemma. `realization()`,
+   `anchorFor()` and `inbreeding_depression_factor` are themselves untouched by this slice.
+3. **§2.4 is what satisfies slice 0018's "depression off conformation expression".** Nothing further
+   is owed to it here, and this slice is not blocked on 0018 landing. Depression goes on applying to
+   *ability* expression; moving it to fitness stays 0018's call.
 4. **On-target and FIXED now diverge by design.** The earlier draft of this document said the
    `dynasty` command's two columns print identically and that a divergence means rule 2 has been
    violated. That diagnostic is dead: at 4 points a rung, Outstanding covers a horse that is not yet
@@ -384,7 +434,7 @@ Each of these is the obvious next change, and each causes a real defect.
 6. **`conformation_noise_sd` is shared with ability.** `rollEnvironmentalNoise` draws Normal(0, sd)
    for **all fourteen traits** from that one key. Dropping it 6 → 0.5 silently tightens every
    discipline class too. Split it (`ability_noise_sd`, staying at 6) and have `drawNoise` take one SD
-   per trait category. **Decide before 0178 lands** — it is a conformation change leaking into
+   per trait category. **Decide before 0179 lands** — it is a conformation change leaking into
    ability, not an ability question.
 7. **Noise is rounded to a whole number and stored** (`drawNoise`, `model.ts:27`). At SD 0.5 that is
    a three-point distribution, ~68% exactly zero — not a Gaussian. The bench models this faithfully,
@@ -409,23 +459,26 @@ The later steps read the earlier ones.
 3. `geneticValue()` in `src/engines/conformation/model.ts` — split per rule 1; the conformation
    version reads the type locus per §2.3 plus the demoted modifier, against the horse's own breed's
    live `ideal_vector`.
-4. `generateCandidate()` — deal the five type pairs per §2.4; specialist per §2.5, round-robin across
+4. `conformationValues()` stops calling `realization()` (§2.4); `abilityValues()` keeps it.
+   `matureExpressed` collapses onto `expressed`, so the horse page's "will mature to" line goes with
+   it. One line of engine, one card, and it is what makes every guarantee in §2.3 true at any age.
+5. `generateCandidate()` — deal the five type pairs per §2.5; specialist per §2.6, round-robin across
    the batch.
-5. `parseAllelePool()` — exempt the five, explicitly.
-6. Migrations (§6).
-7. **Mare prenatal care** (§2.6) — a column on `pregnancies`, a checkbox on the covering form, a
+6. `parseAllelePool()` — exempt the five, explicitly.
+7. Migrations (§6).
+8. **Mare prenatal care** (§2.7) — a column on `pregnancies`, a checkbox on the covering form, a
    config key, an `ACTION_COSTS` entry, a ledger kind, and one call in the foaling path. Additive:
    it touches only new coverings and is the one part of this slice that could land separately.
-8. **NPC care and testing** (§2.7) — two config keys, one change in `expressedFor`, one in the NPC
-   covering path. Reads §2.6, so it lands after it.
-9. Testing: a conformation panel on `/horses/:id/test`, reusing
+9. **NPC care and testing** (§2.8) — two config keys, one change in `expressedFor`, one in the NPC
+   covering path. Reads §2.7, so it lands after it.
+10. Testing: a conformation panel on `/horses/:id/test`, reusing
    `horse_knowledge.subject_code = 'locus:NL'` exactly as colour does, in its own `<details>` group.
-10. `inferFromPhenotype` — under §2.3 a horse's shown value **is** its worse allele, so looking tells
+11. `inferFromPhenotype` — under §2.3 a horse's shown value **is** its worse allele, so looking tells
     you that one exactly and the test buys the *hidden better* one. One sentence, not a table.
-11. `foalPrediction.ts` — **replaced by something much shorter**. The Poisson-binomial convolution
+12. `foalPrediction.ts` — **replaced by something much shorter**. The Poisson-binomial convolution
     goes; a 2×2 Punnett over known alleles crossed with the small modifier distribution is exact.
     It must read **Unknown** for an untested parent (slice 0025's rule, unchanged).
-12. Everything that mints a horse (`src/db/founding.ts`, `npc.ts`, `consignment.ts`) passes the
+13. Everything that mints a horse (`src/db/founding.ts`, `npc.ts`, `consignment.ts`) passes the
     breed's ideal vector. `consignment.ts`'s hardcoded `cfg.quality_bands.mid ?? 0.5` becomes a real
     `consignment_quality_band` key.
 
@@ -437,24 +490,31 @@ to a breed's target.
 
 ## 6. Migrations
 
-Next free is `0176`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
+**`0176` is already built and applied-pending** — `npc_show_barn_rank_plan`'s Novice tier moved from
+the `mid` band to `low` (§3.2's table assumes it). It is deliberately independent of everything else
+here: the band names it uses exist today and keep their meaning after 0178 reshapes what a band
+contains, so it improves the game before any of the rest lands.
 
-- **0176** — `breeds.ideal_vector` targets snapped to the 4-point ladder, all eight breeds, five
+Next free is `0177`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
+
+- **0177** — `breeds.ideal_vector` targets snapped to the 4-point ladder, all eight breeds, five
   traits. No target moves more than 2 points.
-- **0177** — `quality_bands` reshaped from one number per band to a band **deal** (§2.4's five
+- **0178** — `quality_bands` reshaped from one number per band to a band **deal** (§2.5's five
   pair-specs) plus `ability_one_chance` (0.42 / 0.50 / 0.58, **today's values, unchanged**). The
   single number is currently *also* the ability allele frequency that `breeds.ability_bias` offsets,
   so moving it would silently undo slice 0024. This split is forced, not cosmetic.
-- **0178** — `conformation_modifier_step` 0.10, `conformation_noise_sd` 0.5, `ability_noise_sd` 6
+- **0179** — `conformation_modifier_step` 0.10, `conformation_noise_sd` 0.5, `ability_noise_sd` 6
   (rule 6), `conformation_test_cost`.
-- **0179** — `conformation_label_outstanding_min` 88, `..._good_min` 72, `..._acceptable_min` 56,
+- **0180** — `conformation_label_outstanding_min` 88, `..._good_min` 72, `..._acceptable_min` 56,
   `..._weak_min` 40 (§2.2).
-- **0180** — `founding_quality_band` → `low`, new `consignment_quality_band` → `mid`.
-- **0181** — `import_offers` band snapshot column (rule 8).
-- **0182** — `pregnancies.prenatal_care` snapshot column, `prenatal_care_cost` = 500.
-- **0183** — `npc_prenatal_care_chance` 0.5, `npc_tested_share` 0.5 (§2.7). Comment must state that
+- **0181** — `founding_quality_band` → `low`, new `consignment_quality_band` → `mid`.
+- **0182** — `import_offers` band snapshot column (rule 8).
+- **0183** — `pregnancies.prenatal_care` snapshot column, `prenatal_care_cost` = 500.
+- **0184** — `npc_prenatal_care_chance` 0.5, `npc_tested_share` 0.5 (§2.8). Comment must state that
   neither raises the NPC ceiling.
-- **0184** — `npc_show_barn_rank_plan` novice/open/champion → low/mid/high bands (§9).
+
+§2.4 needs **no migration** — it is the removal of a call, plus a comment on
+`conformation_maturity_years`/`conformation_realization_at_birth` saying they are ability-only now.
 
 ---
 
@@ -480,8 +540,13 @@ Next free is `0176`. Each registered in `src/db/migrations.ts` (CLAUDE.md §8).
    case in §2.6), moves exactly two rungs, and never moves a trait past its target.
 10. `foalPrediction` reads Unknown when either parent's type genes are untested by this viewer.
 11. A breed with no `ideal_vector` still generates (middle rung) and is not judged.
-12. An NPC stable's tested share is **stable across two calls** for the same horse (§2.7) and its
+12. An NPC stable's tested share is **stable across two calls** for the same horse (§2.8) and its
     quality still respects `activeNpcCeilingRow`.
+13. §2.4: the **same horse reads the same conformation values at one year old and at ten** — and its
+    ability values do not. This is the test that keeps the age curve off conformation once somebody
+    "restores" it.
+14. §2.4's corollary: a horse with a **non-zero COI reads its own alleles** on conformation, and
+    still takes a depression penalty on ability. Rule 2, pinned.
 
 ---
 
@@ -502,33 +567,18 @@ of this slice and it is worth naming plainly to the operator before anything is 
 
 ## 9. Still open
 
-1. **Confirm Novice / Open / Champion are minted at low / mid / high.** `npc_show_barn_rank_plan`
-   currently reads mid / mid / high, which puts a *mid-band* field in front of a founding horse in a
-   Novice class — 3% wins where low would give 21%. §3.2's whole table assumes the change. This is
-   almost certainly the cause of any "we are not competitive" feeling in real play, and it is a
-   one-line config edit rather than a genetics problem.
-2. **Confirm the consignment dealer mints at `mid`.** §2.5 says mid; the dealer is where a child buys
+1. **Confirm the consignment dealer mints at `mid`.** §2.6 says mid; the dealer is where a child buys
    raw material they cannot breed themselves, and low-band stock is barely better than their own.
-3. **The age curve breaks §2.3's guarantee and needs a decision before build.**
-   `realization()` pulls a conformation value toward anchor 50, and every screen and the judge read
-   `expressed` at the horse's *current* age, not `matureExpressed`. At the adult class's own minimum
-   age the curve is still at 0.82, so a homozygous-at-8 Arabian head reads about 16 — Good, not
-   Outstanding — and the young-horse classes slice 0025 built are worse. The bench does not see this
-   because it scores off `mature`. Three ways out: labels and judging read `matureExpressed`; the
-   type gene is not realized by age at all and only the ±1 modifier is; or — the one I would
-   recommend — **once rule 2 has taken COI off conformation expression, anchor the conformation age
-   curve on the breed target instead of 50**, which makes a foal read near breed-typical and converge
-   on its own genotype by maturity, and which rule 3's objection no longer blocks. **Unmeasured.**
-4. **Is the conformation test one purchase per locus, or one panel per horse?** §3.4 and §3.5 both
+2. **Is the conformation test one purchase per locus, or one panel per horse?** §3.4 and §3.5 both
    argue for pricing it low and selling it as one panel: it is worth two to five generations, and it
    is what turns the market from a trap into a gain. Five separate purchases is a bigger money sink
    but makes a child test the wrong thing.
-5. **Are a horse's own type genes free once it has shown**, the way conformation *words* already are
+3. **Are a horse's own type genes free once it has shown**, the way conformation *words* already are
    (slice 0022 Part B)? Under §2.3 looking already tells you the worse allele, so the test only buys
    the hidden better one. Middle option: your own horses free, another stable's only by testing.
-6. **Split `ability_noise_sd` off, or accept the tightening?** Rule 6. Written into 0178 above as a
+4. **Split `ability_noise_sd` off, or accept the tightening?** Rule 6. Written into 0179 above as a
    split, which is the recommendation, but it has not been confirmed.
-7. **Confirm the second reset** (§8), and that founding grants go out afterwards.
+5. **Confirm the second reset** (§8), and that founding grants go out afterwards.
 
 ---
 
@@ -557,6 +607,10 @@ node docs/analysis/breeding-lab.mjs dynasty --breed AR --mares 3 --studs 2 --cap
 # four children, three founders each, out of one batch of twelve
 node docs/analysis/breeding-lab.mjs fairness --breed AR <the flags above>
 ```
+
+`--anchor target|fifty` and `bands --age <years>` exist to re-run §2.4's measurement: score a
+population at a given age off the value shown *that day* rather than the matured one. Both are only
+there to show why the age curve had to go — the decided design uses neither.
 
 It is a simulation of a system that has not been built, with its own PRNG and its own copy of the
 game's constants — and that copy can drift. Every constant in it names its source. Money is not

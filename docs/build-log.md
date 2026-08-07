@@ -1088,3 +1088,13 @@ the amended design must be asked for on the command line — slice 0028 §10 has
 `--select mixed --informed-every` (testing part of the time), `--coax-chance`, `--goal <band>`, a
 score-spread table and a word census on `sweep`, and a `stranded` column that counts barns holding
 nothing *within one rung* — the right dead-end measure once care can walk an allele in.
+
+**2026-08-07 — Match the check to the change.** Recorded in CLAUDE.md §9 at the operator's
+instruction, after a session ran `npm ci` and the full 908-test suite to verify a change that was
+almost entirely a document edit. The change did also add `migrations/0176` and its two-line
+registration in `src/db/migrations.ts`, so it was not *purely* documentation and some check was
+owed — but the proportionate one was `npx tsc --noEmit` plus the single D1 test file covering the
+area, not a dependency install and every test in the repository. The operator does not have a
+terminal and cannot see why a session went quiet for several minutes; spending that on a document is
+a real cost with nothing bought. **The tell is `npm ci`: if a check will not run without installing
+dependencies first, the check is too big for the change.**

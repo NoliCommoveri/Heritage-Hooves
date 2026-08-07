@@ -260,6 +260,19 @@ const PROP = {
   coaxPolicy: 'worst',       // DECIDED — the allele furthest from standard ('finish' = the tested player's choice)
   coaxMode: 'shown',         // DECIDED — move the worst TRAIT one rung ('allele' loses ~half of purchases silently)
 
+  // THE REALIZATION ANCHOR (operator, 2026-08-07). expressedValue pulls a horse's genetic value
+  // toward an anchor by the age curve, so below maturity a horse does not read as its own genotype.
+  //   'fifty'  today's behaviour: anchor 50, the population centre. A young horse of a breed whose
+  //            standard is far from 50 reads badly however good it is - an Arabian head at the
+  //            standard (8) reads about 16 at the adult classes' own minimum age. The best possible
+  //            yearling can never read Outstanding, and young-horse classes measure the wrong thing.
+  //   'target' anchor the horse's OWN breed standard. At maturity the two are identical (the curve
+  //            is 1.0); below it a young horse reads closer to breed-typical and converges on its
+  //            real genotype as it grows. Only safe once inbreeding depression is off conformation
+  //            expression - see slice 0028 §4 rule 3, which is about COI multiplying realization,
+  //            not about the age curve.
+  anchorMode: 'fifty',
+
   // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
   //   'average'  the fix document as written: the mean of the two, co-dominant.
   //   'random'   the horse EXPRESSES ONE OF ITS TWO ALLELES, drawn once at birth from its own
@@ -817,10 +830,15 @@ function confParts(state, horse, trait) {
   }
   const geneticVal = clamp99((typeValue ?? 0) + modifier + noise);
   const target = targetFor(state, horse.breed, trait);
-  const now = clamp99(expressedValue(geneticVal, realization(horse.ageYears, horse.coi), ANCHOR_BI));
-  const mature = clamp99(expressedValue(geneticVal, realization(MATURITY_YEARS, horse.coi), ANCHOR_BI));
+  const anchor = PROP.anchorMode === 'target' && state.engine === 'proposed' ? target : ANCHOR_BI;
+  const now = clamp99(expressedValue(geneticVal, realization(horse.ageYears, horse.coi), anchor));
+  const mature = clamp99(expressedValue(geneticVal, realization(MATURITY_YEARS, horse.coi), anchor));
   const score = Math.max(0, 100 - Math.abs(mature - target) * FALLOFF);
-  return { trait, typeAlleles, typeValue, modifier, noise, geneticVal, now, mature, target, dist: Math.abs(mature - target), score };
+  // What a JUDGE sees, and what the horse page prints: the value at the horse's age today, never
+  // the matured one. Everything else in this tool scores off `mature`, which is why the age curve
+  // stayed invisible here for so long - see slice 0028 §9.
+  const scoreNow = Math.max(0, 100 - Math.abs(now - target) * FALLOFF);
+  return { trait, typeAlleles, typeValue, modifier, noise, geneticVal, now, mature, target, dist: Math.abs(mature - target), score, scoreNow };
 }
 function abilityParts(state, horse, trait) {
   const noise = noiseFor(state, horse.seed)[trait];
@@ -1041,6 +1059,7 @@ const TUNABLE = {
   'expression': ['expression', String],
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
+  'anchor': ['anchorMode', String],
   'rungs-per-band': ['rungsPerBand', Number],
   'founder-max-outstanding': ['founderMaxOutstanding', Number],
 };
@@ -1990,6 +2009,8 @@ function cmdBands(flags) {
   console.log(`LABEL BANDS — ${BREEDS[breed].name}, band ${band} | ${tuningNote(tuning)}`);
   console.log(`Ladder: step ${PROP.rungStep}, expression ${PROP.expression}, modifier +/-${(LOCI_PER_TRAIT * PROP.modifierStep).toFixed(2)}, noise SD ${PROP.noiseSd}\n`);
 
+  const judgeAge = flags.age === undefined ? null : Number(flags.age);
+  if (judgeAge != null) console.log(`  Judged AT AGE ${judgeAge}, off the value shown that day, anchor '${PROP.anchorMode}'.\n`);
   const k = Math.max(1, PROP.rungsPerBand ?? 1);
   const unit = PROP.expression === 'average' ? 'half-rung' : 'rung';
   console.log(`  Each word covers ${k} ${unit}${k > 1 ? 's' : ''} of distance from the standard.\n`);
@@ -2014,11 +2035,12 @@ function cmdBands(flags) {
     PROP.modifierStep = modStep; PROP.noiseSd = noiseSd;
     let right = 0, total = 0, outstandingHom = 0, outstandingAll = 0;
     for (const h of mintPopulation(state, n, deriveSeed(seed, `p_${modStep}_${noiseSd}`))) {
+      if (judgeAge != null) h.ageYears = judgeAge;
       for (const t of CONF_TRAITS) {
         const p = confParts(state, h, t);
         const pureDist = Math.abs(p.typeValue - p.target);
         const pureLabel = label(Math.max(0, 100 - pureDist * FALLOFF));
-        const shown = label(p.score);
+        const shown = label(judgeAge == null ? p.score : p.scoreNow);
         total++; if (shown === pureLabel) right++;
         if (shown === 'Outstanding') {
           outstandingAll++;

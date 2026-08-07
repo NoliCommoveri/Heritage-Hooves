@@ -169,6 +169,16 @@ Indexes follow the queries the real screens make. Don't guess a full index list 
 
 **While working:**
 
+- **Match the check to the change.** A change under `docs/` alone gets no test run — there is nothing
+  to break, and a session that reaches for the suite anyway is burning the operator's time to prove
+  a document parses. A migration plus its `src/db/migrations.ts` registration gets `npx tsc --noEmit`
+  and the *one* D1 test file covering that area (those tests apply every migration against a real
+  database, so a malformed one does fail there). Reserve a full `npx vitest run` for a change to an
+  engine, a route, or a shared helper. **And if a check needs `npm ci` before it will run, that is
+  the signal the check is too big for the change, not a step to complete** — established 2026-08-07
+  after a session ran a dependency install and 908 tests to verify a two-line migration
+  registration made alongside a document edit.
+
 - Build what the slice asks for. Do not build ahead — the build order exists because the tuning that only real play reveals is the binding constraint, not build speed.
 - If the slice is ambiguous or depends on an undecided question, ask before choosing.
 - Prefer the boring implementation. This codebase will be read by sessions with no context.
