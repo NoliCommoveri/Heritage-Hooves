@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 //
 // BREEDING LAB — a bench for the proposed conformation genetics, driven from the command line.
-// Written 2026-08-06 alongside docs/fixes/conformation-breed-type.md, so the operator can run in an
+// Written alongside docs/slices/0028-conformation-genetics.md, so the operator can run in an
 // afternoon the experiments that would take months of real play: mint a founding batch, look at
 // what a player would see AND the numbers underneath it, pick two horses, roll five foals, then
 // breed those foals onward.
@@ -9,7 +9,7 @@
 // ===========================================================================================
 //  THIS IS NOT THE GAME. It is a simulation of a system that has not been built.
 //  Same standing rules as population-sim.mjs / stable-timeline.mjs / training-effect.mjs /
-//  conformation-architecture.mjs: analysis tool, not game code, not a vitest test; own PRNG, own
+//  analysis tool, not game code, not a vitest test; own PRNG, own
 //  copy of the game's constants, and THAT COPY CAN DRIFT. Every constant below names its source.
 //  Nothing here reads or writes the real database.
 // ===========================================================================================
@@ -65,7 +65,7 @@
 //                         birth, once for life. Never away, so breed type cannot erode. Costs money
 //                         and a turn in the game; 0 = not bought, which is the honest default since
 //                         a real player will not buy it on every covering. See
-//                         docs/fixes/foals-worse-than-parents.md §3.
+//                         docs/slices/0028-conformation-genetics.md §2.7.
 //   --coax-mode <mode>    shown | allele — DECIDED 'shown': move the worst TRAIT, whatever that
 //                         costs in alleles (one step on a heterozygote, two on a homozygote), so
 //                         the purchase is ALWAYS visible. 'allele' moves a single allele and is
@@ -165,7 +165,7 @@ const TODAY = {
   noiseSd: 6,                                   // conformation_noise_sd,  migration 0031
 };
 
-// --- PROPOSED engine — docs/fixes/conformation-breed-type.md §4 -------------
+// --- PROPOSED engine — docs/slices/0028-conformation-genetics.md §2 -------------
 // Not in the game. These are the numbers under test; move them here and re-run.
 //
 // Everything under "the founding-quality dials" was added 2026-08-07, after the operator asked
@@ -179,13 +179,8 @@ const TODAY = {
 //   SHAPE decides quality.      How the pool is distributed INSIDE that reach. Slacken it all the
 //                               way to flat and breed type is still perfectly intact.
 //
-// Defaults reproduce THE DECIDED DESIGN — docs/fixes/foals-worse-than-parents.md §0, settled with
-// the operator 2026-08-07. Change them on the command line, not here.
-//
-// Read this before trusting a number you carried across from another document. The older documents
-// (conformation-breed-type.md, conformation-founding-quality.md) were measured under the SUPERSEDED
-// averaging rule with the old modifier and noise, so reproducing their figures needs the flags
-// spelled out — `--expression average --modifier-step 0.75 --noise-sd 2 --inbreeding 1`.
+// Defaults reproduce THE DECIDED DESIGN — docs/slices/0028-conformation-genetics.md §2.
+// Change them on the command line, not here.
 const PROP = {
   rungBase: 2,                               // §4.2 — the allele ladder starts at 2
   rungStep: 8,                               // §4.2 — a rung every 8 points: 2, 10, 18, ... 98
@@ -245,7 +240,7 @@ const PROP = {
   driftClamped: true,        // keep drifted alleles inside reachPoints of the breed standard
 
   // DECIDED 2026-08-07: inbreeding depression comes OFF conformation expression and onto fitness
-  // (slice 0018, foals-worse-than-parents.md §1.2). Pass `--inbreeding 1` to measure the old way.
+  // (slice 0018, 0028-conformation-genetics.md §4 rule 2). Pass `--inbreeding 1` to measure the old way.
   inbreedingFactor: 0,                   // --inbreeding; 0 = COI depression off
 
   // §7.3's reframed slice 0019 conformation specialist.
@@ -344,7 +339,7 @@ function streamFor(seed, label) {
 }
 
 // ===========================================================================================
-// The proposed type gene — docs/fixes/conformation-breed-type.md §4.2/§4.4
+// The proposed type gene — docs/slices/0028-conformation-genetics.md §2.2/§2.4
 // ===========================================================================================
 const rungValue = (r) => PROP.rungBase + r * PROP.rungStep;
 const nearestRung = (v) => Math.max(0, Math.min(rungCount() - 1, Math.round((v - PROP.rungBase) / PROP.rungStep)));
@@ -676,7 +671,7 @@ function maybeDrift(allele, breedCode, trait, rng) {
  * The genetic rule is unchanged from the first draft and is what keeps it safe: the allele moves ONE
  * RUNG TOWARD the foal's own breed standard, never away and never past it. Breed type therefore
  * strictly improves and can never erode — the objection that sank random drift
- * (docs/fixes/conformation-founding-quality.md §5) — and an NPC stable that never buys it never moves.
+ * (0028-conformation-genetics.md §2.7) — and an NPC stable that never buys it never moves.
  * It is directed and visible, so the breeding preview's Punnett square stays exact.
  *
  * `coaxPolicy` is which allele the money buys:
@@ -722,7 +717,7 @@ function coaxGenotype(state, genotype, breedCode, steps, policy) {
  * ALWAYS visible under the `worst` expression rule. On a heterozygote it costs one allele step; on a
  * homozygote it costs two, which is the honest price of the guarantee and is worth knowing about,
  * because it means the mechanic does twice as much genetic work in exactly the case a line is most
- * stuck. Measured against 'allele' in docs/fixes/foals-worse-than-parents.md.
+ * stuck. Measured against 'allele' in docs/slices/0028-conformation-genetics.md §2.7.
  */
 function coaxShownStep(genotype, breedCode) {
   let worst = null;
@@ -1388,7 +1383,7 @@ function cmdSweep(flags) {
  *             many correct alleles the horse carries, score as the tie-break.
  *
  * The gap between these two is the entire value of the conformation test (fix document §12.1/§12.2),
- * and it is much larger than anyone expected — see docs/fixes/conformation-founding-quality.md §3.
+ * and it is much larger than anyone expected — see docs/slices/0028-conformation-genetics.md §3.
  */
 function targetAlleleCount(h) {
   return CONF_TRAITS.reduce((a, t) => {

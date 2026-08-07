@@ -9,8 +9,8 @@ This file used to be CLAUDE.md §11. It moved out because it had grown too large
 **2026-08-06 — Slice 0021 Part G, the world reset, was run.** Reported by the operator in conversation. No code changed; this records a state change a future session cannot see from the repository.
 
 - **Slice 0021 is now complete.** Parts A-F shipped 2026-08-04; Part G was always the operator's own step — a full `world`-scope reset from `/admin`, per that slice's §8 — because until it ran, no existing horse had a `head_profile` genotype or any of the ten new colour/pattern loci. Every horse in the game now carries all thirteen colour/pattern loci and the fifth conformation trait, and the children have new founding stock.
-- **The reset is spent, and that changes the plan for `docs/fixes/quality-band-on-target.md`.** That document had proposed landing alongside this reset so one reset covered both; it must now be planned as a change landing into a live population. Its §9 is rewritten accordingly and recommends landing the fix and then granting every child a fresh founding batch — no second reset, nothing lost, and no new code, since the batch-grant mechanism already exists. **Grant those batches after the migration, not before**: `import_offers.polygenic_one_chance` is a snapshot column, so a batch granted early generates under the old rules.
-- **2026-08-06, same day — the quality-band defect confirmed against the live population, plus two findings no simulation would have produced.** The operator exported all 107 horses. Recorded in `docs/fixes/quality-band-on-target.md` §3.1 and §7.1; the parts a future session needs:
+- **The reset is spent.** Conformation genetics (`docs/slices/0028-conformation-genetics.md`) needs another one; that slice's §8 says so. **Whenever a founding batch is granted after a generator change, grant it *after* the migration, not before**: `import_offers` snapshots the band, so a batch granted early generates under the old rules.
+- **2026-08-06, same day — the live population measured against the generator, plus two findings no simulation would have produced.** The operator exported all 107 horses. The parts a future session needs:
 
 - **The band's effect measured directly, without guessing anything.** The band raises a horse's allele count and does nothing else, so correlating allele count against the judge's score tests it cleanly. Quarter Horse **−0.30**, Paso Fino −0.07, German Warmblood **+0.77** — precisely tracking each breed's weighted-average target (50.1 / 52.0 / 64.6). One dial, three meanings, none of them the one on the label. This is the measurement to re-run after the fix; it should read near +1.0 for every breed.
 - **Predictions held for unselected stock**: NPC breeding stables 2.15 traits right, consignment 2.21, against a predicted 2.1–2.2. And **slice 0019's specialist is working perfectly — 0 of 101 generated horses have zero traits right.**
@@ -31,7 +31,7 @@ This file used to be CLAUDE.md §11. It moved out because it had grown too large
 
 **Measured before building, in `docs/analysis/training-effect.mjs`** (the third inhabitant of that directory, same standing rules as the other two — own PRNG, own copy of the constants, that copy can drift). Headline: one completed programme with the session bonus is worth +2.4 raw points, a 63% head-to-head win rate, and it takes a player horse in a field of eight from 8.3% wins to 12.4% — exactly the 12.5% a fair field gives, which is what justifies `npc_training_level = 2`. Breeding still dominates: one trait brought onto its breed's target is worth 3.9 points against the whole training ladder's 4.4, and a fully Polished founding horse still loses 81% of the time to a fully bred untrained one.
 
-**That side finding turned out to be a real defect, now specified in `docs/fixes/quality-band-on-target.md`.** The operator's own statement of intent settled it: *"mid was supposed to mean that a horse was on target for a conformation trait 50% of the time."* It never has. Read that document before touching `generateCandidate`; the one-line version is that a Paso Fino needs 14 of its 20 neck alleles and 6 of its 20 back alleles, and `polygenicOneChance` is a single dial applied to both — so raising it to fix the neck (13% → 31% on target) destroys the back (13% → 3%). The visible symptom nobody had connected to it: the show barn mints champions at `high` and novices at `mid`, so its champion field has never actually been better than its novice field. Decided by the operator, 2026-08-06: keep slice 0019's guaranteed specialist, bands become 0.25/0.50/0.75, founding stock drops to `low` to preserve breeding headroom. The original observation is kept below because it is the reasoning the fix rests on.
+**That side finding turned out to be a real defect, now folded into `docs/slices/0028-conformation-genetics.md` §1.** The operator's own statement of intent settled it: *"mid was supposed to mean that a horse was on target for a conformation trait 50% of the time."* It never has. Read that document before touching `generateCandidate`; the one-line version is that a Paso Fino needs 14 of its 20 neck alleles and 6 of its 20 back alleles, and `polygenicOneChance` is a single dial applied to both — so raising it to fix the neck (13% → 31% on target) destroys the back (13% → 3%). The visible symptom nobody had connected to it: the show barn mints champions at `high` and novices at `mid`, so its champion field has never actually been better than its novice field. Decided by the operator, 2026-08-06: keep slice 0019's guaranteed specialist, bands become 0.25/0.50/0.75, founding stock drops to `low` to preserve breeding headroom. The original observation is kept below because it is the reasoning the fix rests on.
 
 **The observation, as first recorded: the founding quality band barely moves a conformation score, and for three of the eight breeds the *mid* band is the best one.** This falls straight out of slice 0006 §2.2 and nothing was broken — a conformation trait is a bidirectional measurement against an intermediate target, so a band raises a horse towards targets above 50 and away from targets below it. A band's mean genetic value is `100 × polygenic_one_chance`; the band that suits a breed is the one landing on that breed's *weight-averaged* target. Measured (scenario 6): Quarter Horse 50.1, Paso Fino 52.0 and Norwegian Fjord 48.6 are all best served by the mid band, Arabian (46.0) and Icelandic (40.4) by the low band, and Thoroughbred (62.5), German Warmblood (64.6) and Friesian (66.1) by the high one. **So "high quality band" is not a synonym for "better horse"** anywhere except the ability traits, which are `higher_better` with no target at all. This is why slice 0019's founding specialists exist and why they work by moving traits onto target rather than by raising the band. Before reading a band as a quality knob — the consignment dealer's mid band, the show barn's rank plan, `/admin/npc`'s mint control — check it against the breed's own weighted-average target. Nothing was changed in response; recorded because a future session will otherwise assume high means good.
 
@@ -1023,126 +1023,23 @@ Reported together from the deployed game, fixed together, sharing no code. Both 
 - **Same-day operator report: applying migration `0175` from `/admin/migrations` on the live site failed** - `D1_ERROR: no such index: idx_show_classes_open_key: SQLITE_ERROR` on the `DROP INDEX` statement. The deployed database's `d1_migrations` table records `0165` as applied (and its columns/behaviour are visibly live - rank-gated classes work on the site today), so the index this migration expected to drop was, for reasons not tracked down, already absent there; `src/db/reset.ts`'s world reset only ever runs `DELETE FROM`, never touches schema, so a reset isn't the cause. `applyPendingMigrations` (`src/db/migrations.ts`) runs each migration's statements plus its tracking-row insert as one D1 batch, and doesn't record the row on failure - so this migration was never actually marked applied on the live database despite the attempt, and editing it directly (rather than filing a follow-up `0176`) doesn't cross the forward-only rule (CLAUDE.md §8: never edit an *applied* migration). Both statements in `0175` now use `IF EXISTS`/`IF NOT EXISTS`, so "make the index gone, then create the new one" succeeds whether or not the old one was ever really there. Re-verified: `npx vitest run` still green (same counts - the guards are no-ops against a fresh replay, which always has the index to drop).
 
 ---
+**2026-08-07 — Conformation genetics: one document, two states.** The redesign is decided and
+specified in `docs/slices/0028-conformation-genetics.md`. **That slice is the only conformation-
+genetics document in the repository** — its §1 is what exists today, §2 onward is what exists once it
+lands. Four fix documents and one analysis script that recorded the route to it were deleted on the
+operator's instruction: the intermediate proposals, their reversals and their corrections are not
+worth a future session's context, and keeping them invited a builder to implement a superseded one.
 
-**2026-08-06 — Conformation genetics redesigned on paper: `docs/fixes/conformation-breed-type.md`. Nothing built.** The operator read `docs/fixes/quality-band-on-target.md` and reported that the defect is deeper than that document's diagnosis: an Arabian whose head standard is 8 can be minted at 90, so *the scale itself is breed-blind*, not just the band that draws on it. They also named the constraint that rules out a straight retune — a player cannot see the genes, homozygous and heterozygous present identically, and a mare has one foal a year, so a whole breeding career can pass without a player learning whether a pairing is good or merely unlucky. They offered a second world reset rather than have a redesign ruled out.
+Two things a session working nearby needs, both stated in the slice itself and repeated here because
+they are easy to trip over from outside it:
 
-- **`docs/fixes/quality-band-on-target.md` is marked superseded** (§4 onward — its §1–§3 diagnosis and its live-population measurements are quoted by the successor and remain the best evidence in the repository). **Do not build it.** It patches the founding generator to aim at the breed target; the successor changes the thing it patches around, and would make every line of its fix dead code the day it landed.
-- **`docs/analysis/conformation-architecture.mjs`** is the fourth analysis script, same standing rules as `population-sim.mjs`/`stable-timeline.mjs`/`training-effect.mjs` (own PRNG, own copy of the constants, that copy can drift, every constant names its source). Seven scenarios, measuring today's engine and the proposal side by side: breed-type accuracy per breed, the Arabian head specifically, band monotonicity per breed, foal quality from two Outstanding parents, the spread of one foal around its parents, the ceiling a perfect genotype reaches, and what a test actually buys. **Its scenario 1 and 3 are the two that most want re-running against any future change here.**
-- **Numbers worth carrying forward even if the proposal is never built.** 26.5% of Arabians minted today have a Roman nose and the reachable range is 1–98; 94.4% carry at least one trait more than 25 points off their own standard. Two Quarter Horses both Outstanding on all five traits throw a foal matching them on all five **0.9%** of the time, with a per-foal SD of **10.6 points** against an Outstanding window of ±5. And a **genetically perfect** Paso Fino reads Outstanding on only **3.15 of 5 traits** — `conformation_noise_sd` at 6 costs nearly two traits of five on its own, which is the cheapest single thing on the page to fix and is worth doing whatever else happens.
-- **The proposal in one line:** one new Mendelian locus per conformation trait, 13 co-dominant alleles named for their own value on the 1–99 scale, a horse's shape being the mean of its two — with the existing twenty-allele polygenic block kept intact and demoted to a small heritable modifier. Breed pools for those five loci are *derived* from `breeds.ideal_vector` and the quality band rather than hand-written, which is what makes the band monotonic for all eight breeds automatically and what stops a pool ever drifting from the standard it is supposed to describe.
-- **Two traps recorded there and repeated here.** (1) Do **not** re-anchor `realization()` from 50 onto the breed target — inbreeding depression is a multiplier on realization, so that would make an inbred horse score *better*. (2) The polygenic loop must keep drawing its exact twenty bits per trait so every existing RNG stream stays where it is, the same rule slice 0019 §7 protects.
-- **Five decisions need the operator before anyone builds** (§12 of the fix document): whether the conformation test is per-locus or one panel; whether type genes come free once a horse has shown; founding band `low` vs `mid`; rung step 8 vs 10; and confirmation of the reset, with new founding grants issued *after* the migrations rather than before.
+- **`docs/analysis/breeding-lab.mjs` is the only conformation bench**, models both engines
+  (`--engine today` / `--engine proposed`), and **defaults to the decided design**, so a bare run
+  measures what slice 0028 specifies. `conformation-architecture.mjs` is gone; the bench covers what
+  it measured.
+- **Slice 0028 §4 is a list of six rules that will bite you** — the obvious next change in each case
+  causes a real defect. The two most expensive: re-anchoring `realization()` off 50 onto the breed
+  target makes an inbred horse score *better*, and `conformation_noise_sd` is shared with all
+  fourteen traits, so tightening conformation silently tightens every discipline class too.
 
----
-
-**2026-08-06 — `docs/analysis/breeding-lab.mjs`: a command-line bench for the proposed conformation genetics.** Requested directly by the operator, to run in an afternoon the experiments real play would take months to produce: *"tell the session to mint me n horses exactly like a founding batch … present back what a player would see, and the underlying numbers driving it, including noise … then I'll give it breeding examples and tell it to roll me 5 foals … select two foals to pair against each other, or against a gen 1 horse."*
-
-- **Fifth analysis script**, same standing rules as the other four (own PRNG, own copy of the constants, that copy can drift, every constant names its source, nothing touches the real database). It simulates a system that **has not been built** — `docs/fixes/conformation-breed-type.md`.
-- **There is no sex in it, on purpose** (operator's instruction, mid-session): every horse crosses with every other, including itself. It is a bench for testing which pairings of traits produce what, not a breeding season — so heat, gestation, conception rolls and one-foal-a-year are all absent.
-- Commands: `new` / `list` / `show` / `predict` / `breed` / `pedigree` / `summary` / `reset`. Population persists in a gitignored state file next to the script; **`--state <path>` is what lets two labs run side by side**, which is how `--engine today` and `--engine proposed` get compared on one seed. `breed 1 to 4` accepts the operator's own phrasing — a literal `to` or `x` between ids is skipped by the arg parser.
-- **`show` prints two blocks per horse**: what a player sees (value, descriptive word, Poor–Outstanding label, the breed standard, the conformation score) and what is underneath (the two type alleles as their own values, the modifier, the noise, the genetic value, the mature value, distance, traitScore — then the same for ability, then the seed and the founding specialists). A `FIXED / carries / no` line per trait says whether the horse is homozygous at its breed's standard, which is the currency a breeding programme actually accumulates.
-- **`predict` is exact, not simulated** — a Punnett square over the type genes convolved with an exact Poisson-binomial for the modifier block and a grid for the noise. It is the breeding preview §6 proposes, buildable today because the genotype is knowable. Under `--engine today` it deliberately prints "there is no breeds-on column, the question cannot be asked", which is defect 1.2 stated as a missing column.
-- **Pedigree and COI are real** (standard tabular kinship recursion, memoised), so a full-sibling mating shows genuine inbreeding depression — realization × 0.75 at COI 25%, visible as a drop in mean score across a generation whose genes did not get worse. This matters because sibling pairings are the first thing anyone tries on a bench.
-- **One open question the bench surfaced and the fix document had missed**, now recorded as its §12.6: `rollEnvironmentalNoise` draws noise for **all fourteen traits from the single `conformation_noise_sd`**, so dropping it 6 → 2 shrinks **ability** noise too — and ability is the only place different breeds meet in a class. Either accept it or split the key. The bench models the shared SD faithfully so the effect shows up rather than hiding.
-
----
-
-**2026-08-07 — Founding quality measured against the type-gene proposal; `breeding-lab.mjs` gains tuning dials and two measurement commands. Nothing built.** The operator asked how to make founding/gen 1 *"slightly worse, without undoing the work of getting a 90 on a breed that wants 8"*, and proposed two mechanisms: alleles that drift after minting, and a finer ladder with founders forbidden from sitting too close to their breed's standard. Findings in `docs/fixes/conformation-founding-quality.md`; a future session tuning founding stock should read that before touching anything.
-
-- **Reach and shape are separate dials, and only reach is the breed-type guarantee.** An allele may never sit more than `reachPoints` (24) from its breed's standard — that cap, alone, is what makes a Roman-nosed Arabian impossible. Everything else (concentration, pool shape, the founding specialist, the band) only distributes mass *inside* it. Every option measured left the wrong-breed share at 0.1–0.5%. **When tuning founding quality, `reachPoints` is the one number never to reach for**; it is labelled as such at the top of the bench.
-- **`conformation-breed-type.md` §5.4's headroom table is measured without its own §7.3 specialist.** `conformation-architecture.mjs` models today's ±1-allele specialist, not the proposal's homozygous-at-target one. With the specialist counted, founding stock at `low` reads 3.04 traits on target (that table's own `mid` figure) and arrives with **1.34 of 5 traits already homozygous at the standard** — a quarter of the type-gene endgame handed over at mint. Corrected in place in that document.
-- **A rare allele cannot be the plan: Mendelian inheritance never invents one.** A six-horse barn is twelve alleles per trait, so an allele at 6% frequency is absent from some trait in **97% of starting barns** — permanently unbreedable there. It needs ~28% frequency before that disappears, which is what the peak pool already delivers. This is why the operator's "hole around the target" fails in its pure form, and why a hole with no exclusion zone is arithmetically identical to a lower concentration.
-- **The recommended lever is the founding specialist, not the band.** Demoting §7.3's gift from homozygous-at-target to **one allele at target, one from the pool** takes traits-already-finished from 1.34 to 0.62 while leaving *carries* untouched at 2.96 — it decouples "the correct allele is present" from "the correct allele is common", which is the thing a rarer pool cannot do. Lowering the concentration instead barely dents what the horse arrives owning and quadruples the dead-barn risk.
-- **Two findings nobody was looking for.** (1) **A player who never buys the conformation test plateaus at generation 1** — eight generations of selection on visible score move traits-finished 1.33 → 1.41, because a 10/10 horse and a 2/18 horse express the same value and are indistinguishable. Selecting on the tested genotype instead reaches 4.45. The test is therefore load-bearing, not optional depth, which raises the stakes on that document's §12.1/§12.2 pricing decisions. (2) **Inbreeding's cost scales with how distinctive a breed is** — COI multiplies realization, which pulls toward 50, so at equal genetic achievement (~4.3 traits fixed, ~45% COI) a Quarter Horse scores 87.4 and an Arabian 79.3. Recorded for slice 0018; do **not** answer it by re-anchoring `realization()` on the breed target, which would make an inbred horse score *better*.
-- **Bench additions.** `sweep` (mint thousands of founders and characterise them: score, traits on target, traits FIXED, traits carrying, mean deviation, wrong-breed share, and the dead-barn rate) and `programme` (run a breeding programme to generation N, `--select score|tested`, `--outcross n` to model buying in). Tuning dials — `--reach`, `--rung-step`, `--concentration`, `--founding-mode ring`, `--target-chance`, `--hole`, `--specialist`, `--drift`, `--noise-sd`, `--modifier-step` — are stored on the lab by `new` and replayed by later commands, so a saved population always reads back under the rules it was minted with. Defaults reproduce the fix document byte-for-byte; the `peak` pool keeps §4.4's renormalise-at-the-end arithmetic verbatim so the baseline this bench reports is the one that document measured.
-
-## 2026-08-07 — the parent-to-foal deficit, and a third expression rule
-
-> **Two paragraphs of this entry were overtaken the same day — see "the conformation redesign is
-> decided" below.** The expression rule is now recorded in a document (`foals-worse-than-parents.md`
-> §0), and the bench no longer defaults to `'average'`. Everything else here stands.
-
-**Read this before touching conformation, and before quoting a number out of
-`conformation-breed-type.md` or `conformation-founding-quality.md`.** The move off the averaging
-expression rule was decided in conversation on 2026-08-07 and is recorded in no design document;
-`PROP.expression` in the bench is still `'average'` by default (commit `e1746b7` added the dial
-without moving the default). **Every measurement in those two fix documents therefore predates the
-decision and is measured under the old rule.** That distinction turned out to matter enormously.
-
-`docs/analysis/breeding-lab.mjs` gained:
-
-- `--coax <n>` / `--coax-policy <finish|worst>` — a home-bred foal may have `n` conformation alleles
-  moved **one rung toward its own breed standard**, at birth, once for life. Toward-standard-only is
-  why this is safe where `--drift` was not (`conformation-founding-quality.md` §5): breed type
-  strictly improves and an NPC stable that never buys the programme never moves. Founders are never
-  coaxed, so `sweep` and every pre-existing figure reproduce unchanged (verified: Arabian/low still
-  reads 89.2 / 3.05 / 1.34 / 2.95).
-- `--expression worst` and `--expression best` alongside `average` and `random`. Under `worst` a
-  horse shows whichever allele is **further** from its breed standard — faults dominant.
-
-Findings in `docs/fixes/foals-worse-than-parents.md`. Three that a future session needs:
-
-1. **The "selecting on looks plateaus at generation 1" result** — `conformation-founding-quality.md`
-   §3, FIXED moving 1.33 → 1.41 over eight generations — **is an artifact of averaging, not a
-   structural property.** Under `worst` the same child doing the same thing reaches 4.08.
-2. **Under `worst`, a trait reading Outstanding is homozygous at the standard, always.** What the
-   child sees and what the programme accumulates become the same number, so `dynasty`'s `on target`
-   and `FIXED` columns print identically. **If they ever diverge, something is pulling expression off
-   the allele value** — almost certainly inbreeding depression.
-3. **Inbreeding depression on conformation expression breaks the "displayed number is a real value"
-   guarantee**, on top of making a genetically perfect herd read worse than a mediocre one. Third
-   independent argument for slice 0018's central proposal, and the first that says the new expression
-   rule does not work at all without it.
-
-Later the same day the coax dial was reframed as the operator's own **mare prenatal care**: it hangs
-off `pregnancies` (which already carries a seed and a snapshotted gestation length), is committed
-before the foal exists, and is capped at one per foal by construction. Two things a builder needs
-from `docs/fixes/foals-worse-than-parents.md` §3:
-
-- **Move the worst TRAIT, not the worst ALLELE** (`--coax-mode shown`, not `allele`). Under the
-  `worst` expression rule a foal that inherits the same bad allele from both parents has one copy
-  improved and goes on showing the other — so about half of all purchases are silently invisible.
-  It costs two allele steps on a homozygote instead of one; that is the price of the guarantee.
-- **It is the only mechanism in the design that puts a correct allele into a closed herd.** Demoed
-  by hand: a line stuck at 4 of 5 with neck `58/82` against a standard of 74, where no horse in three
-  generations owned a 74, walked 58 → 66 → 74 in two coverings and finished at 5 of 5.
-
-## 2026-08-07 — the conformation redesign is decided, and the bench defaults move with it
-
-Every open question in `docs/fixes/foals-worse-than-parents.md` was answered by the operator on the
-day it was written. That document is **no longer a proposal** — its new §0 is the decision table and
-§7 records why each call went the way it did. Nothing is built yet; this entry is so the next
-session does not re-open a settled question or measure under a superseded rule.
-
-**The decisions.** Expression rule is **`worst`** (faults dominant, quality recessive), which
-*reverses* the random pull taken earlier in conversation. Inbreeding depression **comes off
-conformation expression**, per slice 0018. `conformation_modifier_step` 0.75 → **0.10**,
-`conformation_noise_sd` 6 → **0.5**, founding band back to **`low`**. Mare prenatal care is built as
-a real mechanic: **money plus one turn**, charged on the covering, `prenatal_care_cost` default
-**500** as a live tunable; the **mechanic picks the trait** (the foal's worst, never the player's
-choice); and **it cannot fail** — no die roll, the cost is the price.
-
-**`docs/analysis/breeding-lab.mjs` now defaults to the decided design** — `expression: 'worst'`,
-`modifierStep: 0.10`, `noiseSd: 0.5`, `inbreedingFactor: 0`, `coaxMode: 'shown'`,
-`coaxPolicy: 'worst'`. This is the fix for the trap the entry above warns about: a bare `dynasty`
-run measures what was decided rather than what was superseded. **The cost is that the older fix
-documents no longer reproduce from a bare command** — `conformation-breed-type.md` and
-`conformation-founding-quality.md` need
-`--expression average --modifier-step 0.75 --noise-sd 2 --inbreeding 1` spelled out. That is stated
-in a header comment on `PROP` itself, which is where someone about to quote a number will be looking.
-
-**A measurement error found and corrected while recording the decisions, worth knowing because it
-ran in the conservative direction.** §3.2's "no care" column reported 2.63 / 3.39 / 4.08 at
-generations 3 / 5 / 8. Those are band **`mid`** figures (they are §2.1's own) pasted into a table
-whose header says band **`low`**. Re-measured at `low`: **1.61 / 2.18 / 2.90**. So an uncared-for
-line at the decided founding band does **not** approach a finished horse in eight generations, and
-prenatal care buys 2.90 → 5.00 rather than the 4.08 → 5.00 the draft claimed. The lesson for
-whoever measures next: `dynasty`'s band is not printed in the table body, only in its header line,
-so a column copied between runs carries no evidence of which band produced it.
-
-Two smaller things. The `--coax` help text still described the superseded worst-*allele* behaviour
-and now describes worst-*trait*, with `--coax-mode`/`--coax-policy` documenting which of their
-values were decided and which are retained only as evidence. And `bands` reports two numbers, not
-one — the second (does "Outstanding" really mean homozygous-at-standard?) is the one a child's
-breeding decisions rest on, and it is what fails one time in seven at the settings as originally
-written; §4's table now carries both columns.
+Nothing is built. Migrations `0176`–`0181` are reserved by that slice; it needs a world reset.
