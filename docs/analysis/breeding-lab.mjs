@@ -35,7 +35,7 @@
 //   predict   <a> to <b>              The exact foal distribution for a pairing, before rolling.
 //   breed     <a> to <b> [--foals n]  Roll foals. They join the population with new ids.
 //             [--prenatal [n]]        Buy mare prenatal care on this covering: each foal's WORST
-//                                     allele moves n rungs (default 1) toward the breed standard.
+//                                     TRAIT moves n rungs (default 1) toward the breed standard.
 //   pedigree  <id>                    Ancestry and inbreeding coefficient.
 //   summary                           Population-wide: traits on target, by generation.
 //   sweep     [--breed all] [--n n]   Mint thousands of founders and characterise them. No state.
@@ -60,13 +60,21 @@
 //                         hatch that keeps the correct allele in existence at all.
 //   --hole <rungs>        'ring' mode: rungs either side of target also excluded. 0 = target only.
 //   --specialist <mode>   fixed | carrier | none — how generous slice 0019's founding gift is.
-//   --coax <n>            the operator's "coax the genes" mechanic (2026-08-07): a home-bred foal
-//                         may have n alleles moved ONE RUNG TOWARD its breed standard, at birth,
-//                         once for life. Never away, so breed type cannot erode. See
-//                         docs/fixes/foals-worse-than-parents.md. 0 = off.
-//   --coax-policy <mode>  finish | worst — spend it on the allele closest to standard (a tested
-//                         player, converting "carries" into "breeds true") or the one furthest
-//                         from it (a player going on looks). 'finish' by default.
+//   --coax <n>            MARE PRENATAL CARE (2026-08-07, DECIDED): a covering may be bought care,
+//                         which moves the foal's WORST TRAIT n rungs TOWARD its breed standard at
+//                         birth, once for life. Never away, so breed type cannot erode. Costs money
+//                         and a turn in the game; 0 = not bought, which is the honest default since
+//                         a real player will not buy it on every covering. See
+//                         docs/fixes/foals-worse-than-parents.md §3.
+//   --coax-mode <mode>    shown | allele — DECIDED 'shown': move the worst TRAIT, whatever that
+//                         costs in alleles (one step on a heterozygote, two on a homozygote), so
+//                         the purchase is ALWAYS visible. 'allele' moves a single allele and is
+//                         retained only as the evidence for that decision — under it roughly half
+//                         of all purchases are silently invisible (§3.1). Not a mode the game offers.
+//   --coax-policy <mode>  worst | finish — DECIDED 'worst': the allele furthest from standard, which
+//                         is the one the horse shows. 'finish' spends it on the allele already
+//                         closest to standard (what a tested player would choose, if the game let
+//                         them — it does not; the mechanic picks, §3.1).
 //   --drift <p>           chance an inherited allele steps one rung. Buys new alleles from nothing,
 //                         at the cost of the exact foal prediction. 0 = off.
 //   --inbreeding <x>      COI depression factor, 1.0 live. 0 switches it off, so a line can be
@@ -171,13 +179,19 @@ const TODAY = {
 //   SHAPE decides quality.      How the pool is distributed INSIDE that reach. Slacken it all the
 //                               way to flat and breed type is still perfectly intact.
 //
-// Defaults reproduce the fix document exactly. Change them on the command line, not here.
+// Defaults reproduce THE DECIDED DESIGN — docs/fixes/foals-worse-than-parents.md §0, settled with
+// the operator 2026-08-07. Change them on the command line, not here.
+//
+// Read this before trusting a number you carried across from another document. The older documents
+// (conformation-breed-type.md, conformation-founding-quality.md) were measured under the SUPERSEDED
+// averaging rule with the old modifier and noise, so reproducing their figures needs the flags
+// spelled out — `--expression average --modifier-step 0.75 --noise-sd 2 --inbreeding 1`.
 const PROP = {
   rungBase: 2,                               // §4.2 — the allele ladder starts at 2
   rungStep: 8,                               // §4.2 — a rung every 8 points: 2, 10, 18, ... 98
   reachPoints: 24,                           // §4.4 — 3 rungs at step 8. THE BREED-TYPE GUARANTEE.
-  modifierStep: 0.75,                        // §4.3 — the demoted twenty-allele block
-  noiseSd: 2,                                // §7.1 — conformation_noise_sd 6 -> 2
+  modifierStep: 0.10,                        // DECIDED — conformation_modifier_step 0.75 -> 0.10
+  noiseSd: 0.5,                              // DECIDED — conformation_noise_sd 6 -> 0.5
   abilityOneChance: { low: 0.42, mid: 0.50, high: 0.58 },   // §9/0177 — TODAY'S values, unchanged
   concentration: { low: 0.35, mid: 0.55, high: 0.75 },      // §4.4 — P(allele is the target rung)
 
@@ -230,7 +244,9 @@ const PROP = {
   driftChance: 0,
   driftClamped: true,        // keep drifted alleles inside reachPoints of the breed standard
 
-  inbreedingFactor: INBREEDING_FACTOR,   // --inbreeding; 0 = COI depression off
+  // DECIDED 2026-08-07: inbreeding depression comes OFF conformation expression and onto fitness
+  // (slice 0018, foals-worse-than-parents.md §1.2). Pass `--inbreeding 1` to measure the old way.
+  inbreedingFactor: 0,                   // --inbreeding; 0 = COI depression off
 
   // §7.3's reframed slice 0019 conformation specialist.
   //   'fixed'   one trait homozygous at the breed target — the fix document as written
@@ -238,10 +254,12 @@ const PROP = {
   //   'none'    no conformation specialist at all
   specialist: 'fixed',
 
-  // The coax mechanic (see coaxGenotype). 0 = off, which is every measurement taken before today.
+  // Mare prenatal care (see coaxGenotype). 0 = not bought, which is the honest default: in real
+  // play it is a paid decision per covering, so a run with `--coax 1` is the upper bound, not the
+  // expectation. DECIDED 2026-08-07: one step, worst-TRAIT mode, mechanic picks the trait.
   coaxSteps: 0,
-  coaxPolicy: 'finish',      // 'finish' | 'worst'  (mode 'allele' only)
-  coaxMode: 'allele',        // 'allele' = move one allele | 'shown' = move the worst TRAIT one rung
+  coaxPolicy: 'worst',       // DECIDED — the allele furthest from standard ('finish' = the tested player's choice)
+  coaxMode: 'shown',         // DECIDED — move the worst TRAIT one rung ('allele' loses ~half of purchases silently)
 
   // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
   //   'average'  the fix document as written: the mean of the two, co-dominant.
@@ -257,7 +275,10 @@ const PROP = {
   //   'best'     the horse shows whichever allele is CLOSER to the standard. Quality dominant —
   //              the mirror, and the same shape as the game's existing disease carriers: every
   //              good-looking horse may be hiding a fault, and only a test says which.
-  expression: 'average',
+  // DECIDED 2026-08-07: 'worst'. This REVERSES the random pull taken earlier in conversation —
+  // 'random' met the operator's "must be a real value" constraint but measured WORSE than averaging
+  // (-4.0 vs -3.3), because a child selecting on looks is selecting on a coin flip.
+  expression: 'worst',
 
   // Hard ceiling on how many of its five conformation traits a FOUNDING horse may read Outstanding
   // on. null = no ceiling. Operator's instruction, 2026-08-07: 4 at the low band, so the first
@@ -1208,7 +1229,7 @@ function cmdBreed(state, path, a, b, foals, prenatal = 0) {
   if (!sire || !dam) { console.error('Both ids must exist.'); process.exit(1); }
   const coi = kinship(state, a, b);
   console.log(`#${a} ${sire.name} x #${b} ${dam.name} — ${foals} foals   (COI ${(coi * 100).toFixed(1)}%)`);
-  if (prenatal > 0) console.log(`  Mare prenatal care bought on this covering: each foal's worst allele moves ${prenatal} rung(s) toward standard.`);
+  if (prenatal > 0) console.log(`  Mare prenatal care bought on this covering: each foal's worst trait moves ${prenatal} rung(s) toward standard.`);
   if (coi > 0 && PROP.inbreedingFactor > 0) console.log(`  Inbreeding depression is live: realization x ${(1 - coi * PROP.inbreedingFactor).toFixed(3)}, pulling every trait toward 50.`);
   else if (coi > 0) console.log(`  Inbreeding depression is OFF (--inbreeding 0). COI ${(coi * 100).toFixed(1)}% costs this foal nothing.`);
   console.log('');

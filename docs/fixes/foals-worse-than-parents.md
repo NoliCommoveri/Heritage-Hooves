@@ -15,16 +15,38 @@ Operator-reported, 2026-08-07:
 Every number here is output from `docs/analysis/breeding-lab.mjs`, which gained `--coax` and two new
 `--expression` rules for this document. Re-run it after any change.
 
-**Scope.** Conformation only. The operator's separate point — that ability traits need to be
-breed-fixed too, because a Friesian with a speed of 100 is ridiculous — is a real defect and is
-**not addressed here**. It wants its own document.
+**Scope.** Conformation only.
 
-**A note for the next session, because it cost this one a wasted pass.** The move off averaging was
-decided in conversation and is recorded in **no document**, and `PROP.expression` in the bench is
-still `'average'` by default (commit `e1746b7` added the dial without changing the default).
-Every measurement in `conformation-breed-type.md` and `conformation-founding-quality.md` predates
-the decision and is therefore measured under the *old* rule. This document is the first measured
-under the new one, and §2 is the reason that distinction turns out to matter enormously.
+---
+
+## 0. Decided, 2026-08-07
+
+**This document is no longer a proposal.** Every question it opened was answered by the operator on
+the day it was written. Per CLAUDE.md §2, treat the following as standing — if any of it looks
+wrong, say so, but do not quietly build something else.
+
+| | decision |
+|---|---|
+| **Expression rule** | **`worst` — faults dominant, quality recessive.** Reverses the random pull decided earlier in conversation. §2. |
+| **"Faults dominant" as a story** | Accepted. §7.2. |
+| **Inbreeding depression** | **Comes off conformation expression**, per slice 0018. §1.2. |
+| **Prenatal care** | Built. Costs **money and one turn**, charged on the covering. §3. |
+| **Its price** | **`prenatal_care_cost` = 500** to start, a live tunable the operator sets at `/admin/config`. §3.4. |
+| **Which trait it moves** | **The mechanic takes the worst one; the player never chooses.** Worst *trait* of the foal the pairing produced, not worst *allele*. §3.1. |
+| **Can it fail?** | **No.** The cost is the price, not a die roll. §3.5. |
+| **`conformation_modifier_step`** | 0.75 → **0.10**. §4. |
+| **`conformation_noise_sd`** | 6 → **0.5**. §4. |
+| **Founding band** | back to **`low`**. §6.4. |
+
+`docs/analysis/breeding-lab.mjs` now **defaults to these settings**, so a bare `dynasty` run measures
+the decided design rather than the superseded one. The older documents in `docs/fixes/` were measured
+before the decision and their commands need `--expression average` to reproduce their own numbers.
+
+**A note for the next session, because it cost an earlier one a wasted pass.** Every measurement in
+`conformation-breed-type.md` and `conformation-founding-quality.md` predates the expression decision
+and is therefore taken under the *averaging* rule. This document is the first measured under `worst`,
+and §2 is the reason that distinction turns out to matter enormously. Do not carry a number across
+from those documents without checking which rule produced it.
 
 ---
 
@@ -32,7 +54,7 @@ under the new one, and §2 is the reason that distinction turns out to matter en
 
 Foals come out **-3.3 to -4.0 points worse than their parents, every generation, forever**. That is
 the `gain` column of `dynasty`, and it never turns positive at any generation under any expression
-rule as currently specified. Measured by switching each contributor off in turn (Arabian, band
+rule as originally specified. Measured by switching each contributor off in turn (Arabian, band
 `low`, 8 mares, 4 stallions, lifetime cap of 4 foals, 200 runs, generation 8):
 
 | | averaging | random pull |
@@ -58,7 +80,7 @@ random pull than under averaging (-4.0 vs -3.3), because the parents were picked
 good allele and their foals go back to flipping the coin.
 
 **So the random pull fixes honesty and makes selection worse.** Both problems have the same root:
-what the child can see does not determine what the horse passes on.
+what the child can see does not determine what the horse passes on. §2 is the rule that closes it.
 
 ### 1.2 Inbreeding depression punishes the child who plays best
 
@@ -82,7 +104,8 @@ Measured — the same run with depression on vs off, the on-target and FIXED col
 
 `docs/slices/0018-genetic-progress-and-inbreeding.md` already proposes moving inbreeding depression
 off conformation expression and onto fitness. This is the third independent argument for it, and the
-first that says the new expression rule does not work at all without it.
+first that says the new expression rule does not work at all without it. **The operator agreed on
+2026-08-07: it moves.** Nothing else in this document stands if it does not.
 
 ---
 
@@ -90,7 +113,7 @@ first that says the new expression rule does not work at all without it.
 
 The operator's constraint — *the number visible to the child has to reflect a real value* — rules out
 averaging and admits the random pull. It also admits two rules nobody had considered, and one of them
-is dramatically better. Both are now in the bench as `--expression worst` and `--expression best`.
+is dramatically better. Both are in the bench as `--expression worst` and `--expression best`.
 
 **`worst` — the horse shows whichever of its two alleles is FURTHER from its own breed standard.**
 Faults dominant, quality recessive. The number is a real allele, exactly as under the random pull,
@@ -101,6 +124,8 @@ Faults dominant, quality recessive. The number is a real allele, exactly as unde
 Because a horse only looks correct when it has nothing worse to show. It follows that what the child
 sees and what a breeding programme accumulates are *the same number*. In the bench's output the
 `on target` and `FIXED` columns become identical, row for row, generation after generation.
+
+**Decided 2026-08-07: this is the rule.** It reverses the random pull taken earlier in conversation.
 
 ### 2.1 What that buys
 
@@ -122,6 +147,11 @@ rule removes it entirely** — the same child, doing the same thing, now nearly 
 
 The gain of -0.2 to -0.4 against a `show_noise_sd` of 5 is a twentieth of the luck in one class. The
 "babies are worse than their parents" complaint is gone as a felt thing.
+
+**This table is band `mid`, and the decided founding band is `low` (§6.4).** At `low` the same child
+reaches only **2.90 of 5 by generation 8** (§3.2). The expression rule removes the plateau; it does
+not on its own carry a line to a finished horse from the plainer founding stock the band change
+gives it. That is what prenatal care is for, and it is why §3 is not decoration.
 
 ### 2.2 Two Outstanding parents, measured
 
@@ -155,14 +185,13 @@ great horses cannot produce a worse foal.**
 existing disease carriers. Founding horses look wonderful (2.95 of 5 on target at band `low`,
 score 92.4) and hide everything: FIXED crawls 1.35 → 2.59 over eight generations and the gain sits
 at -1.6 throughout. It is the hidden-carrier game, it needs testing to play at all, and the score is
-already at 97.7 by generation 8 with no headroom left. **Recommended against.**
+already at 97.7 by generation 8 with no headroom left. **Rejected.**
 
 ---
 
 ## 3. Mare prenatal care
 
-The operator's own framing, 2026-08-07, and a better one than the young-horse programme this was
-first drafted as:
+The operator's own framing, 2026-08-07:
 
 > *"running it doesn't change the mare's genes; it means that the baby foal's worst gene is moved
 > towards standard"*
@@ -176,14 +205,14 @@ It attaches to the **pregnancy**, which is what makes it fit the game rather tha
   The player pays blind. That is a real decision rather than a correction.
 - It is **capped at one per foal by construction** — no lifetime counter, no way to stack.
 - **The mare's genotype is untouched.** Nothing is inherited that she did not already carry; one
-  allele in one foal moved once, at the moment that foal was formed.
+  trait in one foal moved once, at the moment that foal was formed.
 
 The genetic rule: the allele moves **one rung toward the foal's own breed standard**, never away and
 never past it. Breed type therefore strictly improves and cannot erode — the objection that sank
 random drift (`conformation-founding-quality.md` §5) — and an NPC stable that never buys it never
 moves. It is directed and visible, so the breeding preview's Punnett square stays exact.
 
-### 3.1 "The foal's worst gene" has two readings, and only one of them works
+### 3.1 It moves the worst TRAIT, not the worst ALLELE
 
 Demonstrated on a real covering in the bench (two 4-of-5 Arabians, both stuck at neck 58/82 against
 a standard of 74), four foals, the same purchase:
@@ -199,33 +228,52 @@ random, with nothing on screen to explain why.** That is precisely the "did I ju
 feeling this whole redesign exists to remove, and it would be discovered by a child rather than by a
 test.
 
-So the mechanic must move **the worst *trait* one rung**, not the worst *allele* — whatever that
-costs in alleles. One step on a heterozygote, two on a homozygote. Read that way the operator's
-sentence is exactly right and is **always visible**. In the bench this is `--coax-mode shown`, and
-re-running the identical covering moves all four foals (neck 58/59 → 65, 66, 67, 67).
+So the mechanic moves **the worst *trait* one rung**, not the worst *allele* — whatever that costs in
+alleles. One step on a heterozygote, two on a homozygote. Read that way the operator's sentence is
+exactly right and is **always visible**. In the bench this is `--coax-mode shown` (now the default),
+and re-running the identical covering moves all four foals (neck 58/59 → 65, 66, 67, 67).
 
 The extra cost on a homozygote is not a flaw. It means the mechanic does twice as much genetic work
 in exactly the case where a line is most stuck — which is §3.3.
 
-### 3.2 What it buys over a programme
+**Decided 2026-08-07: the mechanic takes the worst trait; the player never picks.** The trait is
+whichever one the *foal* — the horse the mare-and-stallion pairing actually produced — shows furthest
+from its own breed standard, resolved at foaling, after the alleles are drawn. That is the operator's
+own wording, it is much the simpler thing to explain to a nine-year-old, and it is what every number
+in this document is measured on. Letting the player choose is strictly more powerful and would want
+re-measuring before it is ever offered.
 
-Arabian, band `low`, faults dominant, selection on looks only, care bought on every covering:
+### 3.2 What it buys
 
-| gen | no care | **care, worst allele** | **care, worst trait** |
+Arabian, band `low` (the decided founding band, §6.4), faults dominant, selection on looks only,
+care bought on every covering. Traits on target, which under this rule is identically traits
+permanently fixed; `gain` in parentheses is what the mating bought over its own two parents.
+
+| gen | no care | care, worst allele | **care, worst trait (decided)** |
 |---|---|---|---|
 | founding | 1.35 | 1.35 | 1.35 |
-| 3 | 2.63 (+1.9) | 2.63 (+1.9) | **2.92 (+2.2)** |
-| **5** | 3.39 | **3.90 (+1.5)** | **4.41 (+1.8)** |
-| 8 | 4.08 | 4.89 (+0.2) | **5.00 (-0.2)** |
+| 3 | 1.61 (-0.8) | 2.64 (+1.8) | **2.95 (+2.2)** |
+| **5** | 2.18 (-0.3) | 3.96 (+1.5) | **4.42 (+1.7)** |
+| 8 | **2.90** (-0.4) | 4.90 (+0.2) | **5.00** (-0.2) |
 
-*(traits on target, which under this rule is identically traits permanently fixed)*
+**Without care the gain is negative in every generation; with it the gain is positive in every
+generation until the herd runs out of room.** Worst-trait finishes the type-gene game outright —
+5.00 of 5 by generation 8, best foal scoring 99.9 — and its lone negative figure is that ceiling,
+not regression: at generation 7 the herd is already at 4.96, so generation 8 has nothing left to buy.
+Worst-allele is about one generation slower and never quite finishes (4.90). The worst-allele column
+is retained only as the evidence for §3.1's decision — it is not a mode the game offers.
 
-**The gain is positive in every generation under either mode.** Worst-trait is about one generation
-faster and finishes the type-gene game by generation 7–8; worst-allele never quite finishes.
+> **A correction, 2026-08-07.** The first draft of this table reported the no-care column as
+> 2.63 / 3.39 / 4.08, which are band **`mid`** figures (they are §2.1's) pasted into a band-`low`
+> table. Re-measured, an uncared-for band-`low` line reaches **2.90 of 5, not 4.08**. The error ran
+> in the conservative direction: prenatal care buys considerably more than the draft claimed —
+> 2.90 → 5.00 rather than 4.08 → 5.00 — and without it a child at the decided founding band does
+> **not** get near a finished horse in eight generations. That is the argument for the mechanic
+> existing at all, and it was being understated.
 
 Note that the sim buys care on **every** covering. In real play cost and turns mean a child will not,
-so the true curve sits between the "no care" and "care" columns — **the price is the pacing dial**,
-which is a much better place for pacing to live than the genetics.
+so the true curve sits between the "no care" and "care" columns — **the price is the pacing dial**
+(§3.4), which is a much better place for pacing to live than the genetics.
 
 ### 3.3 It is the escape hatch for an allele nobody owns
 
@@ -249,22 +297,57 @@ introduces a correct allele into a closed herd**, and it does it a rung at a tim
 decision. The consignment dealer is the other route and costs money the child may not have; this one
 is reachable from the barn they already own.
 
-## 4. The negotiable numbers
+### 3.4 What it costs
+
+**Money and one turn, both charged on the covering**, at the moment the player commits — not at
+foaling. Decided 2026-08-07.
+
+- **`prenatal_care_cost`, default 500.** A live tunable (CLAUDE.md §5.5) read from config at purchase
+  time, set by the operator at `/admin/config`. It is not snapshotted onto the pregnancy, because it
+  is charged once at booking and never re-read.
+- **One turn**, a new `ACTION_COSTS` entry alongside the covering's own.
+- The ledger kind is new; the money leaves the stable at booking and there is **no refund path** —
+  a covering that fails to conceive does not return it, exactly as a stud fee does not (slice 0017
+  §13, the operator's standing call on live-foal guarantees).
+
+**500 is a first guess and is the first number to revisit in real play.** §3.2 is why: it decides
+whether a child buys care on one mare a year or on all seven, and therefore where between 4.08 and
+5.00 of 5 a line lands by generation 8. Pacing lives here deliberately, so that it can be moved
+without touching the genetics.
+
+### 3.5 It cannot fail
+
+Decided 2026-08-07: **there is no die roll.** The cost is the price. A purchase always moves the
+foal's worst trait one rung, always visibly.
+
+This is not a softness. Reintroducing "did I just get unlucky" is exactly what this redesign exists
+to remove, and §3.1 shows how easy the *silent* version of that failure is to build by accident. If
+the mechanic ever needs to be slower, the price moves (§3.4) — a lever the player can see and plan
+around — not the odds.
+
+---
+
+## 4. The numbers
 
 The operator offered noise and the modifiers. Taking them up on it is what makes the displayed number
 exactly an allele rather than approximately one. Measured with `bands`, under a whole-rung rule:
 
-| modifier range | noise SD | word matches the genes |
-|---|---|---|
-| ±7.5 (fix doc as written) | 2 | 89% |
-| ±2.5 | 1 | 100% |
-| **±1.0** | **0.5** | **100%** |
+| modifier range | noise SD | word matches the genes | Outstanding really is homozygous-at-standard |
+|---|---|---|---|
+| ±7.5 (fix doc as written) | 2 | 88% | 86% |
+| ±2.5 | 1 | 100% | 100% |
+| **±1.0** | **0.5** | **100%** | **100%** |
 
-**Recommended: `conformation_modifier_step` 0.75 → 0.10 (a range of ±1.0), `conformation_noise_sd`
-6 → 0.5.** At those settings a mature, outbred horse displays its own worse allele exactly, and the
-word beneath it is never wrong. The twenty-allele block survives as a tie-breaker between two horses
-with identical type genes — which is all §4.3 of the fix document ever wanted it for — rather than as
-something that can move a horse a full rung and lie about its genotype.
+The second column is the one a child's breeding decisions actually rest on: it is §2's "there is no
+fake" guarantee, measured. At the settings as originally written it fails one time in seven.
+
+**Decided 2026-08-07: `conformation_modifier_step` 0.75 → 0.10 (a range of ±1.0), and
+`conformation_noise_sd` 6 → 0.5.** At those settings a mature, outbred horse's displayed number sits
+within about a point of a real allele it owns, and the word beneath it is never wrong — which is the
+guarantee that matters, since the word is what a child reads. The twenty-allele block survives as a
+tie-breaker between two horses with identical type genes — which is all §4.3 of
+`conformation-breed-type.md` ever wanted it for — rather than as something that can move a horse a
+full rung and lie about its genotype.
 
 `show_noise_sd` (5) is deliberately **not** touched. Uncertainty belongs in the show ring, where it
 is a judge's opinion on the day and everyone can see it is luck. It does not belong in the horse.
@@ -279,8 +362,10 @@ is a judge's opinion on the day and everyone can see it is luck. It does not bel
    Every foal gets a 10 from him.
 3. **The foal reads 18 or 10.** If 18 she is `10/18` and still carries the good one. If 10 she is
    `10/10` and **finished on that trait, permanently.**
-4. **Or put the foal on the young-horse programme** and turn her 18 into a 10 by decision rather than
-   by waiting for the right roll.
+4. **Or, if no such stallion exists** — which is §3.3, and eventually it is every line's problem —
+   **buy prenatal care when booking the covering.** It costs money and a turn, it is bought before
+   the foal exists, and whatever that foal's weakest trait turns out to be comes back one rung
+   better. Two or three foals of that and the line owns an allele nobody in it owned before.
 5. That trait never comes back. **The count of finished traits is the score, it is visible for free,
    and it cannot fall.**
 
@@ -291,63 +376,68 @@ never tested could not progress at all.
 
 ---
 
-## 6. Recommendations, in order of size
+## 6. The build order
 
-1. **Expression rule `worst` (faults dominant), not the random pull.** §2. It satisfies the
-   operator's own constraint identically — every displayed number is a real allele — and additionally
-   makes that number *informative*, which the random pull does not. It single-handedly removes the
-   selecting-on-looks plateau. **This is a change of direction from a decision already taken in
-   conversation, so it needs the operator's agreement rather than assuming.**
-2. **Inbreeding depression off conformation expression** (slice 0018's existing proposal). §1.2.
-   Nothing else here works with it in place, and it is what breaks the "real value" guarantee.
+Decided; largest first. Each is measured in the section named.
+
+1. **Expression rule `worst` (faults dominant).** §2. It satisfies the operator's constraint
+   identically — every displayed number is a real allele — and additionally makes that number
+   *informative*, which the random pull does not. It single-handedly removes the selecting-on-looks
+   plateau, and everything below is measured on top of it.
+2. **Inbreeding depression off conformation expression**, per slice 0018. §1.2. Nothing else here
+   works with it in place, and it is what breaks the "real value" guarantee.
 3. **`conformation_modifier_step` → 0.10 and `conformation_noise_sd` → 0.5.** §4.
 4. **Founding band back to `low`**, since `worst` makes founders much plainer on its own (1.35 of 5
    at `low`, 1.95 at `mid`) and coaxing needs the room.
-5. **Mare prenatal care at one step, `worst trait` mode**, per §3.
+5. **Mare prenatal care**, one step, worst-trait mode, `prenatal_care_cost` 500 plus one turn. §3.
 6. **Show the finished-trait count.** Under `worst` this is free — it is the same number as the
    traits reading Outstanding — but it should be *named* as permanence somewhere: a padlock, a
    "breeds true" line. It is the only measure of progress that cannot fall.
 
+Items 1–4 change what every horse in the game looks like and want a slice document and a reset plan
+of their own; item 5 is additive and touches only new coverings.
+
 ---
 
-## 7. What needs the operator
+## 7. The decisions, and why they went the way they did
 
-1. **`worst` versus the random pull.** The main recommendation, and a reversal of a decision already
-   made. Everything in §2 and §3 is measured on it.
-2. **Is "faults dominant" acceptable as a story?** It is unusual biologically — real conformation is
-   polygenic and additive — but it is legible, it is honest, and the game already teaches dominance
-   through disease and colour. A child reads it as *"you can't hide a fault, but you can hide a
-   virtue"*, which is close enough to true of real horses to pass.
-3. **Confirm inbreeding depression comes off conformation** (§6.2). Slice 0018's call, but this
-   document's recommendations do not stand without it.
-4. **What does prenatal care cost?** Money and a turn on the covering is the obvious answer, and
-   **the price is the pacing dial** (§3.2) — it decides whether a child buys it on one mare a year or
-   on all seven, and therefore where between 4.08 and 5.00 of 5 the line lands by generation 8. This
-   is a much better home for pacing than the genetics, and it is the one number to revisit first if
-   progress feels wrong in real play.
-5. **Does the player choose the trait, or does the mechanic take the worst one?** Measured on
-   automatic-worst, which is the operator's own wording and much the simpler thing to explain to a
-   nine-year-old. Letting the player choose is strictly more powerful and would want re-measuring.
-6. **Can prenatal care fail?** Recommendation: **no.** The cost is the price, not a die roll.
-   Reintroducing "did I just get unlucky" is exactly what this redesign exists to remove — and §3.1
-   shows the *silent* version of that failure is easy to build by accident.
-7. **Ability traits are still breed-blind.** The other half of the reset, untouched here.
+Recorded in full because several of them reverse or constrain earlier calls, and a future session
+will need to know they were made deliberately.
+
+1. **`worst` versus the random pull — `worst`.** A reversal of a decision taken earlier in
+   conversation. The random pull met the operator's stated constraint but made selection *worse than
+   averaging* (§1.1), which nobody had measured when it was chosen.
+2. **"Faults dominant" is acceptable as a story — accepted.** It is unusual biologically — real
+   conformation is polygenic and additive — but it is legible, it is honest, and the game already
+   teaches dominance through disease and colour. A child reads it as *"you can't hide a fault, but
+   you can hide a virtue"*, which is close enough to true of real horses to pass.
+3. **Inbreeding depression comes off conformation — yes.** Slice 0018's call, confirmed here.
+   This document's recommendations do not stand without it (§1.2).
+4. **Prenatal care costs money and a turn; `prenatal_care_cost` starts at 500** — §3.4. The price is
+   the pacing dial and is the one number to revisit first if progress feels wrong in real play.
+5. **The mechanic takes the worst trait; the player does not choose** — §3.1. The operator's own
+   wording, the simpler thing to explain, and what every measurement here assumes.
+6. **Prenatal care cannot fail** — §3.5. The cost is the price, not a die roll.
+7. **The modifier and noise numbers move**, to 0.10 and 0.5 — §4.
 
 ---
 
 ## 8. Running it yourself
 
+The bench now defaults to the decided design: `--expression worst`, `--modifier-step 0.10`,
+`--noise-sd 0.5`, `--inbreeding 0`, `--coax-mode shown`, `--coax-policy worst`. Every flag below is
+therefore only needed to depart from the decision.
+
 ```
-node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8                     # averaging, the old baseline
-node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8 --expression random # the decision as taken
-node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8 --expression worst \
-      --band low --modifier-step 0.10 --noise-sd 0.5 --inbreeding 0 --coax 1 --coax-policy worst
-node docs/analysis/breeding-lab.mjs breed 12 to 16 --foals 4 --prenatal 1 --coax-mode shown
-node docs/analysis/breeding-lab.mjs legibility --breed AR --expression worst --modifier-step 0.10 --noise-sd 0.5
-node docs/analysis/breeding-lab.mjs bands --breed AR --expression worst
+node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8                        # the decided design
+node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8 --coax 1               # ... with prenatal care every covering
+node docs/analysis/breeding-lab.mjs dynasty --breed AR --rounds 8 --expression average   # the old baseline, for comparison
+node docs/analysis/breeding-lab.mjs breed 12 to 16 --foals 4 --prenatal 1                # one covering, four foals, care bought
+node docs/analysis/breeding-lab.mjs legibility --breed AR
+node docs/analysis/breeding-lab.mjs bands --breed AR
 ```
 
 In `dynasty`, `gain` is the whole question: what a mating bought over the two horses that went into
-it. Under `--expression worst` the `on target` and `FIXED` columns should be identical — if they ever
+it. Under the `worst` rule the `on target` and `FIXED` columns should be identical — if they ever
 diverge, something is pulling expression off the allele value, and that something is almost certainly
-inbreeding depression.
+inbreeding depression (§1.2) creeping back in.

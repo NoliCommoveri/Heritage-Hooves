@@ -1058,6 +1058,10 @@ Reported together from the deployed game, fixed together, sharing no code. Both 
 
 ## 2026-08-07 — the parent-to-foal deficit, and a third expression rule
 
+> **Two paragraphs of this entry were overtaken the same day — see "the conformation redesign is
+> decided" below.** The expression rule is now recorded in a document (`foals-worse-than-parents.md`
+> §0), and the bench no longer defaults to `'average'`. Everything else here stands.
+
 **Read this before touching conformation, and before quoting a number out of
 `conformation-breed-type.md` or `conformation-founding-quality.md`.** The move off the averaging
 expression rule was decided in conversation on 2026-08-07 and is recorded in no design document;
@@ -1102,3 +1106,43 @@ from `docs/fixes/foals-worse-than-parents.md` §3:
 - **It is the only mechanism in the design that puts a correct allele into a closed herd.** Demoed
   by hand: a line stuck at 4 of 5 with neck `58/82` against a standard of 74, where no horse in three
   generations owned a 74, walked 58 → 66 → 74 in two coverings and finished at 5 of 5.
+
+## 2026-08-07 — the conformation redesign is decided, and the bench defaults move with it
+
+Every open question in `docs/fixes/foals-worse-than-parents.md` was answered by the operator on the
+day it was written. That document is **no longer a proposal** — its new §0 is the decision table and
+§7 records why each call went the way it did. Nothing is built yet; this entry is so the next
+session does not re-open a settled question or measure under a superseded rule.
+
+**The decisions.** Expression rule is **`worst`** (faults dominant, quality recessive), which
+*reverses* the random pull taken earlier in conversation. Inbreeding depression **comes off
+conformation expression**, per slice 0018. `conformation_modifier_step` 0.75 → **0.10**,
+`conformation_noise_sd` 6 → **0.5**, founding band back to **`low`**. Mare prenatal care is built as
+a real mechanic: **money plus one turn**, charged on the covering, `prenatal_care_cost` default
+**500** as a live tunable; the **mechanic picks the trait** (the foal's worst, never the player's
+choice); and **it cannot fail** — no die roll, the cost is the price.
+
+**`docs/analysis/breeding-lab.mjs` now defaults to the decided design** — `expression: 'worst'`,
+`modifierStep: 0.10`, `noiseSd: 0.5`, `inbreedingFactor: 0`, `coaxMode: 'shown'`,
+`coaxPolicy: 'worst'`. This is the fix for the trap the entry above warns about: a bare `dynasty`
+run measures what was decided rather than what was superseded. **The cost is that the older fix
+documents no longer reproduce from a bare command** — `conformation-breed-type.md` and
+`conformation-founding-quality.md` need
+`--expression average --modifier-step 0.75 --noise-sd 2 --inbreeding 1` spelled out. That is stated
+in a header comment on `PROP` itself, which is where someone about to quote a number will be looking.
+
+**A measurement error found and corrected while recording the decisions, worth knowing because it
+ran in the conservative direction.** §3.2's "no care" column reported 2.63 / 3.39 / 4.08 at
+generations 3 / 5 / 8. Those are band **`mid`** figures (they are §2.1's own) pasted into a table
+whose header says band **`low`**. Re-measured at `low`: **1.61 / 2.18 / 2.90**. So an uncared-for
+line at the decided founding band does **not** approach a finished horse in eight generations, and
+prenatal care buys 2.90 → 5.00 rather than the 4.08 → 5.00 the draft claimed. The lesson for
+whoever measures next: `dynasty`'s band is not printed in the table body, only in its header line,
+so a column copied between runs carries no evidence of which band produced it.
+
+Two smaller things. The `--coax` help text still described the superseded worst-*allele* behaviour
+and now describes worst-*trait*, with `--coax-mode`/`--coax-policy` documenting which of their
+values were decided and which are retained only as evidence. And `bands` reports two numbers, not
+one — the second (does "Outstanding" really mean homozygous-at-standard?) is the one a child's
+breeding decisions rest on, and it is what fails one time in seven at the settings as originally
+written; §4's table now carries both columns.
