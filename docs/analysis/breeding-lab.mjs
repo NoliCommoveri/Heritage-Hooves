@@ -178,7 +178,39 @@ const PROP = {
   // is close to right but almost never exactly right, with a small escape chance so the target
   // allele still exists in the game at all. That escape is not optional — see cmdSweep's
   // "barn is missing the allele" column and §14 of the fix document.
-  foundingMode: 'peak',      // 'peak' | 'ring'
+  // 'quota' is the operator's proposal (2026-08-07) and is not a probability distribution at all:
+  // a founding horse is DEALT a fixed number of alleles in each label bucket. At step 4 with 2
+  // rungs per band and reach 6 rungs the buckets and the words coincide exactly —
+  //   0-1 rungs out = Outstanding, 2-3 = Good, 4-5 = Acceptable, 6 = Weak
+  // — so the founding rule is stated in the same vocabulary a child reads off the horse page:
+  // "at the low band a founding horse gets 2 Outstanding alleles, 2 Weak, and 6 in between."
+  // Nothing needs re-tuning when the pool shape changes, because there is no pool shape.
+  foundingMode: 'peak',      // 'peak' | 'ring' | 'quota'
+
+  // Alleles per bucket, in label order [Outstanding, Good, Acceptable, Weak]. Each row sums to the
+  // horse's ten conformation alleles. The high band is the operator's own example: no Weak allele
+  // at all, and six Outstanding.
+  quota: { low: [2, 3, 3, 2], mid: [4, 3, 2, 1], high: [6, 3, 1, 0] },
+  quotaSpread: true,         // spread same-bucket alleles across DIFFERENT traits where possible
+
+  // 'pairs' pins the deal one step further: not just how many alleles of each bucket, but which
+  // two share a trait. Every founding horse then has the same STRUCTURE - one trait carrying an
+  // Outstanding-over-Good pair, one carrying Acceptable-over-Weak, and so on - and differs only in
+  // WHICH trait is which. That is the operator's actual goal (2026-08-07): the children keep three
+  // founders each, and one child drawing great horses while another draws duds is the bug. Variety
+  // is supposed to arrive through the consignment barn, where every child can reach it equally.
+  // Bucket indices are label order: 0 Outstanding, 1 Good, 2 Acceptable, 3 Weak.
+  quotaPairs: {
+    low:  [[0, 1], [0, 2], [1, 2], [1, 3], [2, 3]],   // O2 G3 A3 W2
+    mid:  [[0, 0], [0, 1], [0, 1], [1, 2], [2, 3]],   // O4 G3 A2 W1
+    high: [[0, 0], [0, 0], [0, 1], [0, 1], [1, 2]],   // O6 G3 A1 W0
+  },
+
+  // The specialist assigned round-robin across a founding BATCH rather than drawn per horse. With
+  // twelve founders and five traits an independent draw leaves some trait with no exact-target
+  // allele anywhere in the barn about a third of the time - a trait that child can never breed
+  // right. Round-robin makes coverage a certainty, and costs nothing else.
+  specialistRoundRobin: false,
   ringTargetChance: 0.06,    // ring only: P(an allele IS exactly the target rung)
   ringHoleSuppression: 0,    // ring only: weight multiplier for alleles inside the hole (0 = hard hole)
   ringHoleRungs: 1,          // ring only: rungs either side of target also excluded (0 = target only)
@@ -330,6 +362,97 @@ function poolForTarget(targetRung, band) {
   const s = w.reduce((a, b) => a + b, 0);
   return w.map((x) => x / s);
 }
+/**
+ * The label buckets, expressed in rungs of distance from the breed's own target. Bucket j covers
+ * rungs [j*k, (j+1)*k - 1] where k is --rungs-per-band, and the last bucket is truncated by reach.
+ * This is the SAME partition derivedLabelMins() uses, so a bucket and a word are one thing.
+ */
+function alleleBuckets() {
+  const k = Math.max(1, PROP.rungsPerBand ?? 1);
+  const R = reachRungs();
+  const out = [];
+  for (let lo = 0; lo <= R; lo += k) out.push([lo, Math.min(R, lo + k - 1)]);
+  return out;
+}
+
+/**
+ * QUOTA DEAL (operator, 2026-08-07). Deal exactly `quota[j]` alleles from bucket j into the ten
+ * conformation slots, rather than drawing ten times from a distribution and hoping.
+ *
+ * Two details that matter and are easy to get wrong:
+ *  - SIDE. A bucket is a distance; each allele still has to pick a side of the standard. For a
+ *    breed whose target sits near an end of the 1-99 scale (Arabian head_profile, target 10) the
+ *    far side does not exist, so the choice is forced inward rather than clamped onto the target -
+ *    clamping would quietly manufacture correct alleles the quota never granted.
+ *  - SPREAD. Two alleles from the same bucket landing on the same trait wastes the pairing: under
+ *    random expression that trait shows the bucket either way, and a second trait shows nothing of
+ *    it. quotaSpread deals each bucket across distinct traits first, which is what makes the ten
+ *    alleles turn into five legible words instead of clumping.
+ */
+function dealQuota(breedCode, band, rng) {
+  const buckets = alleleBuckets();
+  const want = (PROP.quota[band] ?? PROP.quota.low).slice(0, buckets.length);
+  const nSlots = CONF_TRAITS.length * 2;
+
+  // One entry per allele: which bucket it came from.
+  const bag = [];
+  want.forEach((n, j) => { for (let i = 0; i < n; i++) bag.push(j); });
+  while (bag.length < nSlots) bag.push(want.length - 1);
+  bag.length = nSlots;
+
+  // Slot order: trait 0 slot A, trait 1 slot A, ... then trait 0 slot B, ... so a bucket dealt in
+  // sequence lands on five different traits before it ever doubles up on one.
+  const slots = [];
+  for (let half = 0; half < 2; half++) for (let t = 0; t < CONF_TRAITS.length; t++) slots.push([t, half]);
+  if (!PROP.quotaSpread) for (let i = slots.length - 1; i > 0; i--) { const j = rng.int(i + 1); [slots[i], slots[j]] = [slots[j], slots[i]]; }
+  for (let i = bag.length - 1; i > 0; i--) { const j = rng.int(i + 1); [bag[i], bag[j]] = [bag[j], bag[i]]; }
+
+  const g = {};
+  for (const t of CONF_TRAITS) g[t] = [];
+  slots.forEach(([ti, ], idx) => {
+    const trait = CONF_TRAITS[ti];
+    const [lo, hi] = buckets[bag[idx]];
+    const target = nearestRung(BREEDS[breedCode].ideal[trait][0]);
+    const dist = lo + rng.int(hi - lo + 1);
+    const up = target + dist, down = target - dist;
+    const okUp = up < rungCount(), okDown = down >= 0;
+    const r = dist === 0 ? target
+      : okUp && okDown ? (rng() < 0.5 ? up : down)
+      : okUp ? up : okDown ? down : target;
+    g[trait].push(r);
+  });
+  for (const t of CONF_TRAITS) g[t].sort((a, b) => a - b);
+  return g;
+}
+
+/**
+ * The pair deal. Five pair-specs, shuffled onto the five traits, each spec naming the two buckets
+ * that trait's alleles come from. Every founding horse has the same shape; only the assignment of
+ * shape to trait varies. `rungFor` picks the exact rung inside a bucket and the side of the
+ * standard, forced inward where the far side would fall off the 1-99 scale.
+ */
+function dealPairs(breedCode, band, rng) {
+  const buckets = alleleBuckets();
+  const specs = (PROP.quotaPairs[band] ?? PROP.quotaPairs.low).map((p) => [...p]);
+  for (let i = specs.length - 1; i > 0; i--) { const j = rng.int(i + 1); [specs[i], specs[j]] = [specs[j], specs[i]]; }
+
+  const rungFor = (trait, bucketIdx) => {
+    const [lo, hi] = buckets[Math.min(bucketIdx, buckets.length - 1)];
+    const target = nearestRung(BREEDS[breedCode].ideal[trait][0]);
+    const dist = lo + rng.int(hi - lo + 1);
+    if (dist === 0) return target;
+    const up = target + dist, down = target - dist;
+    const okUp = up < rungCount(), okDown = down >= 0;
+    return okUp && okDown ? (rng() < 0.5 ? up : down) : okUp ? up : okDown ? down : target;
+  };
+
+  const g = {};
+  CONF_TRAITS.forEach((t, i) => {
+    g[t] = [rungFor(t, specs[i][0]), rungFor(t, specs[i][1])].sort((a, b) => a - b);
+  });
+  return g;
+}
+
 function drawFrom(pool, rng) {
   let r = rng(), c = 0;
   for (let i = 0; i < pool.length; i++) { c += pool[i]; if (r < c) return i; }
@@ -354,7 +477,7 @@ function specialistBits(rng, potential) {
   return pos.map((_, i) => (ones.has(i) ? 1 : 0));
 }
 
-function mintFounder(state, seed) {
+function mintFounder(state, seed, mintIndex = null) {
   const breed = BREEDS[state.breed];
   const band = state.band;
   const g = { type: {}, poly: {} };
@@ -371,18 +494,53 @@ function mintFounder(state, seed) {
 
   if (state.engine === 'proposed') {
     const typeRng = streamFor(seed, 'pool_type');
-    for (const t of CONF_TRAITS) {
-      const pool = poolForTarget(nearestRung(breed.ideal[t][0]), band);
-      g.type[t] = [drawFrom(pool, typeRng), drawFrom(pool, typeRng)].sort((a, b) => a - b);
+    if (PROP.foundingMode === 'pairs') {
+      g.type = dealPairs(state.breed, band, typeRng);
+    } else if (PROP.foundingMode === 'quota') {
+      g.type = dealQuota(state.breed, band, typeRng);
+    } else {
+      for (const t of CONF_TRAITS) {
+        const pool = poolForTarget(nearestRung(breed.ideal[t][0]), band);
+        g.type[t] = [drawFrom(pool, typeRng), drawFrom(pool, typeRng)].sort((a, b) => a - b);
+      }
     }
   }
 
   // Slice 0019 Part A, reframed per §7.3: one conformation trait is set homozygous at the breed's
   // target rung, so a founding horse is not merely good at one thing but BREEDS ON for it.
   const cRng = streamFor(seed, 'specialist_choice_conformation');
-  const cSpec = PROP.specialist === 'none' && state.engine === 'proposed' ? null : cRng.pick(CONF_TRAITS);
+  let cSpec = PROP.specialist === 'none' && state.engine === 'proposed' ? null
+    : (PROP.specialistRoundRobin && mintIndex != null) ? CONF_TRAITS[mintIndex % CONF_TRAITS.length]
+    : cRng.pick(CONF_TRAITS);
   if (state.engine === 'proposed') {
-    if (cSpec !== null) {
+    if (cSpec !== null && (PROP.foundingMode === 'quota' || PROP.foundingMode === 'pairs')) {
+      // The operator's own rule: do not hand the horse a correct allele out of nowhere — UPGRADE one
+      // of the alleles it was already dealt in the closest bucket. The quota is the whole budget,
+      // and the specialist spends it rather than adding to it. If the deal left nothing in the
+      // closest bucket (a band whose quota grants none), the horse simply has no specialist.
+      const [, hi] = alleleBuckets()[0];
+      const cands = [];
+      // Round-robin pins WHICH trait; without it, any allele already in the closest bucket is fair
+      // game. Either way the upgrade spends an allele the deal already granted.
+      const scope = PROP.specialistRoundRobin && mintIndex != null ? [cSpec] : CONF_TRAITS;
+      for (const t of scope) {
+        const target = nearestRung(breed.ideal[t][0]);
+        g.type[t].forEach((r, i) => { if (Math.abs(r - target) <= hi) cands.push([t, i]); });
+      }
+      // Round-robin must not silently skip a trait: if its dealt pair holds nothing near enough to
+      // upgrade, take the closer of the two anyway. Barn coverage is the whole point of the rule.
+      if (!cands.length && PROP.specialistRoundRobin && mintIndex != null) {
+        const target = nearestRung(breed.ideal[cSpec][0]);
+        const i = Math.abs(g.type[cSpec][0] - target) <= Math.abs(g.type[cSpec][1] - target) ? 0 : 1;
+        cands.push([cSpec, i]);
+      }
+      if (cands.length) {
+        const [t, i] = cands[cRng.int(cands.length)];
+        g.type[t][i] = nearestRung(breed.ideal[t][0]);
+        g.type[t].sort((a, b) => a - b);
+        cSpec = t;
+      } else cSpec = null;
+    } else if (cSpec !== null) {
       const r = nearestRung(breed.ideal[cSpec][0]);
       // 'carrier' gives the horse ONE correct allele and leaves the other to the pool: it can breed
       // on for the trait, but it has not been handed the finished article.
@@ -721,6 +879,8 @@ const TUNABLE = {
   'target-chance': ['ringTargetChance', Number],
   'hole': ['ringHoleRungs', Number],
   'hole-suppression': ['ringHoleSuppression', Number],
+  'round-robin': ['specialistRoundRobin', (v) => v !== 'false' && v !== '0'],
+  'quota-spread': ['quotaSpread', (v) => v !== 'false' && v !== '0'],
   'drift': ['driftChance', Number],
   'inbreeding': ['inbreedingFactor', Number],
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
@@ -735,6 +895,15 @@ function tuningFromFlags(flags) {
   const t = {};
   for (const [flag, [key, cast]] of Object.entries(TUNABLE)) {
     if (flags[flag] !== undefined) t[key] = cast(flags[flag]);
+  }
+  for (const b of ['low', 'mid', 'high']) {
+    const v = flags[`quota-${b}`] ?? flags.quota;
+    if (v !== undefined) { t.quota = { ...(t.quota ?? PROP.quota), [b]: String(v).split(',').map(Number) }; }
+    const pv = flags[`pairs-${b}`] ?? flags.pairs;
+    if (pv !== undefined) {
+      t.quotaPairs = { ...(t.quotaPairs ?? PROP.quotaPairs),
+        [b]: String(pv).split(',').map((x) => x.split('-').map(Number)) };
+    }
   }
   if (flags.concentration !== undefined) {
     t.concentration = { low: Number(flags.concentration), mid: Number(flags.concentration), high: Number(flags.concentration) };
@@ -778,7 +947,7 @@ function applyTuning(tuning) {
   for (const [k, v] of Object.entries(tuning ?? {})) PROP[k] = v;
   if (PROP.labels === 'derived') Object.assign(LABEL_MIN, derivedLabelMins());
   if (PROP.outstandingWithin != null) LABEL_MIN.outstanding = 100 - PROP.outstandingWithin * FALLOFF;
-  if (!['peak', 'ring'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak" or "ring"'); process.exit(1); }
+  if (!['peak', 'ring', 'quota', 'pairs'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak", "ring", "quota" or "pairs"'); process.exit(1); }
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
   if (!['average', 'random'].includes(PROP.expression)) { console.error('--expression must be "average" or "random"'); process.exit(1); }
 }
@@ -835,7 +1004,7 @@ function cmdNew(path, flags) {
   const state = { engine, breed, band, seed, tuning, horses: [] };
   for (let i = 0; i < n; i++) {
     const s = deriveSeed(seed, `founder_${i}`);
-    const { genotype, ageYears, specialists } = mintFounder(state, s);
+    const { genotype, ageYears, specialists } = mintFounder(state, s, i);
     addHorse(state, { genotype, ageYears, specialists, seed: s });
   }
   saveState(path, state);
@@ -948,7 +1117,7 @@ function mintPopulation(state, n, seedBase) {
   const horses = [];
   for (let i = 0; i < n; i++) {
     const s = deriveSeed(seedBase, `founder_${i}`);
-    const { genotype, ageYears, specialists } = mintFounder(state, s);
+    const { genotype, ageYears, specialists } = mintFounder(state, s, i);
     horses.push({ id: i + 1, breed: state.breed, gen: 1, sire: null, dam: null, ageYears, seed: s, genotype, specialists, coi: 0 });
   }
   return horses;
@@ -1178,7 +1347,7 @@ function cmdLegibility(flags) {
   const elite = [];
   for (let i = 0; elite.length < pairs * 2 && i < 400000; i++) {
     const s = deriveSeed(seed, `elite_${i}`);
-    const f = mintFounder(state, s);
+    const f = mintFounder(state, s, i);
     const h = mature({ id: i + 1, breed, gen: 1, sire: null, dam: null, seed: s, genotype: f.genotype, specialists: f.specialists });
     if (CONF_TRAITS.every((t) => onTarget(confParts(state, h, t).score))) elite.push(h);
   }
@@ -1267,7 +1436,7 @@ function cmdDynasty(flags) {
     const enrol = (h, sex) => { h.sex = sex; h.births = 0; return h; };
     for (let i = 0; i < nMares + nStuds; i++) {
       const s = deriveSeed(deriveSeed(state.seed, `dyn_run_${run}`), `founder_${i}`);
-      const f = mintFounder(state, s);
+      const f = mintFounder(state, s, i);
       enrol(addHorse(state, { genotype: f.genotype, ageYears: MATURITY_YEARS, specialists: f.specialists, seed: s }),
         i < nMares ? 'F' : 'M');
     }
@@ -1428,6 +1597,60 @@ function cmdBands(flags) {
   console.log('                    (this is the number a child\'s breeding decisions rest on)');
 }
 
+/**
+ * FAIRNESS — added 2026-08-07, and it is the measurement the whole quota/pair design exists for.
+ *
+ * The operator's report: the children keep three founders each out of a shared batch, and one child
+ * keeps drawing great horses while another draws duds. That is not a flavour complaint - it decides
+ * who can compete for the next year of real play. So the number to minimise is not the spread of
+ * ALL founders, it is the gap between the luckiest child and the unluckiest one.
+ */
+function cmdFairness(flags) {
+  const engine = flags.engine ?? 'proposed';
+  const breed = (flags.breed ?? 'AR').toUpperCase();
+  const band = flags.band ?? 'low';
+  const kids = Number(flags.kids ?? 4);
+  const each = Number(flags.each ?? 3);
+  const batches = Number(flags.batches ?? 3000);
+  const seed = Number(flags.seed ?? 606);
+  const tuning = tuningFromFlags(flags);
+  applyTuning(tuning);
+
+  const state = { engine, breed, band, seed, horses: [] };
+  let gapScore = 0, gapOn = 0, sd = 0, worst = 0, best = 0;
+  for (let b = 0; b < batches; b++) {
+    const herd = mintPopulation(state, kids * each, deriveSeed(seed, `batch_${b}`))
+      .map((h) => ({ ...h, ageYears: MATURITY_YEARS, coi: 0 }));
+    const scores = herd.map((h) => conformationScore(state, h));
+    const ons = herd.map((h) => CONF_TRAITS.filter((t) => onTarget(confParts(state, h, t).score)).length);
+    const mean = scores.reduce((a, x) => a + x, 0) / scores.length;
+    sd += Math.sqrt(scores.reduce((a, x) => a + (x - mean) ** 2, 0) / scores.length);
+
+    const idx = [...herd.keys()];
+    const r = streamFor(deriveSeed(seed, `split_${b}`), 'split');
+    for (let i = idx.length - 1; i > 0; i--) { const j = r.int(i + 1); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    const perKid = [];
+    for (let k = 0; k < kids; k++) {
+      const mine = idx.slice(k * each, (k + 1) * each);
+      perKid.push([mine.reduce((a, i) => a + scores[i], 0) / each, mine.reduce((a, i) => a + ons[i], 0) / each]);
+    }
+    const s = perKid.map((x) => x[0]), o = perKid.map((x) => x[1]);
+    gapScore += Math.max(...s) - Math.min(...s);
+    gapOn += Math.max(...o) - Math.min(...o);
+    best += Math.max(...s); worst += Math.min(...s);
+  }
+
+  console.log(`FAIRNESS — ${BREEDS[breed].name}, band ${band} | ${tuningNote(tuning)}`);
+  console.log(`${kids} children keeping ${each} founders each from a shared batch of ${kids * each}, over ${batches} batches.\n`);
+  console.log(`  SD of a single founder's score          : ${(sd / batches).toFixed(2)} points`);
+  console.log(`  Luckiest child's 3 average              : ${(best / batches).toFixed(1)}`);
+  console.log(`  Unluckiest child's 3 average            : ${(worst / batches).toFixed(1)}`);
+  console.log(`  GAP between them                        : ${(gapScore / batches).toFixed(1)} points  (show noise SD is ${SHOW_NOISE_SD})`);
+  console.log(`  GAP in traits on target                 : ${(gapOn / batches).toFixed(2)} of 5`);
+  console.log('\n  The gap is the number that decides whether two children can compete with each other.');
+  console.log(`  A gap under about ${SHOW_NOISE_SD} points is smaller than the luck in a single show.`);
+}
+
 function cmdPedigree(state, id) {
   const h = state.horses[id - 1];
   if (!h) { console.error(`No horse #${id}.`); process.exit(1); }
@@ -1489,6 +1712,7 @@ switch (cmd) {
   case 'legibility': cmdLegibility(flags); break;
   case 'dynasty': cmdDynasty(flags); break;
   case 'bands': cmdBands(flags); break;
+  case 'fairness': cmdFairness(flags); break;
   case 'reset':
     if (existsSync(statePath)) { unlinkSync(statePath); console.log(`Deleted ${statePath}.`); }
     else console.log('Nothing to delete.');
