@@ -1089,3 +1089,16 @@ Findings in `docs/fixes/foals-worse-than-parents.md`. Three that a future sessio
    guarantee**, on top of making a genetically perfect herd read worse than a mediocre one. Third
    independent argument for slice 0018's central proposal, and the first that says the new expression
    rule does not work at all without it.
+
+Later the same day the coax dial was reframed as the operator's own **mare prenatal care**: it hangs
+off `pregnancies` (which already carries a seed and a snapshotted gestation length), is committed
+before the foal exists, and is capped at one per foal by construction. Two things a builder needs
+from `docs/fixes/foals-worse-than-parents.md` §3:
+
+- **Move the worst TRAIT, not the worst ALLELE** (`--coax-mode shown`, not `allele`). Under the
+  `worst` expression rule a foal that inherits the same bad allele from both parents has one copy
+  improved and goes on showing the other — so about half of all purchases are silently invisible.
+  It costs two allele steps on a homozygote instead of one; that is the price of the guarantee.
+- **It is the only mechanism in the design that puts a correct allele into a closed herd.** Demoed
+  by hand: a line stuck at 4 of 5 with neck `58/82` against a standard of 74, where no horse in three
+  generations owned a 74, walked 58 → 66 → 74 in two coverings and finished at 5 of 5.

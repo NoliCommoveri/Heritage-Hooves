@@ -34,6 +34,8 @@
 //   show      <id> [<id>...]          Full card: what a player sees, then what is underneath.
 //   predict   <a> to <b>              The exact foal distribution for a pairing, before rolling.
 //   breed     <a> to <b> [--foals n]  Roll foals. They join the population with new ids.
+//             [--prenatal [n]]        Buy mare prenatal care on this covering: each foal's WORST
+//                                     allele moves n rungs (default 1) toward the breed standard.
 //   pedigree  <id>                    Ancestry and inbreeding coefficient.
 //   summary                           Population-wide: traits on target, by generation.
 //   sweep     [--breed all] [--n n]   Mint thousands of founders and characterise them. No state.
@@ -238,7 +240,8 @@ const PROP = {
 
   // The coax mechanic (see coaxGenotype). 0 = off, which is every measurement taken before today.
   coaxSteps: 0,
-  coaxPolicy: 'finish',      // 'finish' | 'worst'
+  coaxPolicy: 'finish',      // 'finish' | 'worst'  (mode 'allele' only)
+  coaxMode: 'allele',        // 'allele' = move one allele | 'shown' = move the worst TRAIT one rung
 
   // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
   //   'average'  the fix document as written: the mean of the two, co-dominant.
@@ -631,28 +634,43 @@ function maybeDrift(allele, breedCode, trait, rng) {
 }
 
 /**
- * COAXING (operator, 2026-08-07): "an outside mechanism … that allows you to coax the genes to do
- * right — incrementally of course". Modelled here as the most conservative version that could be
- * built, so the number below is a FLOOR on what such a mechanic buys rather than a best case:
+ * MARE PRENATAL CARE (operator, 2026-08-07). The operator's own framing, and it is a better one than
+ * the young-horse programme this dial was first written for:
  *
- *   - it only ever moves an allele ONE RUNG TOWARD the horse's own breed standard, never away and
- *     never past it. Breed type therefore strictly improves and can never erode, which is the
- *     objection that sank random drift (docs/fixes/conformation-founding-quality.md §5);
- *   - it is applied at BIRTH and capped per horse for life (`coaxSteps`), representing a young-horse
- *     programme that closes when the skeleton does — not a per-tick treadmill;
- *   - it is DIRECTED and visible, so the breeding preview's Punnett square stays exact. A player
- *     knows which allele moved and when, which random drift never allows.
+ *   "running it doesn't change the mare's genes; it means that the baby foal's worst gene is moved
+ *    towards standard"
  *
- * `coaxPolicy` is what a player would actually spend it on:
+ * It attaches to the PREGNANCY, not to a horse, which is what makes it fit the game rather than sit
+ * beside it:
+ *
+ *   - `pregnancies` already exists, already carries its own `rng_seed` and its own snapshotted
+ *     gestation length (CLAUDE.md §5.5), and is already the thing the tick walks. One more
+ *     snapshotted column on that row is the whole storage cost.
+ *   - the decision is committed BEFORE the foal exists, so it can never be an undo on a bad roll.
+ *     The player pays blind, which is a real decision rather than a correction.
+ *   - it is capped at one per foal by construction. No lifetime counter to track, no way to stack.
+ *   - the mare's own genotype is untouched. Nothing is inherited that she did not already carry;
+ *     what changed is one allele in one foal, once, at the moment that foal was formed.
+ *
+ * The genetic rule is unchanged from the first draft and is what keeps it safe: the allele moves ONE
+ * RUNG TOWARD the foal's own breed standard, never away and never past it. Breed type therefore
+ * strictly improves and can never erode — the objection that sank random drift
+ * (docs/fixes/conformation-founding-quality.md §5) — and an NPC stable that never buys it never moves.
+ * It is directed and visible, so the breeding preview's Punnett square stays exact.
+ *
+ * `coaxPolicy` is which allele the money buys:
+ *   'worst'   the allele furthest from the standard. THE OPERATOR'S SPECIFICATION, and under the
+ *             `worst` expression rule it is also the allele the foal SHOWS — so the purchase is
+ *             visibly rewarded on the foal's own card, every time, with no die roll.
  *   'finish'  the allele already CLOSEST to the standard without being on it — converts a trait the
- *             horse merely carries into one it breeds true for. What a tested player does.
- *   'worst'   the allele furthest from the standard — what a player selecting on looks does, since
- *             the ugliest trait is the one they can see.
- * Both are measured; the gap between them is more of the value of testing.
+ *             horse merely carries into one it breeds true for. What a tested player would prefer if
+ *             the game let them choose.
+ * The gap between the two is the argument for whether the player picks the trait or the mechanic does.
  */
 function coaxGenotype(state, genotype, breedCode, steps, policy) {
   if (state.engine !== 'proposed' || steps <= 0) return genotype;
   for (let s = 0; s < steps; s++) {
+    if (PROP.coaxMode === 'shown') { if (!coaxShownStep(genotype, breedCode)) break; continue; }
     let best = null;
     for (const t of CONF_TRAITS) {
       const target = nearestRung(BREEDS[breedCode].ideal[t][0]);
@@ -668,6 +686,40 @@ function coaxGenotype(state, genotype, breedCode, steps, policy) {
     pair.sort((a, b) => a - b);
   }
   return genotype;
+}
+
+/**
+ * `coaxMode: 'shown'` — move the foal's WORST TRAIT one rung, whatever that costs in alleles.
+ *
+ * Added 2026-08-07 after the 'allele' mode was demonstrated failing in a way a child would
+ * experience as pure bad luck: a foal that inherits the same bad allele from BOTH parents has one
+ * copy improved and goes on showing the other, so the purchase is invisible. Roughly half of all
+ * purchases, at random, with nothing on screen to explain it.
+ *
+ * This mode reads the operator's sentence the way a player would — "the baby foal's worst gene is
+ * moved towards standard" means the weakest thing about the foal gets better — and is therefore
+ * ALWAYS visible under the `worst` expression rule. On a heterozygote it costs one allele step; on a
+ * homozygote it costs two, which is the honest price of the guarantee and is worth knowing about,
+ * because it means the mechanic does twice as much genetic work in exactly the case a line is most
+ * stuck. Measured against 'allele' in docs/fixes/foals-worse-than-parents.md.
+ */
+function coaxShownStep(genotype, breedCode) {
+  let worst = null;
+  for (const t of CONF_TRAITS) {
+    const target = nearestRung(BREEDS[breedCode].ideal[t][0]);
+    const shownIdx = genotype.type[t][0] === genotype.type[t][1] ? 0
+      : (Math.abs(genotype.type[t][0] - target) > Math.abs(genotype.type[t][1] - target) ? 0 : 1);
+    const d = Math.abs(genotype.type[t][shownIdx] - target);
+    if (d === 0) continue;
+    if (worst === null || d > worst.d) worst = { t, d, target };
+  }
+  if (worst === null) return false;
+  const pair = genotype.type[worst.t];
+  // Move every copy that is currently the worst-placed one, so the shown value really does change.
+  const far = Math.max(...pair.map((r) => Math.abs(r - worst.target)));
+  pair.forEach((r, i) => { if (Math.abs(r - worst.target) === far) pair[i] += r < worst.target ? 1 : -1; });
+  pair.sort((a, b) => a - b);
+  return true;
 }
 
 function makeFoal(state, sireG, damG, seed) {
@@ -964,6 +1016,7 @@ const TUNABLE = {
   'specialist': ['specialist', String],
   'coax': ['coaxSteps', Number],
   'coax-policy': ['coaxPolicy', String],
+  'coax-mode': ['coaxMode', String],
   'expression': ['expression', String],
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
@@ -1030,6 +1083,7 @@ function applyTuning(tuning) {
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
   if (!['average', 'random', 'worst', 'best'].includes(PROP.expression)) { console.error('--expression must be "average", "random", "worst" or "best"'); process.exit(1); }
   if (!['finish', 'worst'].includes(PROP.coaxPolicy)) { console.error('--coax-policy must be "finish" or "worst"'); process.exit(1); }
+  if (!['allele', 'shown'].includes(PROP.coaxMode)) { console.error('--coax-mode must be "allele" or "shown"'); process.exit(1); }
 }
 /** One line naming every dial that is NOT at its documented default, so output is self-describing. */
 function tuningNote(tuning) {
@@ -1149,11 +1203,12 @@ function cmdPredict(state, a, b) {
   }
 }
 
-function cmdBreed(state, path, a, b, foals) {
+function cmdBreed(state, path, a, b, foals, prenatal = 0) {
   const sire = state.horses[a - 1], dam = state.horses[b - 1];
   if (!sire || !dam) { console.error('Both ids must exist.'); process.exit(1); }
   const coi = kinship(state, a, b);
   console.log(`#${a} ${sire.name} x #${b} ${dam.name} — ${foals} foals   (COI ${(coi * 100).toFixed(1)}%)`);
+  if (prenatal > 0) console.log(`  Mare prenatal care bought on this covering: each foal's worst allele moves ${prenatal} rung(s) toward standard.`);
   if (coi > 0 && PROP.inbreedingFactor > 0) console.log(`  Inbreeding depression is live: realization x ${(1 - coi * PROP.inbreedingFactor).toFixed(3)}, pulling every trait toward 50.`);
   else if (coi > 0) console.log(`  Inbreeding depression is OFF (--inbreeding 0). COI ${(coi * 100).toFixed(1)}% costs this foal nothing.`);
   console.log('');
@@ -1161,7 +1216,8 @@ function cmdBreed(state, path, a, b, foals) {
   const made = [];
   for (let i = 0; i < foals; i++) {
     const s = deriveSeed(deriveSeed(state.seed, `foal_${a}_${b}_${state.horses.length}_${i}`), 'foal');
-    const genotype = makeFoal(state, sire.genotype, dam.genotype, s);
+    const genotype = coaxGenotype(state, makeFoal(state, sire.genotype, dam.genotype, s),
+      state.breed, prenatal, PROP.coaxPolicy);
     made.push(addHorse(state, { genotype, ageYears: 0, sire: a, dam: b, seed: s }));
   }
   saveState(path, state);
@@ -1834,7 +1890,11 @@ switch (cmd) {
   case 'predict': cmdPredict(loadState(statePath), Number(positional[0]), Number(positional[1])); break;
   case 'breed': {
     const state = loadState(statePath);
-    cmdBreed(state, statePath, Number(positional[0]), Number(positional[1]), Number(flags.foals ?? 5));
+    // Dials passed on `breed` override the ones stored by `new`, so a single covering can be run
+    // under a different rule without rebuilding the lab. Without this they were silently ignored.
+    applyTuning(tuningFromFlags(flags));
+    cmdBreed(state, statePath, Number(positional[0]), Number(positional[1]), Number(flags.foals ?? 5),
+      flags.prenatal === undefined ? 0 : (flags.prenatal === true ? 1 : Number(flags.prenatal)));
     break;
   }
   case 'pedigree': cmdPedigree(loadState(statePath), Number(positional[0])); break;
