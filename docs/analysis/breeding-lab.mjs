@@ -1286,6 +1286,12 @@ function statsFor(state, horses) {
   // gene a child cannot see and would cull. Under 'average' a het horse shows half its good allele;
   // under 'random' it shows either all of it or none of it.
   let hidden = 0, hiddenOf = 0;
+  // The word census (2026-08-07). What FIVE WORDS does a founding horse actually show? This is the
+  // band stated in the child's own vocabulary, and it is the only way to check a band rule written
+  // as "always gets a Weak trait" actually delivers one. `worstSeen` is the floor the whole system
+  // can reach: if Poor never appears, the word is unreachable and should be said to be.
+  const words = { Outstanding: 0, Good: 0, Acceptable: 0, Weak: 0, Poor: 0 };
+  let withWeakOrWorse = 0, maxDist = 0;
   for (const h of horses) {
     const parts = CONF_TRAITS.map((t) => confParts(state, h, t));
     // The false signal, measured: traits that READ Outstanding while carrying no correct allele.
@@ -1298,6 +1304,8 @@ function statsFor(state, horses) {
         if (holds) { hiddenOf++; if (!onTarget(p.score)) hidden++; }
       }
     }
+    for (const p of parts) { words[label(p.score)]++; if (p.dist > maxDist) maxDist = p.dist; }
+    if (parts.some((p) => label(p.score) === 'Weak' || label(p.score) === 'Poor')) withWeakOrWorse++;
     score += conformationScore(state, h);
     on += parts.filter((p) => onTarget(p.score)).length;
     dev += parts.reduce((a, p) => a + p.dist, 0) / CONF_TRAITS.length;
@@ -1309,7 +1317,8 @@ function statsFor(state, horses) {
   }
   const n = horses.length;
   return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n,
-    blind: blindOf ? blind / blindOf : 0, hidden: hiddenOf ? hidden / hiddenOf : 0 };
+    blind: blindOf ? blind / blindOf : 0, hidden: hiddenOf ? hidden / hiddenOf : 0,
+    words: Object.fromEntries(Object.entries(words).map(([k, v]) => [k, v / n])), withWeak: withWeakOrWorse / n, maxDist };
 }
 
 /**
@@ -1318,19 +1327,27 @@ function statsFor(state, horses) {
  * Mendelian inheritance shuffles alleles, it never invents one. Drift is the other way out.
  */
 function barnMissRate(state, barnSize, trials, seedBase) {
-  let anyMissing = 0, totalTraitsMissing = 0;
+  let anyMissing = 0, totalTraitsMissing = 0, anyStranded = 0;
   for (let k = 0; k < trials; k++) {
     const barn = mintPopulation(state, barnSize, deriveSeed(seedBase, `barn_${k}`));
-    let missing = 0;
+    let missing = 0, stranded = 0;
     for (const t of CONF_TRAITS) {
       const target = nearestRung(BREEDS[state.breed].ideal[t][0]);
       const copies = barn.reduce((a, h) => a + h.genotype.type[t].filter((x) => x === target).length, 0);
       if (copies === 0) missing++;
+      // STRANDED, added 2026-08-07 for the step-4 ladder. "No exact allele" is the wrong dead end
+      // once mare prenatal care exists (§2.7): care moves an allele ONE RUNG toward the standard,
+      // so a barn holding a one-rung-off allele can manufacture the exact one in a single covering.
+      // A barn is only genuinely stuck on a trait when it holds nothing within one rung — which is
+      // the number that should be read at step 4, where a rung is 4 points rather than 8.
+      const near = barn.reduce((a, h) => a + h.genotype.type[t].filter((x) => Math.abs(x - target) <= 1).length, 0);
+      if (near === 0) stranded++;
     }
     if (missing > 0) anyMissing++;
+    if (stranded > 0) anyStranded++;
     totalTraitsMissing += missing;
   }
-  return { any: anyMissing / trials, perBarn: totalTraitsMissing / trials };
+  return { any: anyMissing / trials, perBarn: totalTraitsMissing / trials, stranded: anyStranded / trials };
 }
 
 function cmdSweep(flags) {
@@ -1350,6 +1367,7 @@ function cmdSweep(flags) {
   console.log('                         |                                  |                       carries-      but-looks-');
   console.log('                         |                                  |                       nothing       wrong');
   console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  -----------  -----------   ----------');
+  const wordRows = [];
   for (const breed of breeds) {
     for (const band of bands) {
       const state = { engine, breed, band, seed, horses: [] };
@@ -1357,7 +1375,8 @@ function cmdSweep(flags) {
       const miss = engine === 'proposed'
         ? barnMissRate(state, barn, 400, deriveSeed(seed, `miss_${breed}_${band}`))
         : { any: NaN, perBarn: NaN };
-      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 11)}   ${padL((s.hidden * 100).toFixed(1) + '%', 10)}  [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}%` : 'n/a'}]`);
+      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 11)}   ${padL((s.hidden * 100).toFixed(1) + '%', 10)}  [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}% exact, ${(miss.stranded * 100).toFixed(0)}% stranded` : 'n/a'}]`);
+      wordRows.push([`${pad(BREEDS[breed].name, 17)} ${pad(band, 4)}`, s]);
     }
   }
   console.log('');
@@ -1369,6 +1388,19 @@ function cmdSweep(flags) {
   console.log('  wrong-breed share of horses with at least one trait more than 25 points off (§1.1)');
   console.log('  looks-right share of Outstanding-reading traits whose horse carries NO correct allele —');
   console.log('              the false signal a child selecting on looks cannot see through');
+  console.log('');
+  console.log('  THE WORD CENSUS — the five words a founding horse actually shows, averaged per horse.');
+  console.log('  This is the band restated in the vocabulary a child reads, and the check on a band rule');
+  console.log('  written as "always gets a Weak trait".');
+  console.log('');
+  console.log('  breed             band | Outstndg  Good  Accept   Weak   Poor | has a Weak+  worst seen');
+  console.log('  ----------------- ---- | --------  ----  ------  -----  ----- | -----------  ----------');
+  for (const [key, s] of wordRows) {
+    console.log(`  ${pad(key, 22)} | ${padL(s.words.Outstanding.toFixed(2), 8)}  ${padL(s.words.Good.toFixed(2), 4)}  ${padL(s.words.Acceptable.toFixed(2), 6)}  ${padL(s.words.Weak.toFixed(2), 5)}  ${padL(s.words.Poor.toFixed(2), 5)} | ${padL((s.withWeak * 100).toFixed(0) + '%', 11)}  ${padL(s.maxDist.toFixed(0) + ' pts off', 10)}`);
+  }
+  console.log('');
+  console.log('  stranded    share of starting barns holding nothing within ONE RUNG of the standard for');
+  console.log('              some trait - the real dead end once prenatal care can walk an allele in.');
   console.log('  missing     share of starting barns with NO copy of the right allele for some trait,');
   console.log('              i.e. a trait that child can never breed correct without buying in.');
 }
