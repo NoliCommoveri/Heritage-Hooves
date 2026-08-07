@@ -1098,3 +1098,57 @@ area, not a dependency install and every test in the repository. The operator do
 terminal and cannot see why a session went quiet for several minutes; spending that on a document is
 a real cost with nothing bought. **The tell is `npm ci`: if a check will not run without installing
 dependencies first, the check is too big for the change.**
+
+---
+**2026-08-07 (later) — Slice 0028 catch-up: the ratchet gets written down, and two build-order gaps
+close.** The session that landed slice 0028's core (`1b76e2c`, merged via PR #118) built real,
+tested, working code — 938 tests, clean typecheck, migrations apply cleanly — but skipped the two
+things CLAUDE.md §9 asks every session to do at the end: it never touched
+`docs/slices/0028-conformation-genetics.md` or this log, and it left three of §9's open questions
+"decided pragmatically" without flagging them for confirmation until asked. This entry is that
+catch-up, done at the operator's direction after confirming the one substantive deviation (the
+ratchet) was a direct instruction, not an improvisation.
+
+- **`docs/slices/0028-conformation-genetics.md` §2.7 is rewritten.** The document specified prenatal
+  care as "move the foal's worst trait two rungs, paid only." What shipped is different: every bred
+  foal gets a free baseline ratchet (its single worst gene moves one rung, unconditionally); prenatal
+  care replaces that with three different genes moving one rung each. The old paid-only wording is
+  gone rather than kept as a superseded alternative, per the document's own header rule. **This means
+  `docs/analysis/breeding-lab.mjs` no longer models what shipped** — its `--coax`/`--coax-chance`
+  flags still simulate the deleted mechanic, so every generation-count table in §2.7 and §3.4/§3.5 is
+  now flagged in the document as illustrative rather than calibrated. Re-running the bench against the
+  ratchet, and re-deriving what `prenatal_care_cost` should be under it, is real work still owed —
+  **not done here**, out of scope for a documentation catch-up.
+- **§9's open questions 1, 2 and 4 are resolved and now say so in the document**, read off the shipped
+  code rather than asserted: the consignment dealer mints at `mid` (a real config key, migration
+  `0181`); the conformation test's single-locus purchase costs the same as the five-locus panel, so
+  the panel is always the rational choice even though both options exist on the page (flagged as
+  worth a sanity check — is the same-priced single-locus option worth keeping?); `ability_noise_sd`
+  is split from `conformation_noise_sd` (migration `0179`), so tightening conformation noise did not
+  silently tighten every discipline class. Questions 3 (are a horse's own type genes free once shown)
+  and 5 (confirm the second reset) are still genuinely open — nothing was built for either.
+- **A real, live bug in the admin create-horse form, found while closing out the "not done" list's
+  admin-UI item.** `locusFieldset` (`src/render/horses.ts`) used to destructure `[a1, a2] =
+  locus.alleles` and offer only those two as `<option>`s — correct for every two-allele locus, but
+  for the five new 25-allele type-gene loci this offered only rungs 0 and 1 ("2" and "6") and never
+  the wildType "50" the field's own `selected` fallback assumed. An admin who left a conformation
+  locus untouched while hand-creating a horse got the *worst* possible rung on both copies, not the
+  intended neutral middle slice 0005 §6.6 promises every hand-created horse. Fixed by looping over the
+  locus's full allele list instead of destructuring the first two, which handles both allele-count
+  shapes with one code path. The five loci also gained their own group in the form (`type_gene` →
+  "Conformation type") instead of silently falling into "Patterns" through the unknown-category
+  fallback.
+- **`inferFromPhenotype` (§5 step 11) is now marked done as written**, not "not done." The slice's own
+  instruction was "one sentence, not a table" — the sentence already exists on the test page
+  (`src/render/horses.ts`'s conformation panel). Extending the colour-only possibility-set machinery
+  with a sixth, mechanically different branch for a question nothing currently consumes would be the
+  premature abstraction CLAUDE.md warns against; not built, on purpose, and the document now says why.
+- Verified: `npm ci` (no `node_modules` existed in this session), `npx tsc --noEmit` clean, and the
+  conformation/genetics/founding/health test files (286 tests across 21 files, not the full suite —
+  the change was two render-layer edits plus documentation, `npx vitest run test/conformation/
+  test/genetics/ test/founding/ test/health/pools.test.ts`) green. **Not** verified in a browser.
+- **World reset still not run.** No living horse carries a type-locus genotype; this slice does not
+  reach a real family horse until the operator confirms the reset (§8, §9 point 5) and it is run — not
+  done here, consistent with the previous session's own choice not to run it unasked.
+- This CLAUDE.md §10 row is updated in the same pass to stop reading "specified, not built" — the core
+  is built; what remains is the reset and the two still-open §9 questions.

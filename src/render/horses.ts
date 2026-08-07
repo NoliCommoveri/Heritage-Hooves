@@ -2367,18 +2367,25 @@ export function renderAdminHorseNewPage(params: {
 
   const locusFieldset = (locus: (typeof LOCI)[number]): SafeHtml => {
     const locusRow = params.loci.find((l) => l.code === locus.code);
-    const [a1, a2] = locus.alleles;
     const selected1 = f[`locus_${locus.code}_1`] ?? locus.wildType;
     const selected2 = f[`locus_${locus.code}_2`] ?? locus.wildType;
     const alleleOption = (value: string, selected: string) => html`<option value="${value}" ${value === selected ? raw('selected') : raw('')}>${value}</option>`;
+    // Slice 0028 §5 build order's last item: this used to destructure just [a1, a2] and offer those
+    // two as the only options, which was correct for every locus with exactly two alleles but silently
+    // broke the five 25-allele type-gene loci (NL/SA/BL/HS/HP) - their real wildType ("50", the middle
+    // rung) was never one of the two offered options, so an admin who left the field untouched got
+    // rung 0 ("2", the worst possible value) on both copies instead of the intended neutral middle.
+    // Looping over locus.alleles in full fixes both loci shapes with one code path: two options for
+    // everything that has always had two, twenty-five for these five, and the wildType default is
+    // always genuinely selectable.
     return html`
       <fieldset>
         <legend>${locusRow ? locusRow.name : locus.code} (${locus.code})</legend>
         <label>Allele 1
-          <select name="locus_${locus.code}_1">${alleleOption(a1, selected1)}${alleleOption(a2, selected1)}</select>
+          <select name="locus_${locus.code}_1">${locus.alleles.map((a) => alleleOption(a, selected1))}</select>
         </label>
         <label>Allele 2
-          <select name="locus_${locus.code}_2">${alleleOption(a1, selected2)}${alleleOption(a2, selected2)}</select>
+          <select name="locus_${locus.code}_2">${locus.alleles.map((a) => alleleOption(a, selected2))}</select>
         </label>
         ${locusRow ? html`<p class="muted">${locusRow.teaching_text}</p>` : raw('')}
       </fieldset>
@@ -2389,8 +2396,18 @@ export function renderAdminHorseNewPage(params: {
   // <details> by category, the same treatment slice 0021 Part F gave the test page's own colour
   // panel when nine rows became nineteen. Groups read off the loci table's own category column
   // rather than a second hardcoded map, since it is already loaded here.
-  const ADMIN_LOCUS_GROUP_LABEL: Record<string, string> = { base: 'Base', dilution: 'Dilutions', pattern: 'Patterns', modifier: 'Patterns', gait: 'Gait', disease: 'Disease' };
-  const ADMIN_LOCUS_GROUP_ORDER = ['base', 'dilution', 'pattern', 'gait', 'disease'] as const;
+  const ADMIN_LOCUS_GROUP_LABEL: Record<string, string> = {
+    base: 'Base',
+    dilution: 'Dilutions',
+    pattern: 'Patterns',
+    modifier: 'Patterns',
+    gait: 'Gait',
+    disease: 'Disease',
+    type_gene: 'Conformation type',
+  };
+  // Slice 0028 §2.1 added the 'type_gene' category - without its own entry here groupKeyFor's
+  // "unknown category" fallback silently filed NL/SA/BL/HS/HP under Patterns.
+  const ADMIN_LOCUS_GROUP_ORDER = ['base', 'dilution', 'pattern', 'gait', 'type_gene', 'disease'] as const;
   const groupKeyFor = (code: string): (typeof ADMIN_LOCUS_GROUP_ORDER)[number] => {
     const category = params.loci.find((l) => l.code === code)?.category ?? 'pattern';
     if (category === 'modifier') return 'pattern';
