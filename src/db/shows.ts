@@ -21,7 +21,7 @@ import { parseGenotype } from '../engines/genetics/genotype';
 import { expressPhenotype } from '../engines/genetics/expression';
 import type { TraitCode } from '../engines/genetics/polygenic';
 import { getHorse, horseDisplayName, type HorseRow } from './horses';
-import { getBreedsInPlay, getBreeds } from './breeds';
+import { getBreedsInPlay, getBreeds, type BreedRow } from './breeds';
 import { getJudges, getJudgeById } from './judges';
 import { getEnabledDisciplines } from './disciplines';
 import { getAbilityTraits } from './quantitativeTraits';
@@ -725,11 +725,28 @@ export function classUsesAbilityScoring(classType: ShowClassRow['class_type']): 
   return classType === 'discipline' || classType === 'ability_test';
 }
 
-function expressedTraitsForClass(horse: HorseRow, classType: ShowClassRow['class_type'], gameDay: number, config: RealizationConfig, gameDaysPerYear: number): Partial<Record<TraitCode, number>> {
+/** Slice 0028 §2.3: a conformation read needs the horse's OWN breed's live ideal_vector -
+ * `breedById` is resolved once by the caller (a class-judging batch or a single entry), never
+ * fetched per horse here. */
+function expressedTraitsForClass(
+  horse: HorseRow,
+  classType: ShowClassRow['class_type'],
+  gameDay: number,
+  config: RealizationConfig,
+  gameDaysPerYear: number,
+  breedById: Map<number, BreedRow>
+): Partial<Record<TraitCode, number>> {
   const genotype = parseGenotype(horse.genotype);
   const ageYears = (gameDay - horse.born_game_day) / gameDaysPerYear;
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
-  const values = classUsesAbilityScoring(classType) ? abilityValues(genotype, noise, ageYears, horse.coi, config) : conformationValues(genotype, noise, ageYears, horse.coi, config);
+  let values;
+  if (classUsesAbilityScoring(classType)) {
+    values = abilityValues(genotype, noise, ageYears, horse.coi, config);
+  } else {
+    const breed = horse.breed_id !== null ? breedById.get(horse.breed_id) : undefined;
+    const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+    values = conformationValues(genotype, noise, config, ideal);
+  }
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
   return expressed;
@@ -737,8 +754,15 @@ function expressedTraitsForClass(horse: HorseRow, classType: ShowClassRow['class
 
 /** trait_snapshot, written at entry time (migration 0065 renamed the column - the blob shape was
  * always trait-agnostic, §6.5). */
-function traitSnapshot(horse: HorseRow, classType: ShowClassRow['class_type'], gameDay: number, config: RealizationConfig, gameDaysPerYear: number): string {
-  const traits = expressedTraitsForClass(horse, classType, gameDay, config, gameDaysPerYear);
+function traitSnapshot(
+  horse: HorseRow,
+  classType: ShowClassRow['class_type'],
+  gameDay: number,
+  config: RealizationConfig,
+  gameDaysPerYear: number,
+  breedById: Map<number, BreedRow>
+): string {
+  const traits = expressedTraitsForClass(horse, classType, gameDay, config, gameDaysPerYear, breedById);
   const ageYears = (gameDay - horse.born_game_day) / gameDaysPerYear;
   return JSON.stringify({ v: 1, traits, age_years: Math.round(ageYears * 100) / 100, coi: horse.coi });
 }
@@ -826,7 +850,10 @@ export async function enterHorseInClass(
   const eligibility = await checkHorseEligibilityForClass(env, cls, horse, params.gameDay, params.gameDaysPerYear, params.config);
   if (!eligibility.ok) return eligibility;
 
-  const snapshot = traitSnapshot(horse, cls.class_type, params.gameDay, params.conformationConfig, params.gameDaysPerYear);
+  // Slice 0028 §2.3: one horse entering one class - a single cached getBreeds() read is cheap
+  // enough here, unlike judgeOneClass's whole-field batch below.
+  const breedById = new Map((await getBreeds(env)).map((b) => [b.id, b]));
+  const snapshot = traitSnapshot(horse, cls.class_type, params.gameDay, params.conformationConfig, params.gameDaysPerYear, breedById);
 
   try {
     await env.DB.prepare(
@@ -1758,15 +1785,19 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   const judgeAbilityWeights = judge?.ability_weights ? parseAbilityWeights(judge.ability_weights) : {};
   const judgeCode = judge?.code ?? 'unknown';
 
-  // Migration 0143: one parse per BREED for the whole class, not one per horse - getBreeds is a
-  // cached eight-row read and every horse in a discipline class is looked up against it. Built only
-  // for a real discipline class; a breed_conformation/young_conformation class admits one breed and
+  // Slice 0028 §2.3: one cached getBreeds() read for the whole class-judging batch, feeding both
+  // expressedTraitsForClass below (every class type) and the discipline-only aptitude map already
+  // built here (migration 0143).
+  const allBreeds = await getBreeds(env);
+  const breedById = new Map(allBreeds.map((b) => [b.id, b]));
+  // Migration 0143: one parse per BREED for the whole class, not one per horse. Built only for a
+  // real discipline class; a breed_conformation/young_conformation class admits one breed and
   // judges it against its own ideal_vector, so an aptitude there would multiply every entry by the
   // same number (see ScoreAbilityEntryParams.aptitudeModifier's own comment), and an ability_test has
   // no discipline_code for an aptitude to mean anything against.
   const aptitudeByBreedId = new Map<number, ReturnType<typeof parseDisciplineAptitudes>>();
   if (isRealDiscipline) {
-    for (const breed of await getBreeds(env)) {
+    for (const breed of allBreeds) {
       aptitudeByBreedId.set(breed.id, parseDisciplineAptitudes(breed.discipline_aptitudes));
     }
   }
@@ -1789,7 +1820,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
   for (const horseId of allHorseIds) {
     const horse = horseById.get(horseId);
     if (!horse) continue;
-    const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
+    const expressed = expressedTraitsForClass(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear, breedById);
     const rawNoise = noiseForEntry(cls.rng_seed, horse.id, cls.noise_sd);
     const isGelding = horse.sex === 'gelding';
     const noise = geldingAdjustedNoise(rawNoise, isGelding, config.values.show_gelding_noise_relief);
@@ -1938,7 +1969,7 @@ async function judgeOneClass(env: Env, cls: ShowClassRow, gameDay: number, confi
     const s = scored.find((x) => x.horseId === horse.id);
     if (!s) continue;
     const placing = placingByHorseId.get(horse.id)!;
-    const snapshot = traitSnapshot(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear);
+    const snapshot = traitSnapshot(horse, cls.class_type, gameDay, conformationConfig, gameDaysPerYear, breedById);
     const entryId = nextEntryId++;
     entryIdByHorseId.set(horse.id, entryId);
     stableIdByHorseId.set(horse.id, horse.owner_stable_id);

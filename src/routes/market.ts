@@ -666,7 +666,7 @@ async function buildStudListingView(ctx: RequestContext, listing: OpenStudListin
     disclosedConditionsFor(ctx, listing.stable_id, stallion.id),
     // 2026-08-05: free and public on a stud listing, gated on his own show record - see
     // src/db/conformationLabels.ts.
-    conformationLabelRowsFor(ctx.env, stallion, ctx.world.game_day, cfg),
+    conformationLabelRowsFor(ctx.env, stallion, cfg),
     getShowSummary(ctx.env, stallion.id),
     listRecentResultsForHorse(ctx.env, stallion.id, SHOW_RESULT_FETCH_LIMIT),
     horseClassRanksMap(ctx.env, stallion.id),

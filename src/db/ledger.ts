@@ -50,7 +50,10 @@ export type LedgerKind =
   | 'time_warp'
   // Gelding a stallion (slice 0026 §1.2, migration 0171). Its own kind for the same reason every
   // entry above has one - the ledger is a thing a child reads.
-  | 'gelding';
+  | 'gelding'
+  // Mare prenatal care (slice 0028 §2.7, migration 0185) - charged on the covering the moment it's
+  // committed, one row per covering that bought it, player or NPC alike.
+  | 'prenatal_care';
 
 export interface LedgerEntry {
   stableId: number;

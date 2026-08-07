@@ -46,7 +46,7 @@ const POOL = flatPool();
 function generate(seed: number, bias: Record<string, number> | null) {
   return generateCandidate({
     pool: POOL,
-    polygenicOneChance: 0.5,
+    abilityOneChance: 0.5,
     robustnessOneChance: 0.5,
     ageMinGameDays: 1000,
     ageMaxGameDays: 2000,
@@ -184,7 +184,7 @@ describe('generateCandidate with an ability bias', () => {
     for (let seed = 1; seed <= 60; seed++) {
       const withBias = generateCandidate({
         pool: POOL,
-        polygenicOneChance: 0.5,
+        abilityOneChance: 0.5,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 2000,
@@ -195,7 +195,7 @@ describe('generateCandidate with an ability bias', () => {
       });
       const withoutBias = generateCandidate({
         pool: POOL,
-        polygenicOneChance: 0.5,
+        abilityOneChance: 0.5,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 2000,

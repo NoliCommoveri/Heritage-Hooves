@@ -4,7 +4,7 @@ import type { WorldRow } from '../db/world';
 import type { AccountRow } from '../db/accounts';
 import type { StableRow } from '../db/stables';
 import type { BreedRow } from '../db/breeds';
-import type { Config } from '../lib/config-cache';
+import type { Config, ConfigValues } from '../lib/config-cache';
 import type { TickRunRow } from '../db/tickRuns';
 import type { ImportOfferRow } from '../db/founding';
 import type { TableCount } from '../db/reset';
@@ -924,16 +924,19 @@ export function renderBreedingAdminPage(params: { world: WorldRow; config: Confi
 export function renderFoundingAdminPage(params: {
   world: WorldRow;
   stables: StableRow[];
-  qualityBands: Record<string, number>;
+  qualityBands: ConfigValues['quality_bands'];
   defaultBand: string;
   recentOffers: (ImportOfferRow & { stableName: string })[];
   error?: string;
   notice?: string;
 }): SafeHtml {
   const stableOptions = html`${params.stables.map((s) => html`<option value="${String(s.id)}">${s.name}</option>`)}`;
+  // Slice 0028 §2.5: a band is now a fixed word-profile deal (typeGene.ts's PAIR_SPECS), not one
+  // number - ability_one_chance is what's left of the old single percentage, and is now scoped to
+  // ability traits only.
   const bandOptions = html`${Object.keys(params.qualityBands).map(
     (band) =>
-      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
+      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band].ability_one_chance * 100).toFixed(0)}% ability chance per allele)</option>`
   )}`;
 
   const offerRows = params.recentOffers.map(
@@ -1674,7 +1677,7 @@ export function renderNpcAdminPage(params: {
   ceilingSchedule: NpcCeilingScheduleRow[];
   breeds: BreedRow[];
   disciplines: DisciplineRow[];
-  qualityBands: Record<string, number>;
+  qualityBands: ConfigValues['quality_bands'];
   defaultBand: string;
   error?: string;
   notice?: string;
@@ -1726,7 +1729,7 @@ export function renderNpcAdminPage(params: {
   const npcStableOptions = html`${params.stables.map((s) => html`<option value="${String(s.stableId)}">${s.stableName}</option>`)}`;
   const bandOptions = html`${Object.keys(params.qualityBands).map(
     (band) =>
-      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band] * 100).toFixed(0)}% chance per allele)</option>`
+      html`<option value="${band}" ${band === params.defaultBand ? raw('selected') : raw('')}>${band} (${(params.qualityBands[band].ability_one_chance * 100).toFixed(0)}% ability chance per allele)</option>`
   )}`;
 
   const body = html`

@@ -633,6 +633,9 @@ export interface BreedPreview {
    * prediction built from values the player has not earned would be cheating, not helpfulness), and
    * "No single standard" for a cross-breed pairing, whose foal has no one breed to be judged by. */
   conformationRows: { name: string; mareLabel: string; stallionLabel: string; foalRange: string }[];
+  /** Slice 0028 §2.7: what mare prenatal care costs on a same-stable booking, shown next to the
+   * checkbox on the book form - see bookBlock below. Not offered on a cross-stable stud booking. */
+  prenatalCareCost: number;
   /**
    * Set only when the stallion is standing at another ranch, in which case the booking is a stud
    * booking (slice 0017 Part D) rather than an ordinary same-stable covering - a fee, a commission,
@@ -785,6 +788,7 @@ export function renderBreedPage(params: {
           <input type="hidden" name="action" value="book">
           <input type="hidden" name="mare_id" value="${String(p.mareId)}">
           <input type="hidden" name="stallion_id" value="${String(p.stallionId)}">
+          <label><input type="checkbox" name="prenatal_care" value="yes"> Pay for mare prenatal care (${String(p.prenatalCareCost)}, plus a turn) - moves the foal's weakest conformation toward this breed's standard.</label>
           <button type="submit">Book covering</button>
         </form>`;
     }
@@ -1857,6 +1861,14 @@ export function renderTestPage(params: {
   colourRows: ColourLocusOption[];
   untestedColourCount: number;
   colourPanelPrice: number;
+  /** Slice 0028 §5 step 10: the conformation type-gene panel - a third section, same page, same
+   * `locus:`-prefixed knowledge mechanism as colour, reusing ColourLocusOption's shape (it already
+   * fits: a stored pair, no severity to band). Priced as one panel for all five loci at once (§9
+   * open question 2, decided in favour of a single low price - see §3.4/§3.5's "the market pays +2
+   * generations if a child tests"). */
+  conformationRows: ColourLocusOption[];
+  untestedConformationCount: number;
+  conformationPanelPrice: number;
   error?: string;
 }): SafeHtml {
   const h = params.horse;
@@ -1936,6 +1948,39 @@ export function renderTestPage(params: {
   const colourNothingLeft =
     params.untestedColourCount === 0 ? html`<p>Nothing is left to test - ${displayNameFor(h)} has a known result for every colour/gait locus.</p>` : raw('');
 
+  // Slice 0028 §2.3/§5 step 10/11: a third panel, same page, same mechanism. Only five rows, so no
+  // <details> grouping the way the nineteen colour/gait rows need (slice 0021 Part F) - flat, like
+  // Health above. §5 step 11: looking already tells a viewer the worse (shown) allele exactly; the
+  // test buys the hidden better one - the "known" pair, once bought, shows both.
+  const conformationRows = params.conformationRows.map((row) => html`
+    <div class="health-row">
+      <p><strong>${row.name}:</strong> ${row.known !== null ? html`<span>${row.known}</span>` : html`<span class="muted">${String(row.price)} to test</span>`} ${row.testedGameDay !== null ? html`<span class="muted">(tested ${formatCalendarDate(row.testedGameDay, params.gameDaysPerYear)})</span>` : raw('')}</p>
+      <p class="muted">${row.teachingText}</p>
+      ${row.price !== null
+        ? html`
+          <form method="post" action="/horses/${String(h.id)}/test">
+            <input type="hidden" name="locus_code" value="${row.code}">
+            <button type="submit">Test for ${row.name} (${String(row.price)})</button>
+          </form>`
+        : raw('')}
+    </div>`);
+
+  const conformationPanelBlock =
+    params.untestedConformationCount > 1
+      ? html`
+        <div class="card">
+          <form method="post" action="/horses/${String(h.id)}/test">
+            <input type="hidden" name="action" value="conformation_panel">
+            <button type="submit">Test the whole conformation panel, all ${String(params.untestedConformationCount)} (${String(params.conformationPanelPrice)})</button>
+          </form>
+        </div>`
+      : raw('');
+
+  const conformationNothingLeft =
+    params.untestedConformationCount === 0
+      ? html`<p>Nothing is left to test - ${displayNameFor(h)} has a known result for every conformation trait's hidden allele.</p>`
+      : raw('');
+
   const body = html`
     <h1>Test ${displayNameFor(h)}</h1>
     ${errorBox(params.error)}
@@ -1952,6 +1997,11 @@ export function renderTestPage(params: {
     ${colourPanelBlock}
     ${colourNothingLeft}
     ${colourGroups}
+    <h2>Conformation</h2>
+    <p class="muted">Looking at ${displayNameFor(h)} already tells you the worse of each pair - the trait words on this horse's own card are free. A test buys the hidden BETTER allele, the one a breeding decision actually needs.</p>
+    ${conformationPanelBlock}
+    ${conformationNothingLeft}
+    ${conformationRows}
     <p><a href="/horses/${String(h.id)}">Back to ${displayNameFor(h)}</a></p>
   `;
   return pageShell({

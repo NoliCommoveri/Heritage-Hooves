@@ -12,15 +12,15 @@
 import type { Env } from '../types';
 import type { Config } from '../lib/config-cache';
 import { nowUtcSeconds } from '../lib/time';
-import { deriveSeed } from '../lib/rng';
+import { deriveSeed, makeRng } from '../lib/rng';
 import { canTakeOnCost } from '../lib/money';
 import { getStableById } from './stables';
 import { getBreeds, type BreedRow } from './breeds';
 import { getDisciplines, type DisciplineRow } from './disciplines';
 import { listStableHorses, countAliveHorses, loadPedigreeContextForMany, type HorseRow } from './horses';
 import { getActivePregnancyForMare } from './pregnancies';
-import { getBookedCoveringForMare, bookCovering } from './coverings';
-import { getSeasonTradeSummary } from './ledger';
+import { getBookedCoveringForMare, buildBookCoveringStatement } from './coverings';
+import { getSeasonTradeSummary, buildLedgerStatements } from './ledger';
 import { isInBreedingSeason } from '../engines/breeding/season';
 import { availabilityForHorse } from './care';
 import { parseGenotype } from '../engines/genetics/genotype';
@@ -292,13 +292,41 @@ export function resolveSelectionTarget(policy: NpcPolicyRow, config: Config, bre
   return { kind: 'ability', weights: parseAbilityWeights(discipline.ability_weights) };
 }
 
+/** Slice 0028 §2.8: is this NPC horse treated as conformation-panel-tested? Derived deterministically
+ * from the horse's own rng_seed against its owner stable's id, never drawn per decision (per config's
+ * npc_tested_share comment) - so a stable's opinion of one of its own horses never flickers between
+ * two ticks just because the tick fired again. */
+function npcHorseIsTested(horse: HorseRow, testedShare: number): boolean {
+  if (testedShare <= 0) return false;
+  if (testedShare >= 1) return true;
+  const roll = makeRng(deriveSeed(horse.rng_seed, `npc_tested_${String(horse.owner_stable_id)}`)).next();
+  return roll < testedShare;
+}
+
 /** Exported for src/db/npcMarket.ts - the same expressed-trait computation, so a policy's market
- * ranking of its own stock is read off the identical values its breeding selection already uses. */
-export function expressedFor(horse: HorseRow, kind: 'conformation' | 'ability', gameDay: number, config: Config): Partial<Record<TraitCode, number>> {
+ * ranking of its own stock is read off the identical values its breeding selection already uses.
+ * `breedById` supplies the horse's own breed's live ideal_vector for a conformation read (slice 0028
+ * §2.3) - resolved once by the caller (every call site already has one cached nearby), never fetched
+ * per horse here. */
+export function expressedFor(
+  horse: HorseRow,
+  kind: 'conformation' | 'ability',
+  gameDay: number,
+  config: Config,
+  breedById: Map<number, BreedRow>
+): Partial<Record<TraitCode, number>> {
   const genotype = parseGenotype(horse.genotype);
   const ageYears = (gameDay - horse.born_game_day) / config.values.game_days_per_year;
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
-  const values = kind === 'conformation' ? conformationValues(genotype, noise, ageYears, horse.coi, config.values) : abilityValues(genotype, noise, ageYears, horse.coi, config.values);
+  let values;
+  if (kind === 'conformation') {
+    const breed = horse.breed_id !== null ? breedById.get(horse.breed_id) : undefined;
+    const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+    const tested = npcHorseIsTested(horse, config.values.npc_tested_share);
+    values = conformationValues(genotype, noise, config.values, ideal, tested);
+  } else {
+    values = abilityValues(genotype, noise, ageYears, horse.coi, config.values);
+  }
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
   return expressed;
@@ -368,8 +396,8 @@ async function runOnePolicy(
             }
           }
 
-          const mareCandidates: BreedingCandidate[] = mares.map((h) => ({ horseId: h.id, expressed: expressedFor(h, target.kind, gameDay, config) }));
-          const stallionCandidates: BreedingCandidate[] = stallions.map((h) => ({ horseId: h.id, expressed: expressedFor(h, target.kind, gameDay, config) }));
+          const mareCandidates: BreedingCandidate[] = mares.map((h) => ({ horseId: h.id, expressed: expressedFor(h, target.kind, gameDay, config, breedById) }));
+          const stallionCandidates: BreedingCandidate[] = stallions.map((h) => ({ horseId: h.id, expressed: expressedFor(h, target.kind, gameDay, config, breedById) }));
 
           // §8: the seed derives from the stable's own id and the cycle's game day - two ticks with
           // the same stable, same stock, same game_day produce the identical ranking.
@@ -387,9 +415,36 @@ async function runOnePolicy(
             seed,
           });
 
+          // Slice 0028 §2.8: without this NPC lines plateau exactly the way a blind player does.
+          // Charged to the stable's own real balance like any other cost - deliberately not
+          // special-cased, so a stable that stops earning stops buying it. Rolled once per pair,
+          // deterministically off the stable's own breeding-cycle seed (never Math.random(),
+          // CLAUDE.md §5.2), and a runningBalance tracks spend across this cycle's pairs so a
+          // stable never buys more care in one cycle than it can actually afford.
+          const careRng = makeRng(deriveSeed(seed, 'prenatal_care'));
+          let runningBalance = stable.balance;
+          const statements: D1PreparedStatement[] = [];
           for (const pair of result.pairs) {
-            await bookCovering(env, { stableId: policy.stable_id, mareId: pair.mareId, stallionId: pair.stallionId, gameDay, tickSeq });
+            const prenatalCare = careRng.next() < cfg.npc_prenatal_care_chance && runningBalance >= cfg.prenatal_care_cost;
+            if (prenatalCare) runningBalance -= cfg.prenatal_care_cost;
+            statements.push(
+              buildBookCoveringStatement(env, { stableId: policy.stable_id, mareId: pair.mareId, stallionId: pair.stallionId, gameDay, tickSeq, prenatalCare }),
+              ...(prenatalCare
+                ? buildLedgerStatements(env, [
+                    {
+                      stableId: policy.stable_id,
+                      amount: -cfg.prenatal_care_cost,
+                      kind: 'prenatal_care',
+                      referenceType: 'horse',
+                      referenceId: pair.mareId,
+                      description: 'Prenatal care for a covering',
+                      gameDay,
+                    },
+                  ])
+                : [])
+            );
           }
+          if (statements.length > 0) await env.DB.batch(statements);
         }
       }
     }

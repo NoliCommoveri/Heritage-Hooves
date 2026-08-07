@@ -39,8 +39,8 @@ import { openListingsBySellerStable, createListing, appraiseHorseForStable } fro
  * "how good is this horse against my own target" question a listing decision asks, asked again
  * from the buying side - reused rather than re-derived, the same rule this file's own header
  * comment already applies to appraiseHorseForStable and createListing. */
-export function qualityFor(horse: HorseRow, target: SelectionTarget, gameDay: number, config: Config): number {
-  const expressed = expressedFor(horse, target.kind, gameDay, config);
+export function qualityFor(horse: HorseRow, target: SelectionTarget, gameDay: number, config: Config, breedById: Map<number, BreedRow>): number {
+  const expressed = expressedFor(horse, target.kind, gameDay, config, breedById);
   if (target.kind === 'conformation') {
     return scoreEntry({ expressed, ideal: target.ideal ?? {}, judgeWeights: target.judgeWeights ?? {}, falloff: target.falloff ?? 0, noise: 0 }).rawScore;
   }
@@ -134,7 +134,7 @@ async function runOneMarketPolicy(
   if (candidates.length === 0) return;
 
   const ranked = candidates
-    .map((horse) => ({ horse, quality: qualityFor(horse, target, gameDay, config) }))
+    .map((horse) => ({ horse, quality: qualityFor(horse, target, gameDay, config, breedById) }))
     .sort((a, b) => a.quality - b.quality)
     .slice(0, toList);
 

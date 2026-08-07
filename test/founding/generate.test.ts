@@ -3,8 +3,9 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { parseAllelePool } from '../../src/engines/founding/pool';
 import { generateCandidate } from '../../src/engines/founding/generate';
 import { TRAITS, type TraitCode } from '../../src/engines/genetics/polygenic';
-import { ROBUSTNESS_TRAITS, CONFORMATION_TRAITS } from '../../src/engines/conformation/traits';
+import { ROBUSTNESS_TRAITS, CONFORMATION_TRAITS, ABILITY_TRAITS } from '../../src/engines/conformation/traits';
 import { parseIdealVector, type IdealVector } from '../../src/engines/showing/score';
+import { TYPE_LOCUS_CODE, nearestRung, rungValue } from '../../src/engines/conformation/typeGene';
 
 /**
  * Pulls one breed's founding_allele_pool JSON straight out of migration SQL, so these tests
@@ -61,7 +62,7 @@ const BARRELS_ELIGIBLE_ABILITY_TRAITS: TraitCode[] = (['stamina', 'jump_scope', 
   (t) => (BARRELS_ABILITY_WEIGHTS[t] ?? 0) > 0
 );
 
-/** Slice 0014 §6.3's golden bit strings for seed 777777, QH_POOL, polygenicOneChance 0.5,
+/** Slice 0014 §6.3's golden bit strings for seed 777777, QH_POOL, abilityOneChance 0.5,
  * robustnessOneChance 0.5 - captured once, unrecoverable after the fact (see the describe block
  * below that first asserted them). Shared with slice 0019's own regression tests, which need the
  * same fixed point to prove a specialist overwrite disturbs no other trait's draw. */
@@ -86,7 +87,7 @@ describe('generateCandidate - Hardy-Weinberg', () => {
     let eeHomRecessive = 0;
     const n = 10000;
     for (let i = 0; i < n; i++) {
-      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
+      const { genotype } = generateCandidate({ pool: QH_POOL, abilityOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
       const [a1, a2] = genotype.mendelian.E;
       if (a1 === 'E' && a2 === 'E') ee++;
       else if (a1 === 'e' && a2 === 'e') eeHomRecessive++;
@@ -103,7 +104,7 @@ describe('generateCandidate - Friesian pool', () => {
     const n = 5000;
     let chestnutCount = 0;
     for (let i = 0; i < n; i++) {
-      const { genotype } = generateCandidate({ pool: FR_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
+      const { genotype } = generateCandidate({ pool: FR_POOL, abilityOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: i });
       expect(genotype.mendelian.A).toEqual(['a', 'a']); // fixed - bay is impossible
       expect(genotype.mendelian.CR).toEqual(['cr', 'cr']); // fixed - no dilution
       expect(genotype.mendelian.G).toEqual(['g', 'g']); // fixed - no grey
@@ -118,12 +119,12 @@ describe('generateCandidate - Friesian pool', () => {
 });
 
 describe('generateCandidate - quality bands', () => {
-  function meanPotential(polygenicOneChance: number, n: number, seedOffset: number): number {
+  function meanPotential(abilityOneChance: number, n: number, seedOffset: number): number {
     let total = 0;
     for (let i = 0; i < n; i++) {
       const { genotype } = generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance,
+        abilityOneChance,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,
@@ -148,7 +149,7 @@ describe('generateCandidate - quality bands', () => {
     // one should clear it - if not, the bands are separating tiers rather than shifting them.
     let sawOutlier = false;
     for (let i = 0; i < 4000; i++) {
-      const { genotype } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.42, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 5_000_000 + i });
+      const { genotype } = generateCandidate({ pool: QH_POOL, abilityOneChance: 0.42, robustnessOneChance: 0.5, ageMinGameDays: 1000, ageMaxGameDays: 1000, seed: 5_000_000 + i });
       const potential = [...genotype.polygenic.speed].filter((c) => c === '1').length;
       if (potential > 11.6) {
         sawOutlier = true;
@@ -161,14 +162,14 @@ describe('generateCandidate - quality bands', () => {
 
 describe('generateCandidate - determinism', () => {
   it('the same seed produces byte-identical candidates', () => {
-    const a = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: 424242 });
-    const b = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: 424242 });
+    const a = generateCandidate({ pool: QH_POOL, abilityOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: 424242 });
+    const b = generateCandidate({ pool: QH_POOL, abilityOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: 424242 });
     expect(a).toEqual(b);
   });
 
   it('age lands within the requested range', () => {
     for (let i = 0; i < 200; i++) {
-      const { ageGameDays } = generateCandidate({ pool: QH_POOL, polygenicOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: i });
+      const { ageGameDays } = generateCandidate({ pool: QH_POOL, abilityOneChance: 0.5, robustnessOneChance: 0.5, ageMinGameDays: 1440, ageMaxGameDays: 2880, seed: i });
       expect(ageGameDays).toBeGreaterThanOrEqual(1440);
       expect(ageGameDays).toBeLessThanOrEqual(2880);
     }
@@ -176,19 +177,25 @@ describe('generateCandidate - determinism', () => {
 });
 
 // Slice 0014 §2.8/§10 test 10: a raised quality band must not also make founding stock sounder -
-// robustness draws at the fixed robustness_one_chance regardless of what polygenicOneChance is set
-// to, so the two axes (show quality vs soundness) are genuinely independent.
-describe('generateCandidate - robustness ignores the quality band (slice 0014 §2.8)', () => {
-  it('robustness traits stay near 10/20 at a high polygenicOneChance while conformation rides the band up', () => {
+// robustness draws at the fixed robustness_one_chance regardless of what abilityOneChance is set
+// to. Slice 0028 §2.3/§2.5 changes what "quality band" drives for a CONFORMATION trait: its 20-bit
+// polygenic block is now a flat, band-independent modifier too (CONFORMATION_MODIFIER_ONE_CHANCE),
+// since conformation quality comes from the type-gene deal (qualityBand/breedIdealVector) instead -
+// so this test now asserts three axes stay properly separated: robustness fixed, conformation's
+// polygenic modifier flat, and ability (which still reads abilityOneChance) rides the band up.
+describe('generateCandidate - robustness and conformation both ignore the quality band (slice 0028 §2.3/§2.5)', () => {
+  it('robustness and conformation traits stay near 10/20 at a high abilityOneChance while ability rides the band up', () => {
     const n = 2000;
     let robustnessTotal = 0;
     let robustnessCount = 0;
     let conformationTotal = 0;
     let conformationCount = 0;
+    let abilityTotal = 0;
+    let abilityCount = 0;
     for (let i = 0; i < n; i++) {
       const { genotype } = generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance: 0.9,
+        abilityOneChance: 0.9,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,
@@ -202,25 +209,32 @@ describe('generateCandidate - robustness ignores the quality band (slice 0014 §
         conformationTotal += [...genotype.polygenic[trait]].filter((c) => c === '1').length;
         conformationCount++;
       }
+      for (const trait of ABILITY_TRAITS) {
+        abilityTotal += [...genotype.polygenic[trait]].filter((c) => c === '1').length;
+        abilityCount++;
+      }
     }
     const robustnessMean = robustnessTotal / robustnessCount;
     const conformationMean = conformationTotal / conformationCount;
+    const abilityMean = abilityTotal / abilityCount;
     expect(robustnessMean).toBeGreaterThan(9);
     expect(robustnessMean).toBeLessThan(11);
-    expect(conformationMean).toBeGreaterThan(17);
+    expect(conformationMean).toBeGreaterThan(9);
+    expect(conformationMean).toBeLessThan(11);
+    expect(abilityMean).toBeGreaterThan(17);
   });
 });
 
 // Slice 0014 §6.3/§10 test 11: TRAITS is append-only precisely so appending never perturbs an
 // earlier trait's draw sequence. These strings were captured from generateCandidate at the moment
 // foot_robustness/joint_robustness/ligament_robustness were appended (seed 777777, the QH pool,
-// polygenicOneChance 0.5) - they cannot be recovered after the fact, so this is the one test that
+// abilityOneChance 0.5) - they cannot be recovered after the fact, so this is the one test that
 // proves §6.3's reproducibility claim rather than asserting it in a comment.
 describe('generateCandidate - appending robustness traits changed no earlier draw (slice 0014 §6.3)', () => {
   it("a fixed seed's earlier trait bit strings are unchanged by the traits appended after them", () => {
     const { genotype } = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1440,
       ageMaxGameDays: 2880,
@@ -245,7 +259,7 @@ describe('generateCandidate - specialists do not move any other trait (slice 001
   it('every non-specialist trait keeps its golden bits with both Part A and Part B active', () => {
     const { genotype, specialistTraits } = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1440,
       ageMaxGameDays: 2880,
@@ -265,7 +279,7 @@ describe('generateCandidate - specialists do not move any other trait (slice 001
   it('a candidate with neither breedIdealVector nor eligibleAbilityTraits reproduces the golden bits exactly, unchanged', () => {
     const { genotype, specialistTraits } = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1440,
       ageMaxGameDays: 2880,
@@ -282,7 +296,7 @@ describe('generateCandidate - Part A conformation specialist (slice 0019 §3)', 
   it('is deterministic: same seed picks the same trait and the same bits', () => {
     const params = {
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -295,34 +309,44 @@ describe('generateCandidate - Part A conformation specialist (slice 0019 §3)', 
     expect(a.specialistTraits.conformation).not.toBeNull();
   });
 
-  it('lands the specialist trait\'s potential within 1 allele of target/5, for every trait in the ideal vector', () => {
+  it('lands the specialist trait exactly on its breed target rung, for every trait in the ideal vector (slice 0028 §2.6)', () => {
+    // §2.6: the specialist is now an UPGRADE of an already-dealt type-gene allele to the breed's
+    // exact target rung - not the old polygenic-block overwrite this test used to check.
     for (const trait of CONFORMATION_TRAITS) {
       let picked = 0;
-      for (let seed = 0; seed < 4000 && picked < 20; seed++) {
+      for (let seed = 0; seed < 20 && picked < 4; seed++) {
+        // roundRobinIndex cycles deterministically - sweep it explicitly rather than hunting for a
+        // seed that happens to land on this trait, since the trait assignment no longer depends on
+        // the seed at all (§2.6: assigned round-robin, not drawn per horse).
+        const index = CONFORMATION_TRAITS.indexOf(trait);
         const { genotype, specialistTraits } = generateCandidate({
           pool: QH_POOL,
-          polygenicOneChance: 0.5,
+          abilityOneChance: 0.5,
           robustnessOneChance: 0.5,
           ageMinGameDays: 1000,
           ageMaxGameDays: 1000,
           seed,
+          roundRobinIndex: index,
           breedIdealVector: QH_IDEAL,
         });
-        if (specialistTraits.conformation !== trait) continue;
+        expect(specialistTraits.conformation).toBe(trait);
         picked++;
-        const target = QH_IDEAL[trait]!.target;
-        const expectedPotential = Math.round(target / 5);
-        const actualPotential = [...genotype.polygenic[trait]].filter((c) => c === '1').length;
-        expect(Math.abs(actualPotential - expectedPotential), trait).toBeLessThanOrEqual(1);
+        // QH_IDEAL is read straight from migration 0035's raw pre-ladder seed (this file's own
+        // qhIdealVector comment), which is never itself snapped onto a rung the way migration 0177
+        // snaps the live breeds.ideal_vector - so the target this test compares against has to go
+        // through the same nearestRung/rungValue round-trip the engine itself applies.
+        const target = rungValue(nearestRung(QH_IDEAL[trait]!.target));
+        const [a, b] = genotype.mendelian[TYPE_LOCUS_CODE[trait]];
+        expect([Number(a), Number(b)]).toContain(target);
       }
-      expect(picked, `expected to see ${trait} chosen at least once across 4000 seeds`).toBeGreaterThan(0);
+      expect(picked, `expected to see ${trait} chosen at least once`).toBeGreaterThan(0);
     }
   });
 
   it('no ideal vector (seven of the eight breeds today) skips Part A entirely - the common path, not an edge case', () => {
     const withNull = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -331,7 +355,7 @@ describe('generateCandidate - Part A conformation specialist (slice 0019 §3)', 
     });
     const withUndefined = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -346,7 +370,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
   it('is deterministic: same seed picks the same trait and the same bits', () => {
     const params = {
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -364,7 +388,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
     for (let seed = 0; seed < 500; seed++) {
       const { genotype, specialistTraits } = generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance: 0.5,
+        abilityOneChance: 0.5,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,
@@ -381,7 +405,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
   it('an empty eligible list (no enabled discipline weights any ability trait) skips Part B entirely', () => {
     const withEmpty = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -391,7 +415,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
     });
     const withUndefined = generateCandidate({
       pool: QH_POOL,
-      polygenicOneChance: 0.5,
+      abilityOneChance: 0.5,
       robustnessOneChance: 0.5,
       ageMinGameDays: 1000,
       ageMaxGameDays: 1000,
@@ -407,7 +431,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
     for (let seed = 0; seed < 500; seed++) {
       const { specialistTraits } = generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance: 0.5,
+        abilityOneChance: 0.5,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,
@@ -423,7 +447,7 @@ describe('generateCandidate - Part B ability specialist (slice 0019 §4)', () =>
     expect(() =>
       generateCandidate({
         pool: QH_POOL,
-        polygenicOneChance: 0.5,
+        abilityOneChance: 0.5,
         robustnessOneChance: 0.5,
         ageMinGameDays: 1000,
         ageMaxGameDays: 1000,

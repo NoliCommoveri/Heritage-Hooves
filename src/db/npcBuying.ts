@@ -119,7 +119,15 @@ interface ScoredCandidate {
   quality: number;
 }
 
-async function scoreCandidates(env: Env, listings: OpenListingRow[], target: SelectionTarget, gameDay: number, config: Config, minQuality: number): Promise<ScoredCandidate[]> {
+async function scoreCandidates(
+  env: Env,
+  listings: OpenListingRow[],
+  target: SelectionTarget,
+  gameDay: number,
+  config: Config,
+  minQuality: number,
+  breedById: Map<number, BreedRow>
+): Promise<ScoredCandidate[]> {
   const scored: ScoredCandidate[] = [];
   for (const listing of listings) {
     // A listing's own row lacks the genetics columns qualityFor needs (rng_seed,
@@ -129,7 +137,7 @@ async function scoreCandidates(env: Env, listings: OpenListingRow[], target: Sel
     const horse = await getHorse(env, listing.horse_id);
     if (!horse || horse.status !== 'alive' || horse.owner_stable_id !== listing.seller_stable_id) continue;
     if (horse.sex === 'gelding') continue;
-    const quality = qualityFor(horse, target, gameDay, config);
+    const quality = qualityFor(horse, target, gameDay, config, breedById);
     if (quality < minQuality) continue;
     scored.push({ listing, horse, quality });
   }
@@ -169,7 +177,7 @@ async function runOnePurchasePolicy(
   const affordable = listings.filter((l) => l.price <= stable.balance && l.price <= budgetCap);
   if (affordable.length === 0) return;
 
-  const scored = await scoreCandidates(env, affordable, target, gameDay, config, cfg.npc_buying_min_quality);
+  const scored = await scoreCandidates(env, affordable, target, gameDay, config, cfg.npc_buying_min_quality, breedById);
   if (scored.length === 0) return;
 
   // Best fit first, deterministically - no randomness involved (CLAUDE.md §5.2 governs draws that

@@ -8,17 +8,31 @@ import {
   noiseFor,
   serializeNoise,
   conformationValues,
+  conformationGeneticValue,
   abilityValues,
   type RealizationConfig,
 } from '../../src/engines/conformation/model';
 import { anchorFor, ABILITY_TRAITS, CONFORMATION_TRAITS } from '../../src/engines/conformation/traits';
 import type { Genotype } from '../../src/engines/genetics/genotype';
 import { TRAITS } from '../../src/engines/genetics/polygenic';
+import type { IdealVector } from '../../src/engines/showing/score';
 
 const CONFIG: RealizationConfig = {
   conformation_maturity_years: 5,
   conformation_realization_at_birth: 0.55,
   inbreeding_depression_factor: 1.0,
+  conformation_modifier_step: 0.1,
+};
+
+// A full five-trait ideal vector, target 50 (the ladder's own middle rung) on every trait - the
+// missing-locus default (a hand-created or legacy genotype's type pair) then always reads as
+// exactly on target, which is what most of these tests want.
+const FULL_IDEAL: IdealVector = {
+  neck_length: { target: 50, weight: 1 },
+  shoulder_angle: { target: 50, weight: 1 },
+  back_length: { target: 50, weight: 1 },
+  hock_set: { target: 50, weight: 1 },
+  head_profile: { target: 50, weight: 1 },
 };
 
 function genotypeWithPotential(trait: string, ones: number): Genotype {
@@ -130,12 +144,45 @@ describe('full siblings differ', () => {
   });
 });
 
+// Slice 0028 §2.3/§2.4.
 describe('conformationValues', () => {
   it('only ever returns the five conformation traits, never ability or hidden', () => {
     const genotype: Genotype = { v: 1, mendelian: {}, polygenic: {} };
-    const noise = rollEnvironmentalNoise(1, 6);
-    const values = conformationValues(genotype, noise, 5, 0, CONFIG);
+    const noise = rollEnvironmentalNoise(1, 0.5);
+    const values = conformationValues(genotype, noise, CONFIG, FULL_IDEAL);
     expect(values.map((v) => v.code)).toEqual(['neck_length', 'shoulder_angle', 'back_length', 'hock_set', 'head_profile']);
+  });
+
+  it('returns nothing at all for a breed with no ideal_vector - "still generates, not judged"', () => {
+    const genotype: Genotype = { v: 1, mendelian: {}, polygenic: {} };
+    const noise = rollEnvironmentalNoise(1, 0.5);
+    expect(conformationValues(genotype, noise, CONFIG, null)).toEqual([]);
+  });
+
+  it('skips a trait absent from a partial ideal vector, rather than judging it against a fabricated 50', () => {
+    const genotype: Genotype = { v: 1, mendelian: {}, polygenic: {} };
+    const noise = rollEnvironmentalNoise(1, 0.5);
+    const partial: IdealVector = { neck_length: { target: 50, weight: 1 } };
+    const values = conformationValues(genotype, noise, CONFIG, partial);
+    expect(values.map((v) => v.code)).toEqual(['neck_length']);
+  });
+
+  it('a hand-created/legacy genotype (missing type locus) reads exactly on target - the middle rung', () => {
+    // No mendelian.NL/SA/BL/HS/HP entries at all -> getMendelianPair's missing-locus rule reads
+    // ["50","50"], and with target 50 that is dead on. With zero noise and a 50/50 polygenic split
+    // (potential 10) the modifier is also exactly 0.
+    const genotype: Genotype = { v: 1, mendelian: {}, polygenic: { neck_length: '1'.repeat(10) + '0'.repeat(10) } };
+    const zeroNoise = rollEnvironmentalNoise(1, 0);
+    const values = conformationValues(genotype, zeroNoise, CONFIG, FULL_IDEAL);
+    const neckLength = values.find((v) => v.code === 'neck_length')!;
+    expect(neckLength.expressed).toBe(50);
+  });
+
+  it('matureExpressed always equals expressed - conformation is not realized by age (§2.4)', () => {
+    const genotype: Genotype = { v: 1, mendelian: { NL: ['30', '70'] }, polygenic: {} };
+    const noise = rollEnvironmentalNoise(5, 0.5);
+    const values = conformationValues(genotype, noise, CONFIG, FULL_IDEAL);
+    for (const v of values) expect(v.matureExpressed).toBe(v.expressed);
   });
 
   it('draws one noise value per trait in TRAITS order, reproducibly from the same seed', () => {
@@ -143,6 +190,31 @@ describe('conformationValues', () => {
     const b = rollEnvironmentalNoise(777, 6);
     expect(a).toEqual(b);
     expect(Object.keys(a)).toEqual([...TRAITS]);
+  });
+});
+
+describe('conformationGeneticValue (slice 0028 §2.3)', () => {
+  it('shows the allele FURTHER from target, not the closer one (faults dominant)', () => {
+    // Target 50, pair 46/58: 46 is 4 off, 58 is 8 off - 58 is worse and must show.
+    const genotype: Genotype = { v: 1, mendelian: { NL: ['46', '58'] }, polygenic: {} };
+    const value = conformationGeneticValue(genotype, 'neck_length', 0, 50, 0.1);
+    // modifier at potential 0 (no polygenic entry -> missing-trait rule reads all zeros) is
+    // (0 - 10) * 0.1 = -1, so 58 - 1 = 57.
+    expect(value).toBe(57);
+  });
+
+  it('a homozygous-at-target pair reads exactly on target regardless of the modifier direction', () => {
+    const genotype: Genotype = { v: 1, mendelian: { NL: ['50', '50'] }, polygenic: { neck_length: '1'.repeat(10) + '0'.repeat(10) } };
+    // potential 10 -> modifier (10-10)*0.1 = 0.
+    const value = conformationGeneticValue(genotype, 'neck_length', 0, 50, 0.1);
+    expect(value).toBe(50);
+  });
+
+  it('the polygenic modifier is bounded to +/-1.0 at modifierStep 0.1 (potential 0..20)', () => {
+    const worst: Genotype = { v: 1, mendelian: { NL: ['50', '50'] }, polygenic: { neck_length: '0'.repeat(20) } };
+    const best: Genotype = { v: 1, mendelian: { NL: ['50', '50'] }, polygenic: { neck_length: '1'.repeat(20) } };
+    expect(conformationGeneticValue(worst, 'neck_length', 0, 50, 0.1)).toBe(49);
+    expect(conformationGeneticValue(best, 'neck_length', 0, 50, 0.1)).toBe(51);
   });
 });
 
@@ -188,7 +260,12 @@ describe('abilityValues', () => {
 
     // realization 0.5 at some age/COI combination - construct one directly via the formula rather
     // than hunting for an age that lands exactly on it.
-    const halfConfig: RealizationConfig = { conformation_maturity_years: 10, conformation_realization_at_birth: 0, inbreeding_depression_factor: 0 };
+    const halfConfig: RealizationConfig = {
+      conformation_maturity_years: 10,
+      conformation_realization_at_birth: 0,
+      inbreeding_depression_factor: 0,
+      conformation_modifier_step: 0.1,
+    };
     const values = abilityValues(genotype, zeroNoise, 5, 0, halfConfig); // realization = 0 + (1-0)*(5/10) = 0.5
     const agilityRow = values.find((v) => v.code === 'agility')!;
     expect(agilityRow.expressed).toBe(Math.round(gv * 0.5));

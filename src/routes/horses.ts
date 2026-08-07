@@ -46,7 +46,13 @@ import { expressPhenotype, type PatternPenetrance } from '../engines/genetics/ex
 import { deriveSeed } from '../lib/rng';
 import { describeHorse, PATTERN_LABELS } from '../engines/genetics/describe';
 import { validateHorseNamePart } from '../lib/validation';
-import { getBookedCoveringForMare, bookCovering, estimateConceptionChance, listBookedCoveringsInvolvingHorse, type CoveringRow } from '../db/coverings';
+import {
+  getBookedCoveringForMare,
+  buildBookCoveringStatement,
+  estimateConceptionChance,
+  listBookedCoveringsInvolvingHorse,
+  type CoveringRow,
+} from '../db/coverings';
 import { getActivePregnancyForMare, listActivePregnanciesInvolvingHorse, type PregnancyRow } from '../db/pregnancies';
 import { formatCalendarDate } from '../lib/calendar';
 import { buildEndHorseParticipationStatements, ageModifierForHorse, buildGeldStatements } from '../db/ageing';
@@ -64,6 +70,7 @@ import { availabilityForHorse, turnOutToPasture, bringInFromPasture } from '../d
 import { imageOptionsFor, isAllowedImagePath, NO_PICTURE_VALUE, buildImageLabelMap } from '../lib/images';
 import { getConformationTraits, getAbilityTraits, type QuantitativeTraitRow } from '../db/quantitativeTraits';
 import { conformationValues, conformationDisplayRows, noiseFor, type RealizationConfig } from '../engines/conformation/model';
+import { TYPE_LOCUS_CODE } from '../engines/conformation/typeGene';
 import { ABILITY_TRAITS } from '../engines/conformation/traits';
 import { conformationLabelsFor, CONFORMATION_LABEL_TEXT, type ConformationLabel, type ConformationLabelBands } from '../engines/conformation/labels';
 import { evaluateHorse, wouldSharpen, type StoredEvaluation } from '../engines/conformation/evaluation';
@@ -224,10 +231,11 @@ function foalColourSentences(result: ReturnType<typeof foalColourPossibilities>)
  * measurements for one horse, ready to hand to a render
  * function. Shared by the barn list, the horse page and (via a candidate's own genotype/seed) the
  * founding screen. */
-function conformationForHorse(horse: HorseRow, ageYears: number, config: RealizationConfig, traitRows: QuantitativeTraitRow[]) {
+function conformationForHorse(horse: HorseRow, breed: BreedRow | undefined, config: RealizationConfig, traitRows: QuantitativeTraitRow[]) {
   const genotype = parseGenotype(horse.genotype);
   const noise = noiseFor(horse.rng_seed, horse.environmental_noise);
-  const values = conformationValues(genotype, noise, ageYears, horse.coi, config);
+  const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  const values = conformationValues(genotype, noise, config, ideal);
   return conformationDisplayRows(values, traitRows);
 }
 
@@ -372,13 +380,17 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
   // a while after they ended, marked Died/Retired away - every other reader of a stable's horses
   // (breeding, the NPC show barn's field, the image picker) still wants listStableHorses'
   // alive-only rows, unchanged.
-  const [allHorses, traitRows, conditions, openListings] = await Promise.all([
+  const [allHorses, traitRows, conditions, openListings, breeds] = await Promise.all([
     listStableHorsesWithDead(ctx.env, stableId, ctx.world.game_day - cfg.barn_shows_ended_game_days),
     getConformationTraits(ctx.env),
     getEnabledConditions(ctx.env),
     // Slice 0017 §6.5: one query for the whole barn's open listings, not one per row.
     openListingsBySellerStable(ctx.env, stableId),
+    // Slice 0028 §2.3: conformationForHorse now needs each horse's own breed's ideal_vector - one
+    // cached getBreeds call for the whole barn, not one getBreedById per row.
+    getBreeds(ctx.env),
   ]);
+  const breedById = new Map(breeds.map((b) => [b.id, b]));
 
   // Slice 0016 §4.5: counts come off the full list, filtering happens before the per-horse
   // Promise.all mapping below (which does a getShowSummary query per horse) - otherwise a tab
@@ -418,7 +430,7 @@ export async function stableHorsesRoute(ctx: RequestContext, stableId: number): 
         horse.cycle_anchor_tick_seq !== null &&
         isOldEnoughToBreed(horse.born_game_day, ctx.world.game_day, cfg.min_breeding_age_game_days) &&
         isInSeason(horse.cycle_anchor_tick_seq, ctx.world.tick_seq, cfg.estrous_cycle_ticks, cfg.estrus_ticks),
-      conformation: conformationForHorse(horse, (ctx.world.game_day - horse.born_game_day) / gameDaysPerYear, cfg, traitRows),
+      conformation: conformationForHorse(horse, horse.breed_id !== null ? breedById.get(horse.breed_id) : undefined, cfg, traitRows),
       showSummary: await getShowSummary(ctx.env, horse.id),
       visibleConditions: visibleAffectedConditions(parseGenotype(horse.genotype), conditions, signsMapsByHorse.get(horse.id) ?? new Map(), ctx.world.game_day),
       hasOpenIncident: openIncidentIds.has(horse.id),
@@ -644,8 +656,8 @@ async function buildBreedPreview(
     getShowSummary(ctx.env, mare.id),
     getShowSummary(ctx.env, stallion.id),
   ]);
-  const mareConformation = conformationForHorse(mare, mareAgeYears, ctx.config.values, traitRows);
-  const stallionConformation = conformationForHorse(stallion, stallionAgeYears, ctx.config.values, traitRows);
+  const mareConformation = conformationForHorse(mare, mareBreed, ctx.config.values, traitRows);
+  const stallionConformation = conformationForHorse(stallion, stallionBreed, ctx.config.values, traitRows);
   const mareLabels = conformationLabelsForHorse(mareConformation, mareBreed, (mareShowSummary?.starts ?? 0) >= 1, ctx.config.values);
   const stallionLabels = conformationLabelsForHorse(
     stallionConformation,
@@ -680,7 +692,7 @@ async function buildBreedPreview(
         mareLabel === 'unknown' || stallionLabel === 'unknown'
           ? 'Unknown'
           : sameBreedIdeal
-            ? foalRangeText(mareGenotype, stallionGenotype, row.code, coi, sameBreedIdeal, ctx.config.values)
+            ? foalRangeText(mareGenotype, stallionGenotype, row.code, sameBreedIdeal, ctx.config.values)
             : 'No single standard',
     };
   });
@@ -699,6 +711,7 @@ async function buildBreedPreview(
     healthWarnings,
     colourNotes,
     conformationRows,
+    prenatalCareCost: ctx.config.values.prenatal_care_cost,
   };
 }
 
@@ -896,22 +909,53 @@ export async function stableBreedRoute(ctx: RequestContext, method: string, stab
     const refusal = await validateBooking(ctx, stable, mare, stallion);
     if (refusal) return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStallionId: stallion.id, error: refusal });
 
+    // Slice 0028 §2.7: prenatal care is committed on the covering, before the foal exists - the
+    // checkbox on this same form, not a separate purchase after the fact.
+    const prenatalCare = form.prenatal_care === 'yes';
+    const prenatalCareCost = ctx.config.values.prenatal_care_cost;
+    const turnsNeeded = ACTION_COSTS.book_covering + (prenatalCare ? ACTION_COSTS.prenatal_care : 0);
+
     // Slice 0009 Part B §5.3: check, act, then spend - read the budget and refuse up front if it
     // looks empty, do the game action, then spend. If the spend below loses a race (two forms
     // submitted at the same instant), it's let through free rather than charged for nothing - a
     // child charged for something that did not happen has no way to find out why or get it back.
-    if (actionsLeft !== null && actionsLeft < ACTION_COSTS.book_covering) {
+    if (actionsLeft !== null && actionsLeft < turnsNeeded) {
       return page({ selectedMareId: mare.id, outsideStuds: outsideStudsFor(mare.breed_id), selectedStallionId: stallion.id, error: turnsRefusalMessage(ctx) });
     }
+    if (prenatalCare && (!canTakeOnCost(stable.balance) || stable.balance < prenatalCareCost)) {
+      return page({
+        selectedMareId: mare.id,
+        outsideStuds: outsideStudsFor(mare.breed_id),
+        selectedStallionId: stallion.id,
+        error: `${stable.name} has ${String(stable.balance)} and prenatal care costs ${String(prenatalCareCost)}. Book without it, or add money first.`,
+      });
+    }
 
-    await bookCovering(ctx.env, {
+    const bookingStatement = buildBookCoveringStatement(ctx.env, {
       stableId,
       mareId: mare.id,
       stallionId: stallion.id,
       gameDay: ctx.world.game_day,
       tickSeq: ctx.world.tick_seq,
+      prenatalCare,
     });
-    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.book_covering);
+    await ctx.env.DB.batch([
+      bookingStatement,
+      ...(prenatalCare
+        ? buildLedgerStatements(ctx.env, [
+            {
+              stableId: stable.id,
+              amount: -prenatalCareCost,
+              kind: 'prenatal_care',
+              referenceType: 'horse',
+              referenceId: mare.id,
+              description: `Prenatal care for ${displayNameFor(mare)}'s foal`,
+              gameDay: ctx.world.game_day,
+            },
+          ])
+        : []),
+    ]);
+    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, turnsNeeded);
     // A booked covering shows up in the mare status line, which is in the vitals card above the tab
     // bar - so this one genuinely belongs to no tab and lands on the default (slice 0026 §2.1).
     return redirect(horsePageUrl(mare.id, DEFAULT_HORSE_TAB));
@@ -1064,7 +1108,7 @@ export async function horsePageRoute(ctx: RequestContext, horseId: number): Prom
   const locationBlockedReason = await turnOutBlockedReason(ctx, horse);
   const hasFoundingOffer = owner ? await hasWaitingFoundingOffer(ctx.env, ownerStable.id) : false;
   const traitRows = await getConformationTraits(ctx.env);
-  const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
+  const conformation = conformationForHorse(horse, breed, ctx.config.values, traitRows);
   // Slice 0005 §5.3/§11: the Friesian pool carries a real recessive red (e at 8%), and a chestnut
   // Friesian is a genuine, if rare, outcome - it just can't be registered as one.
   const unregistrableFriesianChestnut = breed?.code === 'FR' && phenotype.baseColour === 'chestnut';
@@ -1662,7 +1706,10 @@ async function buildColourTestPageRows(
   horseId: number
 ): Promise<{ rows: ColourLocusOption[]; untestedCodes: string[] }> {
   const [loci, knowledge] = await Promise.all([getLoci(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
-  const colourLoci = loci.filter((l) => l.category !== 'disease');
+  // Slice 0028 §2.1 added a 'type_gene' category - excluded here explicitly, or the five
+  // conformation loci would leak into this panel too (this filter used to just be "not disease",
+  // which was fine when 'disease' was the only other category besides colour/gait).
+  const colourLoci = loci.filter((l) => l.category !== 'disease' && l.category !== 'type_gene');
   const tested = testedColourLoci(knowledge);
 
   const rows: ColourLocusOption[] = colourLoci.map((l) => {
@@ -1677,6 +1724,38 @@ async function buildColourTestPageRows(
     };
   });
   const untestedCodes = colourLoci.filter((l) => !tested.has(l.code)).map((l) => l.code);
+
+  return { rows, untestedCodes };
+}
+
+const TYPE_LOCUS_CODES = new Set(Object.values(TYPE_LOCUS_CODE));
+
+/** Slice 0028 §5 step 10: the conformation type-gene panel, a third section on the same page, same
+ * `locus:`-prefixed knowledge mechanism colour already uses. Priced from conformation_test_cost -
+ * a single locus costs the same as the whole panel (a first-pass number the operator should retune
+ * once real play shows what testing behaviour it produces; §9 open question 2 is still genuinely
+ * open on whether that's right). */
+async function buildConformationTestPageRows(
+  ctx: RequestContext,
+  ownerStableId: number,
+  horseId: number
+): Promise<{ rows: ColourLocusOption[]; untestedCodes: string[] }> {
+  const [loci, knowledge] = await Promise.all([getLoci(ctx.env), getKnowledgeForHorse(ctx.env, ownerStableId, horseId)]);
+  const typeLoci = loci.filter((l) => l.category === 'type_gene');
+  const tested = testedColourLoci(knowledge);
+
+  const rows: ColourLocusOption[] = typeLoci.map((l) => {
+    const known = knowledge.find((k) => k.kind === 'genotype' && k.subject_code === `${LOCUS_KNOWLEDGE_PREFIX}${l.code}`);
+    return {
+      code: l.code,
+      name: l.name,
+      teachingText: l.teaching_text,
+      known: known ? known.result : null,
+      testedGameDay: known ? known.tested_game_day : null,
+      price: tested.has(l.code) ? null : ctx.config.values.conformation_test_cost,
+    };
+  });
+  const untestedCodes = typeLoci.filter((l) => !tested.has(l.code)).map((l) => l.code);
 
   return { rows, untestedCodes };
 }
@@ -1698,9 +1777,10 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   const hasFoundingOffer = await hasWaitingFoundingOffer(ctx.env, ownerStable.id);
 
   const render = async (error?: string) => {
-    const [{ rows, untested, ancestryBreedNames }, colour] = await Promise.all([
+    const [{ rows, untested, ancestryBreedNames }, colour, conformation] = await Promise.all([
       buildTestPageRows(ctx, ownerStable.id, horseId, genotype, horse.breed_id),
       buildColourTestPageRows(ctx, ownerStable.id, horseId),
+      buildConformationTestPageRows(ctx, ownerStable.id, horseId),
     ]);
     return htmlResponse(
       renderTestPage({
@@ -1718,6 +1798,9 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
         colourRows: colour.rows,
         untestedColourCount: colour.untestedCodes.length,
         colourPanelPrice: ctx.config.values.genotype_panel_cost,
+        conformationRows: conformation.rows,
+        untestedConformationCount: conformation.untestedCodes.length,
+        conformationPanelPrice: ctx.config.values.conformation_test_cost,
         error,
       })
     );
@@ -1727,6 +1810,76 @@ export async function horseTestRoute(ctx: RequestContext, method: string, horseI
   if (method !== 'POST') return notFound();
 
   const form = await parseForm(ctx.request);
+
+  // Slice 0028 §5 step 10: the conformation panel and single-locus purchases - checked before the
+  // colour block below, since both share the generic `locus_code` field name and a type_gene code
+  // must resolve against the conformation builder, not the colour one.
+  if (form.action === 'conformation_panel' || (typeof form.locus_code === 'string' && TYPE_LOCUS_CODES.has(form.locus_code))) {
+    const { untestedCodes } = await buildConformationTestPageRows(ctx, ownerStable.id, horseId);
+    let codesToBuy: string[];
+    let totalCost: number;
+    let description: string;
+
+    if (form.action === 'conformation_panel') {
+      if (untestedCodes.length === 0) return render('Nothing is left to test.');
+      codesToBuy = untestedCodes;
+      totalCost = ctx.config.values.conformation_test_cost;
+      description = `Conformation panel test, ${displayNameFor(horse)}.`;
+    } else {
+      const found = untestedCodes.find((c) => c === form.locus_code);
+      if (!found) return render("That test isn't available for this horse.");
+      codesToBuy = [found];
+      totalCost = ctx.config.values.conformation_test_cost;
+      description = `Conformation test (${found}), ${displayNameFor(horse)}.`;
+    }
+
+    const actionsLeftForConformation = actionsLeftFor(ctx);
+    if (actionsLeftForConformation !== null && actionsLeftForConformation < ACTION_COSTS.genotype_test) {
+      return render(turnsRefusalMessage(ctx));
+    }
+    if (!canTakeOnCost(ownerStable.balance)) {
+      return render(`${ownerStable.name} is ${String(Math.abs(ownerStable.balance))} in the red. Win a show, or ask a grown-up to add money, before testing.`);
+    }
+
+    const conformationCostByCode: Record<string, number> = {};
+    const conformationBase = Math.floor(totalCost / codesToBuy.length);
+    codesToBuy.forEach((code) => {
+      conformationCostByCode[code] = conformationBase;
+    });
+    conformationCostByCode[codesToBuy[codesToBuy.length - 1]] += totalCost - conformationBase * codesToBuy.length;
+
+    try {
+      await ctx.env.DB.batch([
+        ...buildLocusKnowledgePurchaseStatements(ctx.env, {
+          stableId: ownerStable.id,
+          horseId,
+          gameDay: ctx.world.game_day,
+          genotype,
+          locusCodes: codesToBuy,
+          costByCode: conformationCostByCode,
+        }),
+        ...buildLedgerStatements(ctx.env, [
+          {
+            stableId: ownerStable.id,
+            amount: -totalCost,
+            kind: 'vet',
+            referenceType: 'horse',
+            referenceId: horseId,
+            description,
+            gameDay: ctx.world.game_day,
+          },
+        ]),
+      ]);
+    } catch (err) {
+      if (err instanceof Error && /unique constraint failed/i.test(err.message)) {
+        return render('That result is already known - nothing was charged.');
+      }
+      throw err;
+    }
+
+    await spendAction(ctx.env, ctx.account!.id, ctx.world.tick_seq, ctx.config.values.actions_per_tick, ACTION_COSTS.genotype_test);
+    return redirect(horsePageUrl(horseId, 'genetics'));
+  }
 
   // Amendment 0017a §4.6: the colour panel and single-locus purchases, handled entirely separately
   // from the disease path below - same table, same mechanism, but a different builder
@@ -2377,18 +2530,18 @@ const FOAL_RANGE_COVERAGE = 0.8;
  * (too far above the breed's target is as bad as too far below), so an interval that straddles the
  * target contains its best word in the middle, not at an edge.
  */
-function foalRangeText(
-  sire: Genotype,
-  dam: Genotype,
-  trait: TraitCode,
-  coi: number,
-  ideal: ReturnType<typeof parseIdealVector>,
-  cfg: ConfigValues
-): string {
+function foalRangeText(sire: Genotype, dam: Genotype, trait: TraitCode, ideal: ReturnType<typeof parseIdealVector>, cfg: ConfigValues): string {
   const target = ideal[trait];
   if (target === undefined) return 'Unknown';
 
-  const distribution = foalExpressedDistribution({ sire, dam, trait, coi, noiseSd: cfg.conformation_noise_sd, config: cfg });
+  const distribution = foalExpressedDistribution({
+    sire,
+    dam,
+    trait,
+    target: target.target,
+    modifierStep: cfg.conformation_modifier_step,
+    noiseSd: cfg.conformation_noise_sd,
+  });
   const { low, high } = centralInterval(distribution, FOAL_RANGE_COVERAGE);
   const bands = conformationLabelBands(cfg);
 
@@ -2482,8 +2635,13 @@ async function buildEvaluationFor(ctx: RequestContext, horse: HorseRow): Promise
   const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
   if (!ideal) return null;
 
+  // Slice 0028 §2.4: conformation is no longer realized by age, so "mature conformation" and
+  // "conformation today" are the same values at any age - conformationForHorse itself no longer
+  // takes an age at all. evaluateHorse's own age-based hedge (ageYears, below) is a separate,
+  // presentation-layer vagueness band, unaffected by this - it still sharpens toward the true (now
+  // age-invariant) value as the horse gets older.
+  const conformation = conformationForHorse(horse, breed, ctx.config.values, traitRows);
   const ageYears = (ctx.world.game_day - horse.born_game_day) / ctx.config.values.game_days_per_year;
-  const conformation = conformationForHorse(horse, ageYears, ctx.config.values, traitRows);
 
   return evaluateHorse(
     {

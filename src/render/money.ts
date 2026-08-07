@@ -29,6 +29,7 @@ const KIND_LABELS: Record<LedgerKind, string> = {
   evaluation: 'Conformation evaluation',
   time_warp: 'Grew a horse up',
   gelding: 'Gelding',
+  prenatal_care: 'Prenatal care',
 };
 
 export function renderMoneyPage(params: {

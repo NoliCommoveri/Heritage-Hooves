@@ -174,6 +174,16 @@ import m0173 from '../../migrations/0173_config_show_barn_plan.sql';
 import m0174 from '../../migrations/0174_accounts_paused.sql';
 import m0175 from '../../migrations/0175_show_classes_allow_parallel.sql';
 import m0176 from '../../migrations/0176_show_barn_novice_low_band.sql';
+import m0177 from '../../migrations/0177_breeds_ideal_vector_ladder_snap.sql';
+import m0178 from '../../migrations/0178_quality_bands_pair_specs.sql';
+import m0179 from '../../migrations/0179_conformation_modifier_and_noise_split.sql';
+import m0180 from '../../migrations/0180_conformation_label_edges.sql';
+import m0181 from '../../migrations/0181_founding_and_consignment_quality_bands.sql';
+import m0182 from '../../migrations/0182_import_offers_ability_one_chance.sql';
+import m0183 from '../../migrations/0183_prenatal_care.sql';
+import m0184 from '../../migrations/0184_npc_prenatal_care_and_tested_share.sql';
+import m0185 from '../../migrations/0185_ledger_add_prenatal_care_kind.sql';
+import m0186 from '../../migrations/0186_seed_type_gene_loci.sql';
 
 export interface MigrationFile {
   name: string;
@@ -364,6 +374,16 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0174_accounts_paused.sql', sql: m0174 },
   { name: '0175_show_classes_allow_parallel.sql', sql: m0175 },
   { name: '0176_show_barn_novice_low_band.sql', sql: m0176 },
+  { name: '0177_breeds_ideal_vector_ladder_snap.sql', sql: m0177 },
+  { name: '0178_quality_bands_pair_specs.sql', sql: m0178 },
+  { name: '0179_conformation_modifier_and_noise_split.sql', sql: m0179 },
+  { name: '0180_conformation_label_edges.sql', sql: m0180 },
+  { name: '0181_founding_and_consignment_quality_bands.sql', sql: m0181 },
+  { name: '0182_import_offers_ability_one_chance.sql', sql: m0182 },
+  { name: '0183_prenatal_care.sql', sql: m0183 },
+  { name: '0184_npc_prenatal_care_and_tested_share.sql', sql: m0184 },
+  { name: '0185_ledger_add_prenatal_care_kind.sql', sql: m0185 },
+  { name: '0186_seed_type_gene_loci.sql', sql: m0186 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

@@ -413,9 +413,9 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
   ]);
 
   const ageGameDays = gameDay - horse.born_game_day;
-  const ageYears = ageGameDays / config.game_days_per_year;
   const genotype = parseGenotype(horse.genotype);
-  const values = conformationValues(genotype, noiseFor(horse.rng_seed, horse.environmental_noise), ageYears, horse.coi, config);
+  const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  const values = conformationValues(genotype, noiseFor(horse.rng_seed, horse.environmental_noise), config, ideal);
   const expressed: Partial<Record<TraitCode, number>> = {};
   for (const v of values) expressed[v.code] = v.expressed;
 
@@ -433,7 +433,7 @@ export async function appraiseHorseForStable(env: Env, horse: HorseRow, stableId
 
   return appraise({
     expressed,
-    ideal: breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null,
+    ideal,
     falloff: config.show_ideal_falloff,
     ageGameDays,
     // §4.2: the announced Failing notice, which the owner has already been told about explicitly -

@@ -8,6 +8,7 @@ import { TRAITS, LOCI_PER_TRAIT, type TraitCode } from '../genetics/polygenic';
 import { ROBUSTNESS_TRAITS, CONFORMATION_TRAITS } from '../conformation/traits';
 import { biasedOneChance, type AbilityBias } from '../breeds/identity';
 import type { IdealVector } from '../showing/score';
+import { dealForBand, applySpecialistUpgrade, DEFAULT_PAIR_SPECS, TYPE_LOCUS_CODE } from '../conformation/typeGene';
 import type { AllelePool } from './pool';
 
 const TRAIT_STRING_LENGTH = LOCI_PER_TRAIT * 2;
@@ -42,8 +43,29 @@ export interface LethalTrigger {
 
 export interface GenerateCandidateInput {
   pool: AllelePool;
-  /** The quality band's number - the chance any given polygenic allele is a '1'. Slice 0005 §4. */
-  polygenicOneChance: number;
+  /** Slice 0028 §2.5/§2.8, migration 0178 (renamed from polygenicOneChance): the quality band's own
+   * ABILITY allele chance only now - config.values.quality_bands[band].ability_one_chance.
+   * Conformation traits' 20-bit polygenic block (the §2.3 modifier/tie-breaker) no longer reads a
+   * band-weighted chance at all; it always draws at CONFORMATION_MODIFIER_ONE_CHANCE below, because
+   * conformation quality is now driven entirely by the type-gene deal (qualityBand +
+   * breedIdealVector), not by this number. Splitting this was forced, not cosmetic: the single old
+   * number was also the ability allele frequency breeds.ability_bias offsets (slice 0024) - moving
+   * it for conformation's sake would have silently undone that. */
+  abilityOneChance: number;
+  /** Slice 0028 §2.5: the quality band's own pair-specs to deal the five type-gene pairs from -
+   * config.values.quality_bands[band].pairs (or typeGene.ts's DEFAULT_PAIR_SPECS[band] for a caller
+   * with no config handy). Resolved by the caller, not here - this file stays pure/no-config-access
+   * (CLAUDE.md §5.1) - and read regardless of whether breedIdealVector is present; dealForBand itself
+   * deals nothing when there is no ideal vector to deal against. Optional (defaults to
+   * DEFAULT_PAIR_SPECS.low) so a test exercising an unrelated system (disease loci, robustness,
+   * general reproducibility) doesn't have to name a band it isn't testing; every real minting path
+   * (founding.ts, npc.ts, consignment.ts) passes its own resolved band explicitly. */
+  typeGenePairSpecs?: [number, number][];
+  /** Slice 0028 §2.6: this candidate's 0-based position in its own founding batch, cycled modulo the
+   * number of conformation traits to pick the round-robin specialist trait - "must be assigned
+   * round-robin across a founding batch, not drawn per horse" (§2.6's own heading). Optional,
+   * defaults to 0, for the same reason typeGenePairSpecs is optional above. */
+  roundRobinIndex?: number;
   /** Slice 0014 §2.8: the fixed chance for ROBUSTNESS_TRAITS, regardless of quality band - so a
    * top-band founding horse is not automatically sound as well as beautiful. Required, not optional
    * with a default: an optional field would silently fall back to the band the day a second caller
@@ -59,9 +81,11 @@ export interface GenerateCandidateInput {
    * signature stays optional so a future non-founding caller of this same function isn't forced to
    * supply an empty array). */
   lethalTriggers?: LethalTrigger[];
-  /** Slice 0019 Part A: the breed's ideal vector, already parsed by the caller from
-   * breeds.ideal_vector. Undefined or null skips Part A entirely - true for seven of the eight
-   * breeds today (no seeded ideal_vector), so that is the common path, not an edge case (§10). */
+  /** Slice 0019 Part A, now also slice 0028 §2.5/§2.6's own input: the breed's ideal vector, already
+   * parsed by the caller from breeds.ideal_vector. Undefined or null means this breed has no
+   * standard - dealForBand deals nothing (every type locus falls back to the missing-locus rule,
+   * homozygous middle rung) and there is no conformation specialist either; "still generates, not
+   * judged" (§7 test 11). */
   breedIdealVector?: IdealVector | null;
   /** Slice 0019 Part B: ability traits with a nonzero weight in at least one *enabled* discipline
    * (src/db/disciplines.ts's getSpecializableAbilityTraits) - never all of ABILITY_TRAITS, since a
@@ -74,9 +98,10 @@ export interface GenerateCandidateInput {
    * robustnessOneChance's own comment gives for not defaulting a live tunable. */
   abilitySpecialistPotential?: number;
   /** The breed's own ability leaning (migration 0141), already parsed by the caller from
-   * breeds.ability_bias via parseAbilityBias. Omitted or empty means every trait draws at
-   * polygenicOneChance exactly as it did before this existed - so this is a genuinely optional
-   * addition, unlike robustnessOneChance above where a default would be a silent wrong answer.
+   * breeds.ability_bias via parseAbilityBias. Omitted or empty means every ability trait draws at
+   * abilityOneChance exactly as it did before this existed - so this is a genuinely optional
+   * addition, unlike robustnessOneChance above where a default would be a silent wrong answer. Never
+   * reaches a conformation trait's own draw (those are flat, see CONFORMATION_MODIFIER_ONE_CHANCE).
    *
    * Affects only the base draw below, never the specialist overwrite: a specialist trait's
    * potential is set outright, so a breed's leaning neither helps nor hinders the one trait a
@@ -88,10 +113,12 @@ export interface GenerateCandidateInput {
 export interface GeneratedCandidate {
   genotype: Genotype;
   ageGameDays: number;
-  /** Slice 0019 §10: which trait (if any) was overwritten as this candidate's specialist on each
-   * side - null when that side's Part was skipped (no ideal vector / no eligible ability trait).
-   * Exists so determinism and "only one trait moved" are both directly testable rather than
-   * inferred by re-deriving expected potentials from the genotype. */
+  /** Slice 0019 §10, conformation half redefined by slice 0028 §2.6: which trait (if any) was
+   * upgraded as this candidate's specialist on each side - null when that side was skipped (no
+   * ideal vector / no eligible ability trait). Exists so determinism and "only one trait moved" are
+   * both directly testable rather than inferred by re-deriving expected potentials from the
+   * genotype. The conformation side is now an UPGRADE of an already-dealt type-gene allele
+   * (typeGene.ts's applySpecialistUpgrade), not an overwritten polygenic block. */
   specialistTraits: {
     conformation: TraitCode | null;
     ability: TraitCode | null;
@@ -99,6 +126,18 @@ export interface GeneratedCandidate {
 }
 
 const SPECIALIST_OFFSETS = [-1, 0, 1];
+
+/** Slice 0028 §2.3/§2.5: the flat chance each of a conformation trait's 20 polygenic bits is a '1',
+ * used for every band alike - conformation quality no longer comes from this draw at all (it comes
+ * from the type-gene deal below), so there is nothing left for a band to weight here. 0.5 keeps the
+ * modifier's own distribution centred and symmetric, matching docs/analysis/breeding-lab.mjs's
+ * `--engine proposed` bench exactly. */
+const CONFORMATION_MODIFIER_ONE_CHANCE = 0.5;
+
+/** The five type-gene loci, as a lookup set - see the "founding pool missing locus" skip above and
+ * pool.ts's own POOL_EXEMPT_LOCI (the same exemption, restated because pool.ts's caller and this
+ * one are different code paths that both iterate LOCI directly). */
+const TYPE_GENE_LOCUS_CODES = new Set(Object.values(TYPE_LOCUS_CODE));
 
 function clampPotential(value: number): number {
   return Math.max(0, Math.min(TRAIT_STRING_LENGTH, value));
@@ -125,6 +164,10 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
   const mendelianRng = makeRng(deriveSeed(input.seed, 'pool_mendelian'));
   const mendelian: Record<string, AllelePair> = {};
   for (const locus of LOCI) {
+    // Slice 0028 §2.5/§5 step 6: the five type-gene loci are never drawn from a population-frequency
+    // pool at all - they're dealt below, from the breed's ideal_vector. Skipping them here keeps the
+    // rest of this loop's draw COUNT and RNG stream unchanged from before this slice (rule 5).
+    if (TYPE_GENE_LOCUS_CODES.has(locus.code)) continue;
     const freqs = input.pool[locus.code];
     if (!freqs) throw new Error(`founding pool missing locus ${locus.code}`);
     const a1 = drawAllele(locus, freqs, mendelianRng);
@@ -160,7 +203,9 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
   for (const trait of TRAITS) {
     const chance = ROBUSTNESS_TRAITS.includes(trait)
       ? input.robustnessOneChance
-      : biasedOneChance(input.polygenicOneChance, abilityBias, trait);
+      : CONFORMATION_TRAITS.includes(trait)
+        ? CONFORMATION_MODIFIER_ONE_CHANCE
+        : biasedOneChance(input.abilityOneChance, abilityBias, trait);
     let bits = '';
     for (let i = 0; i < TRAIT_STRING_LENGTH; i++) {
       bits += polygenicRng.next() < chance ? '1' : '0';
@@ -168,30 +213,40 @@ export function generateCandidate(input: GenerateCandidateInput): GeneratedCandi
     polygenic[trait] = bits;
   }
 
+  // Slice 0028 §2.5/§2.6: the five type-gene pairs, dealt from their own fresh stream (never before
+  // used - the polygenic loop above is untouched in draw count, per rule 5, so every stream after it
+  // still lands in the same place for the same seed). A null/undefined breedIdealVector deals
+  // nothing; every locus left unset falls back to the missing-locus rule (homozygous middle rung).
+  const typeRng = makeRng(deriveSeed(input.seed, 'pool_type'));
+  const idealVector = input.breedIdealVector ?? null;
+  const typePairs = dealForBand(input.typeGenePairSpecs ?? DEFAULT_PAIR_SPECS.low, idealVector, typeRng);
+
+  // §2.6: the specialist is an upgrade of an allele the deal already granted, assigned round-robin
+  // across the founding batch (roundRobinIndex), never drawn per horse - deterministic, no RNG of
+  // its own. Scoped to traits the deal actually dealt (i.e. present in the breed's ideal vector).
+  let conformationSpecialist: TraitCode | null = null;
+  const dealtTraits = CONFORMATION_TRAITS.filter((t) => typePairs[t] !== undefined);
+  if (dealtTraits.length > 0) {
+    const assignedTrait = dealtTraits[(input.roundRobinIndex ?? 0) % dealtTraits.length];
+    conformationSpecialist = applySpecialistUpgrade(typePairs, idealVector, assignedTrait);
+  }
+
+  for (const trait of CONFORMATION_TRAITS) {
+    const pair = typePairs[trait];
+    if (!pair) continue;
+    const locusCode = TYPE_LOCUS_CODE[trait];
+    mendelian[locusCode] = sortAllelePair(locusCode, pair[0], pair[1]);
+  }
+
   const ageRng = makeRng(deriveSeed(input.seed, 'founding_age'));
   const ageSpan = input.ageMaxGameDays - input.ageMinGameDays;
   const ageGameDays = input.ageMinGameDays + (ageSpan > 0 ? ageRng.int(ageSpan + 1) : 0);
 
-  // Slice 0019 Parts A/B: every founding horse arrives genuinely good at one thing. This runs
-  // strictly after the loop above, from its own fresh streams (never-before-used labels), and
-  // overwrites rather than resamples - per §7, the polygenic loop must draw exactly the same 20
-  // bits per trait regardless of whether a specialist is chosen afterwards, or every trait after
-  // it would shift and the same seed would stop producing the same horse.
-  let conformationSpecialist: TraitCode | null = null;
-  if (input.breedIdealVector) {
-    const idealVector = input.breedIdealVector;
-    const available = CONFORMATION_TRAITS.filter((t) => idealVector[t] !== undefined);
-    if (available.length > 0) {
-      const choiceRng = makeRng(deriveSeed(input.seed, 'specialist_choice_conformation'));
-      conformationSpecialist = available[choiceRng.int(available.length)];
-      const target = idealVector[conformationSpecialist]!.target;
-      const offset = SPECIALIST_OFFSETS[choiceRng.int(SPECIALIST_OFFSETS.length)];
-      const potentialValue = clampPotential(Math.round(target / 5) + offset);
-      const allelesRng = makeRng(deriveSeed(input.seed, 'specialist_alleles_conformation'));
-      polygenic[conformationSpecialist] = specialistBits(allelesRng, potentialValue);
-    }
-  }
-
+  // Slice 0019 Part B: every founding horse arrives genuinely good at one ability trait too. This
+  // runs strictly after the polygenic loop above, from its own fresh streams (never-before-used
+  // labels), and overwrites rather than resamples - per §7, the polygenic loop must draw exactly the
+  // same 20 bits per trait regardless of whether a specialist is chosen afterwards, or every trait
+  // after it would shift and the same seed would stop producing the same horse.
   let abilitySpecialist: TraitCode | null = null;
   if (input.eligibleAbilityTraits && input.eligibleAbilityTraits.length > 0) {
     if (input.abilitySpecialistPotential === undefined) {

@@ -4,17 +4,22 @@
 
 import type { Env } from '../types';
 import { nowUtcSeconds } from '../lib/time';
-import { randomSeed, deriveSeed, makeRng } from '../lib/rng';
+import { randomSeed, deriveSeed, makeRng, type Rng } from '../lib/rng';
 import type { Config } from '../lib/config-cache';
 import { writeConfig } from '../lib/config-cache';
 import { getHorse, horseDisplayName, loadPedigreeContext } from './horses';
 import { getStableById } from './stables';
+import { getBreedById } from './breeds';
 import { buildPregnancyInsertStatement } from './pregnancies';
-import { parseGenotype } from '../engines/genetics/genotype';
+import { parseGenotype, sortAllelePair, type Genotype } from '../engines/genetics/genotype';
 import { combine } from '../engines/genetics/inheritance';
 import { coefficientOfInbreeding } from '../engines/genetics/pedigree';
+import { foalComposition } from '../engines/genetics/composition';
 import { fertilityPotential, conceptionChance, type ConceptionBreakdown } from '../engines/breeding/fertility';
 import { rollTwins } from '../engines/breeding/twins';
+import { CONFORMATION_TRAITS } from '../engines/conformation/traits';
+import { TYPE_LOCUS_CODE, applyBaselineRatchet, applyCareRatchet, type TypeGenePairs } from '../engines/conformation/typeGene';
+import { parseIdealVector, type IdealVector } from '../engines/showing/score';
 import { buildEventStatement } from './events';
 
 export interface CoveringRow {
@@ -33,6 +38,10 @@ export interface CoveringRow {
    * is null - see the comment on resolveDueCoverings' query below. */
   cancelled_game_day: number | null;
   cancelled_reason: string | null;
+  /** Slice 0028 §2.7, migration 0183. Set at booking, never after - the mechanic picks the trait,
+   * committed before the foal exists. Read at conception (resolveOneCovering) to choose which
+   * ratchet a freshly-combined foal genotype gets. */
+  prenatal_care: number;
 }
 
 export async function getBookedCoveringForMare(env: Env, mareId: number): Promise<CoveringRow | null> {
@@ -59,6 +68,10 @@ export interface BookCoveringParams {
   stallionId: number;
   gameDay: number;
   tickSeq: number;
+  /** Slice 0028 §2.7. Defaults false - an existing caller (a same-stable booking with no care
+   * bought) needs no change. The cost/turn are the CALLER's job (routes/horses.ts for a player,
+   * npcBreeding.ts for an NPC stable) - this function only ever records the choice. */
+  prenatalCare?: boolean;
 }
 
 /**
@@ -72,10 +85,10 @@ export function buildBookCoveringStatement(env: Env, params: BookCoveringParams)
   const nowSeconds = nowUtcSeconds();
   return env.DB
     .prepare(
-      `INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts)
-       VALUES (?, ?, ?, ?, ?, 'booked', ?, ?)`
+      `INSERT INTO coverings (stable_id, mare_id, stallion_id, booked_game_day, booked_tick_seq, status, rng_seed, created_real_ts, prenatal_care)
+       VALUES (?, ?, ?, ?, ?, 'booked', ?, ?, ?)`
     )
-    .bind(params.stableId, params.mareId, params.stallionId, params.gameDay, params.tickSeq, seed, nowSeconds);
+    .bind(params.stableId, params.mareId, params.stallionId, params.gameDay, params.tickSeq, seed, nowSeconds, params.prenatalCare ? 1 : 0);
 }
 
 export async function bookCovering(env: Env, params: BookCoveringParams): Promise<{ id: number }> {
@@ -150,6 +163,33 @@ export async function resolveDueCoverings(env: Env, gameDay: number, tickSeq: nu
 
   if (forceTwinsConsumed) {
     await writeConfig(env, null, { flags: { force_next_twins: false } });
+  }
+}
+
+/**
+ * Slice 0028 §2.3/§2.7, operator update 2026-08-07: the generational ratchet, applied once per foal
+ * at conception, right after combine() draws the ordinary Mendelian pair for each type locus. Every
+ * bred foal (never founding stock, which keeps §2.5's dealt band) gets its single worst conformation
+ * gene moved one rung toward its own breed's standard - or, if this covering bought mare prenatal
+ * care, three DIFFERENT genes moved one rung each instead of the same one gene, replacing the
+ * baseline rather than stacking on it. `ideal` is null for a breed with no standard (or a cross), in
+ * which case nothing here has anything to move toward and the ratchet does nothing - exactly the
+ * "still generates, not judged" rule the founding deal already follows.
+ */
+function applyPrenatalRatchet(genotype: Genotype, ideal: IdealVector | null, careBought: boolean, rng: Rng): void {
+  if (!ideal) return;
+  const pairs: TypeGenePairs = {};
+  for (const trait of CONFORMATION_TRAITS) {
+    if (!ideal[trait]) continue;
+    pairs[trait] = genotype.mendelian[TYPE_LOCUS_CODE[trait]];
+  }
+  if (careBought) applyCareRatchet(pairs, ideal, rng);
+  else applyBaselineRatchet(pairs, ideal, rng);
+  for (const trait of CONFORMATION_TRAITS) {
+    const pair = pairs[trait];
+    if (!pair) continue;
+    const locusCode = TYPE_LOCUS_CODE[trait];
+    genotype.mendelian[locusCode] = sortAllelePair(locusCode, pair[0], pair[1]);
   }
 }
 
@@ -234,6 +274,17 @@ async function resolveOneCovering(
   const damGenotype = parseGenotype(mare.genotype);
   const foalCount = twins ? 2 : 1;
 
+  // Slice 0028 §2.3/§2.7: the foal's own breed (never the parents' individually - foalComposition's
+  // "once a cross, always a cross" rule) decides which standard the ratchet moves toward, computed
+  // once here since twins share the same sire/dam/composition. A cross, or a breed with no
+  // ideal_vector, resolves to a null ideal and the ratchet below does nothing for it.
+  const foalBreedId = foalComposition(
+    { composition: JSON.parse(stallion.composition), isCross: stallion.is_cross === 1, breedId: stallion.breed_id },
+    { composition: JSON.parse(mare.composition), isCross: mare.is_cross === 1, breedId: mare.breed_id }
+  ).breedId;
+  const foalBreed = foalBreedId !== null ? await getBreedById(env, foalBreedId) : undefined;
+  const foalIdeal = foalBreed?.ideal_vector ? parseIdealVector(foalBreed.ideal_vector) : null;
+
   // One batch: the covering's status flip and every pregnancy it produces land together, or not at
   // all. Without this, a crash between the two would either strand a conceived covering with no
   // pregnancy, or (on retry) create the pregnancy a second time for a covering already marked
@@ -251,6 +302,9 @@ async function resolveOneCovering(
     // twins (slice 0003 §6).
     const foalRngSeed = randomSeed();
     const genotype = combine(sireGenotype, damGenotype, foalRngSeed);
+    // §2.7: care was committed on the covering, before any foal existed - both twins from a covering
+    // that bought it get the upgraded ratchet, since the purchase was never split per foal.
+    applyPrenatalRatchet(genotype, foalIdeal, covering.prenatal_care === 1, makeRng(deriveSeed(foalRngSeed, 'prenatal_ratchet')));
     const pregnancyInsert = buildPregnancyInsertStatement(env, {
       coveringId: covering.id,
       damId: mare.id,
@@ -259,6 +313,7 @@ async function resolveOneCovering(
       genotype,
       coi,
       foalRngSeed,
+      prenatalCare: covering.prenatal_care === 1,
       gestationDaysMean: config.values.gestation_days_mean,
       gestationDaysSd: config.values.gestation_days_sd,
     });

@@ -1,23 +1,25 @@
-// What a pairing is actually likely to throw, per conformation trait. 2026-08-05, operator feedback:
-// "they still say it's too random whether babies born are good or not ... getting 3 subpar foals in
-// a row from a pair that COULD throw a good baby but isn't is frustrating them."
+// What a pairing is actually likely to throw, per conformation trait. Originally built 2026-08-05
+// (operator feedback: "they still say it's too random whether babies born are good or not"),
+// rewritten for slice 0028 §2.3/§5 step 12: under the type-gene model a conformation trait's
+// expressed value is no longer a 20-locus polygenic sum realized by age - it is one Mendelian pair
+// (a real 2x2 Punnett square) plus a small polygenic modifier and noise. That collapses what used
+// to be a Poisson-binomial convolution over twenty loci into a convolution over three MUCH smaller
+// distributions, so this file is now the "much shorter" replacement the slice document's build
+// order asked for, not a rewrite of the same shape. Pure, no database access (CLAUDE.md §5.1), and
+// no RNG at all - this is an exact calculation, not a simulation.
 //
-// The operator's decision was to fix the EXPECTATION rather than the maths: the genetics are
-// unchanged, and this file exists so the breeding preview can say honestly how wide the outcome
-// really is before a child spends a turn and eleven game months on it. Pure, no database access
-// (CLAUDE.md §5.1), and no RNG at all - this is an exact calculation, not a simulation.
+// The three distributions, in the same order conformationGeneticValue (model.ts) combines them:
 //
-// How the distribution is built, in the same order the real birth pipeline builds one horse:
-//
-//  1. **Potential.** At each of a trait's ten loci the foal takes one allele from each parent,
-//     uniformly. That makes the foal's potential (its count of '1' alleles, 0-20) the sum of twenty
-//     independent Bernoulli draws whose probabilities are read straight off the parents' own
-//     genotypes - a Poisson-binomial, convolved exactly here rather than approximated. Twenty terms
-//     over twenty-one buckets is nothing; there is no reason to reach for a normal approximation.
-//  2. **Environmental noise**, Normal(0, conformation_noise_sd), rounded to a whole number exactly
-//     as rollEnvironmentalNoise rounds it. Enumerated over a grid rather than sampled.
-//  3. **Expression**, through the same geneticValue -> realization -> expressedValue chain
-//     conformationValues uses, at maturity and at the pairing's own COI.
+//  1. **The type-gene Punnett square.** Each parent contributes one of its two type-locus alleles,
+//     uniformly - four equally likely combinations, each producing a shown value via §2.3's
+//     faults-dominant rule (shownValueFor, typeGene.ts). Combinations that land on the same shown
+//     value are merged, so this is a distribution over at most four values, not four separate draws.
+//  2. **The polygenic modifier**, (potential - 10) * modifierStep. `potential`'s own distribution is
+//     exactly what foalPotentialDistribution already computed for the old model (unchanged - the
+//     20-bit block's inheritance is untouched by this slice, only what it's WORTH is demoted), so
+//     that function is kept verbatim and just re-scaled here.
+//  3. **Environmental noise**, Normal(0, conformation_noise_sd), rounded to a whole number exactly
+//     as rollEnvironmentalNoise rounds it - enumerated over a grid rather than sampled.
 //
 // The result is a probability distribution over expressed values, which the caller turns into a
 // range of labels. That last step matters and is easy to get wrong: a trait's label is NOT monotonic
@@ -25,10 +27,9 @@
 // a range of values maps to a SET of labels, and the honest summary is the best and worst word in
 // that set, not the words at its two ends.
 
-import { getPolygenicString, type Genotype } from './genotype';
+import { getPolygenicString, type Genotype, type AllelePair } from './genotype';
 import { LOCI_PER_TRAIT, type TraitCode } from './polygenic';
-import { expressedValue, realization, type RealizationConfig } from '../conformation/model';
-import { anchorFor } from '../conformation/traits';
+import { shownValueFor, TYPE_LOCUS_CODE } from '../conformation/typeGene';
 
 const TRAIT_STRING_LENGTH = LOCI_PER_TRAIT * 2;
 const MAX_POTENTIAL = LOCI_PER_TRAIT * 2;
@@ -49,7 +50,9 @@ function normalCdf(x: number): number {
 
 /**
  * The per-allele probabilities a parent contributes at each of a trait's loci: 0, 0.5 or 1,
- * depending on whether the parent carries zero, one or two '1' alleles there.
+ * depending on whether the parent carries zero, one or two '1' alleles there. Unchanged from before
+ * this slice - the 20-bit polygenic block's inheritance is untouched by §2.3, only what it's worth
+ * (the modifier, not the whole value) is demoted.
  */
 function parentAlleleProbabilities(genotype: Genotype, trait: TraitCode): number[] {
   const bits = getPolygenicString(genotype, trait, TRAIT_STRING_LENGTH);
@@ -63,8 +66,8 @@ function parentAlleleProbabilities(genotype: Genotype, trait: TraitCode): number
 }
 
 /**
- * The exact distribution of a foal's potential for one trait: index = potential (0..20), value =
- * probability. Convolution of twenty independent Bernoulli draws, ten from each parent.
+ * The exact distribution of a foal's polygenic potential for one trait: index = potential (0..20),
+ * value = probability. Convolution of twenty independent Bernoulli draws, ten from each parent.
  */
 export function foalPotentialDistribution(sire: Genotype, dam: Genotype, trait: TraitCode): number[] {
   const probabilities = [...parentAlleleProbabilities(sire, trait), ...parentAlleleProbabilities(dam, trait)];
@@ -103,36 +106,58 @@ function noiseGrid(sd: number): { noise: number; weight: number }[] {
   return out;
 }
 
+/**
+ * §2.3's 2x2 Punnett square: each parent's two type-gene alleles combine into four equally likely
+ * pairs, each read through shownValueFor (faults dominant) against the trait's breed target.
+ * Combinations landing on the same shown value are merged - the return is a distribution over the
+ * DISTINCT shown values, at most four entries.
+ */
+function typeGeneShownValueDistribution(sirePair: AllelePair, damPair: AllelePair, target: number): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const s of sirePair) {
+    for (const d of damPair) {
+      const shown = shownValueFor([s, d], target);
+      out.set(shown, (out.get(shown) ?? 0) + 0.25);
+    }
+  }
+  return out;
+}
+
 export interface FoalTraitPredictionInput {
   sire: Genotype;
   dam: Genotype;
   trait: TraitCode;
-  /** The pairing's own COI, the same number the breeding preview already computes and shows. */
-  coi: number;
+  /** The breed's own target for this trait (the same one conformationGeneticValue reads) - a
+   * caller with no single standard to judge against (a cross-breed pairing, or an untested/unshown
+   * parent) never calls this at all; there is no "unknown target" case to handle here. */
+  target: number;
+  modifierStep: number;
   noiseSd: number;
-  config: RealizationConfig;
 }
 
-/** Expressed value -> probability, at maturity, for a foal of this pairing. */
+/** Expressed value -> probability, for a foal of this pairing. No age/COI input at all (slice 0028
+ * §2.4: conformation is not realized by age, so there is nothing left to compute "at maturity" -
+ * the foal's predicted value IS its value at any age, including the day it's born). */
 export function foalExpressedDistribution(input: FoalTraitPredictionInput): Map<number, number> {
+  const sirePair = input.sire.mendelian[TYPE_LOCUS_CODE[input.trait]] ?? (['50', '50'] as AllelePair);
+  const damPair = input.dam.mendelian[TYPE_LOCUS_CODE[input.trait]] ?? (['50', '50'] as AllelePair);
+  const shownValues = typeGeneShownValueDistribution(sirePair, damPair, input.target);
+
   const potentials = foalPotentialDistribution(input.sire, input.dam, input.trait);
   const grid = noiseGrid(input.noiseSd);
-  const matureRealization = realization(input.config.conformation_maturity_years, input.coi, input.config);
-  const anchor = anchorFor(input.trait);
 
   const out = new Map<number, number>();
-  for (let potential = 0; potential <= MAX_POTENTIAL; potential++) {
-    const potentialWeight = potentials[potential];
-    if (potentialWeight === 0) continue;
-    for (const { noise, weight } of grid) {
-      const combined = potentialWeight * weight;
-      if (combined === 0) continue;
-      // geneticValue takes a genotype only so it can count alleles; the foal has none yet, so the
-      // same arithmetic (potential * 5 + noise, clamped to 1..99) is applied directly here. Kept in
-      // step with model.ts by a test that asserts the two agree for every potential.
-      const gv = Math.min(99, Math.max(1, potential * 5 + noise));
-      const expressed = expressedValue(gv, matureRealization, anchor);
-      out.set(expressed, (out.get(expressed) ?? 0) + combined);
+  for (const [shown, shownWeight] of shownValues) {
+    for (let potential = 0; potential <= MAX_POTENTIAL; potential++) {
+      const potentialWeight = potentials[potential];
+      if (potentialWeight === 0) continue;
+      const modifier = (potential - 10) * input.modifierStep;
+      for (const { noise, weight } of grid) {
+        const combined = shownWeight * potentialWeight * weight;
+        if (combined === 0) continue;
+        const expressed = Math.min(99, Math.max(1, Math.round(shown + modifier + noise)));
+        out.set(expressed, (out.get(expressed) ?? 0) + combined);
+      }
     }
   }
   return out;

@@ -48,16 +48,15 @@ function bands(cfg: ConfigValues) {
  * reads 'Unknown' - rather than the list rendering empty - when the horse has never started or its
  * breed has no standard, which is the same gate and the same wording the owner's own card uses.
  */
-export async function conformationLabelRowsFor(env: Env, horse: HorseRow, gameDay: number, cfg: ConfigValues): Promise<ConformationLabelRow[]> {
+export async function conformationLabelRowsFor(env: Env, horse: HorseRow, cfg: ConfigValues): Promise<ConformationLabelRow[]> {
   const [traitRows, breed, summary] = await Promise.all([
     getConformationTraits(env),
     horse.breed_id ? getBreedById(env, horse.breed_id) : Promise.resolve(undefined),
     getShowSummary(env, horse.id),
   ]);
 
-  const ageYears = (gameDay - horse.born_game_day) / cfg.game_days_per_year;
-  const values = conformationValues(parseGenotype(horse.genotype), noiseFor(horse.rng_seed, horse.environmental_noise), ageYears, horse.coi, cfg);
   const ideal = breed?.ideal_vector ? parseIdealVector(breed.ideal_vector) : null;
+  const values = conformationValues(parseGenotype(horse.genotype), noiseFor(horse.rng_seed, horse.environmental_noise), cfg, ideal);
   const eligible = (summary?.starts ?? 0) >= 1 && ideal !== null;
 
   const labels = conformationLabelsFor(values, ideal, cfg.show_ideal_falloff, bands(cfg), eligible);
