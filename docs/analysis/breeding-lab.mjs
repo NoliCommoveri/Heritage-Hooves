@@ -253,6 +253,10 @@ const PROP = {
   // play it is a paid decision per covering, so a run with `--coax 1` is the upper bound, not the
   // expectation. DECIDED 2026-08-07: one step, worst-TRAIT mode, mechanic picks the trait.
   coaxSteps: 0,
+  // What share of coverings actually buy care. 1 = every one (the upper bound the slice measured);
+  // a real child pays 500 and a turn, so the honest question is what rate a line needs, not what
+  // it does at 100%. Drawn from the foal's own seed, never Math.random.
+  coaxChance: 1,
   coaxPolicy: 'worst',       // DECIDED — the allele furthest from standard ('finish' = the tested player's choice)
   coaxMode: 'shown',         // DECIDED — move the worst TRAIT one rung ('allele' loses ~half of purchases silently)
 
@@ -1031,6 +1035,7 @@ const TUNABLE = {
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
   'coax': ['coaxSteps', Number],
+  'coax-chance': ['coaxChance', Number],
   'coax-policy': ['coaxPolicy', String],
   'coax-mode': ['coaxMode', String],
   'expression': ['expression', String],
@@ -1681,7 +1686,7 @@ function cmdDynasty(flags) {
   const looksAt = new Array(rounds + 1).fill(0);   // runs whose FIRST looks-finished horse is round r
   const fixedAt = new Array(rounds + 1).fill(0);
   const goalAt = new Array(rounds + 1).fill(0);    // ... whose first foal meeting `goal` is round r
-  let looksNever = 0, fixedNever = 0, goalNever = 0, totalFoals = 0, totalBought = 0;
+  let looksNever = 0, fixedNever = 0, goalNever = 0, totalFoals = 0, totalBought = 0, totalCare = 0;
   // Per-generation ledger: what the parents were worth, what the foals came out at, and the gap.
   // The mid-parent figure is the average of the ACTUAL sire and dam of each foal, not the herd
   // average, so "gain" is the honest answer to "did this mating move the line forward".
@@ -1762,8 +1767,10 @@ function cmdDynasty(flags) {
         const fs = deriveSeed(deriveSeed(state.seed, `dyn_${run}_${r}_${mare.id}`), 'foal');
         // Coaxing is applied at birth and only to home-bred foals: a founding horse arrives already
         // grown (4-8y), past the window a young-horse programme could ever have reached.
+        const boughtCare = PROP.coaxChance >= 1 || streamFor(fs, 'coax_bought')() < PROP.coaxChance;
         const foalG = coaxGenotype(state, makeFoal(state, stud.genotype, mare.genotype, fs),
-          state.breed, PROP.coaxSteps, PROP.coaxPolicy);
+          state.breed, boughtCare ? PROP.coaxSteps : 0, PROP.coaxPolicy);
+        if (boughtCare && PROP.coaxSteps > 0) totalCare++;
         const foal = addHorse(state, { genotype: foalG,
           ageYears: MATURITY_YEARS, sire: stud.id, dam: mare.id, seed: fs });
         enrol(foal, streamFor(fs, 'sex')() < 0.5 ? 'F' : 'M');
@@ -1819,8 +1826,13 @@ function cmdDynasty(flags) {
   console.log(`DYNASTY — ${BREEDS[breed].name}, band ${band}, engine ${engine} | ${tuningNote(tuning)}`);
   if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, expression ${PROP.expression}, specialist ${PROP.specialist}`);
   console.log(`${nMares} founding mares + ${nStuds} founding stallions. Each mare may be bred ${cap} times in her life.`);
-  console.log(`One foal per broodmare per round, best ${nMares} mares and best ${nStuds} stallions kept, ${outcross ? `${outcross} bought in per round` : 'closed herd, nothing bought in'}.`);
-  console.log(select === 'tested' ? 'Selection is on TESTED genotype.' : 'Selection is on visible score — a child who has not tested cannot see genes.');
+  console.log(`One foal per broodmare per round, best ${nMares} mares and best ${nStuds} stallions kept, ` +
+    `${herd ? `${herd} stalls` : 'unlimited stalls'}, ` +
+    `${outcross ? `${outcross} bought in per round` : restock ? `a ${buyBand}-band horse bought whenever the breeding set is short` : 'closed herd, nothing bought in'}.`);
+  if (PROP.coaxSteps > 0) console.log(`Mare prenatal care: ${PROP.coaxSteps} rung(s) on ${(PROP.coaxChance * 100).toFixed(0)}% of coverings.`);
+  console.log(select === 'tested' ? 'Selection is on TESTED genotype.'
+    : select === 'mixed' ? `Selection reads the genotype 1 round in ${informedEvery}; on the others it reads only what a horse shows.`
+    : 'Selection is on visible score — a child who has not tested cannot see genes.');
   console.log(`${runs} runs, ${rounds} rounds each, ${(totalFoals / runs).toFixed(0)} foals bred per run on average.\n`);
 
   console.log('  gen |  parents   foals    gain | on target  FIXED   best foal   COI');
@@ -1862,7 +1874,8 @@ function cmdDynasty(flags) {
     }
     console.log(`\n  First ${goal}-band foal — earliest 10% of runs: gen ${quantile(goalAt, goalNever, 0.10)}, median gen ${quantile(goalAt, goalNever, 0.50)}, 90% of runs by gen ${quantile(goalAt, goalNever, 0.90)}`);
     console.log(`  Runs with no ${goal}-band foal in ${rounds} generations: ${(goalNever / runs * 100).toFixed(1)}%`);
-    console.log(`  Horses bought in: ${(totalBought / runs).toFixed(1)} per run, ${(totalFoals / runs).toFixed(1)} foals bred per run.`);
+    console.log(`  Horses bought in: ${(totalBought / runs).toFixed(1)} per run, ${(totalFoals / runs).toFixed(1)} foals bred per run, ` +
+      `prenatal care bought ${(totalCare / runs).toFixed(1)} times per run.`);
   }
   console.log('\n  "F" is the founding batch itself — a run scoring there was handed a finished horse on day one.');
 }
