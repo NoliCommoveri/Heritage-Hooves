@@ -180,6 +180,7 @@ const PROP = {
   // "barn is missing the allele" column and §14 of the fix document.
   foundingMode: 'peak',      // 'peak' | 'ring'
   ringTargetChance: 0.06,    // ring only: P(an allele IS exactly the target rung)
+  ringHoleSuppression: 0,    // ring only: weight multiplier for alleles inside the hole (0 = hard hole)
   ringHoleRungs: 1,          // ring only: rungs either side of target also excluded (0 = target only)
 
   // Proposal 1 (2026-08-07): an inherited allele may move one rung. Solves "the target allele is
@@ -293,7 +294,14 @@ function poolForTarget(targetRung, band) {
   for (let r = 0; r < n; r++) {
     const d = Math.abs(r - targetRung) * PROP.rungStep;
     if (r === targetRung) continue;                                    // handled below, both modes
-    if (ring && Math.abs(r - targetRung) <= PROP.ringHoleRungs) continue;   // the hole
+    if (ring && Math.abs(r - targetRung) <= PROP.ringHoleRungs) {
+      // A SOFT hole (ringHoleSuppression > 0) keeps the near-target alleles rare rather than
+      // absent. That distinction is load-bearing: a hard hole deletes them from the gene pool
+      // for good, so a line climbing toward the standard has no intermediate rung to stand on
+      // and must jump the whole gap in one lucky draw. Soft keeps the climb gradual and visible.
+      w[r] = fallawayAt(d) * PROP.ringHoleSuppression;
+      continue;
+    }
     w[r] = fallawayAt(d);
   }
 
@@ -681,6 +689,7 @@ const TUNABLE = {
   'founding-mode': ['foundingMode', String],
   'target-chance': ['ringTargetChance', Number],
   'hole': ['ringHoleRungs', Number],
+  'hole-suppression': ['ringHoleSuppression', Number],
   'drift': ['driftChance', Number],
   'inbreeding': ['inbreedingFactor', Number],
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
@@ -688,6 +697,7 @@ const TUNABLE = {
   'expression': ['expression', String],
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
+  'rungs-per-band': ['rungsPerBand', Number],
 };
 function tuningFromFlags(flags) {
   const t = {};
@@ -718,7 +728,17 @@ function achievableDistances() {
  */
 function derivedLabelMins() {
   const d = achievableDistances();
-  const edge = (i) => 100 - ((d[i] + d[i + 1]) / 2) * FALLOFF;
+  const k = Math.max(1, PROP.rungsPerBand ?? 1);
+  // Each word covers k achievable steps; the edge sits between the last one it covers and the
+  // first one it does not. With k > 1 the label deliberately SATURATES before the genes do —
+  // a horse can read Outstanding and still have real distance left to breed out, which the show
+  // score (continuous in distance) goes on rewarding after the word has stopped moving.
+  const edge = (j) => {
+    const lo = d[(j + 1) * k - 1], hi = d[(j + 1) * k];
+    if (lo == null) return 0;
+    if (hi == null) return 100 - lo * FALLOFF;
+    return 100 - ((lo + hi) / 2) * FALLOFF;
+  };
   return { outstanding: edge(0), good: edge(1), acceptable: edge(2), weak: edge(3) };
 }
 
@@ -1317,18 +1337,20 @@ function cmdBands(flags) {
   console.log(`LABEL BANDS — ${BREEDS[breed].name}, band ${band} | ${tuningNote(tuning)}`);
   console.log(`Ladder: step ${PROP.rungStep}, expression ${PROP.expression}, modifier +/-${(LOCI_PER_TRAIT * PROP.modifierStep).toFixed(2)}, noise SD ${PROP.noiseSd}\n`);
 
-  const meaning = PROP.expression === 'random'
-    ? ['both alleles correct, or showing the correct one', 'showing an allele one rung out',
-       'showing an allele two rungs out', 'showing an allele three rungs out']
-    : ['BOTH alleles correct (breeds true)', 'ONE allele correct (a carrier)',
-       'no correct allele, one rung out', 'no correct allele, one and a half rungs out'];
-  console.log('  distance  what it means genetically                  word');
-  console.log('  --------  ----------------------------------------   -----------');
+  const k = Math.max(1, PROP.rungsPerBand ?? 1);
+  const unit = PROP.expression === 'random' ? 'rung' : 'half-rung';
+  console.log(`  Each word covers ${k} ${unit}${k > 1 ? 's' : ''} of distance from the standard.\n`);
+  console.log('  distance      what the horse is showing                     word');
+  console.log('  ------------  -------------------------------------------   -----------');
   const words = ['Outstanding', 'Good', 'Acceptable', 'Weak'];
-  for (let i = 0; i < 4; i++) {
-    console.log(`  ${padL(d[i].toFixed(1), 8)}  ${pad(meaning[i] ?? '', 40)}   ${words[i]}`);
+  for (let j = 0; j < 4; j++) {
+    const lo = j * k, hi = (j + 1) * k - 1;
+    if (d[lo] == null) break;
+    const span = k === 1 ? `${d[lo]} pts` : `${d[lo]}-${d[hi] ?? '+'} pts`;
+    const steps = k === 1 ? `${lo} ${unit}s out` : `${lo}-${hi} ${unit}s out`;
+    console.log(`  ${pad(span, 12)}  ${pad(steps + (lo === 0 ? ' (0 = the standard allele itself)' : ''), 43)}   ${words[j]}`);
   }
-  console.log(`  ${padL('>' + d[3].toFixed(1), 8)}  ${pad('further out still', 40)}   Poor`);
+  console.log(`  ${pad('further', 12)}  ${pad('beyond that', 43)}   Poor`);
   console.log(`\n  Derived thresholds: Outstanding >=${LABEL_MIN.outstanding.toFixed(1)}, Good >=${LABEL_MIN.good.toFixed(1)}, ` +
     `Acceptable >=${LABEL_MIN.acceptable.toFixed(1)}, Weak >=${LABEL_MIN.weak.toFixed(1)}`);
   console.log(`  A horse crosses a boundary if modifier + noise moves it more than ${((d[1] - d[0]) / 2).toFixed(1)} points.\n`);
