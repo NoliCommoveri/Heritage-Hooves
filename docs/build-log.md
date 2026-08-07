@@ -1043,3 +1043,58 @@ they are easy to trip over from outside it:
   fourteen traits, so tightening conformation silently tightens every discipline class too.
 
 Nothing is built. Migrations `0176`–`0181` are reserved by that slice; it needs a world reset.
+
+---
+**2026-08-07 (later) — Conformation genetics: the 4-point ladder, dealt bands, and NPC upkeep.**
+Slice 0028 amended after a second round of measurement. Still nothing built; migrations `0176`–`0184`
+are now reserved (was `0176`–`0181`). The four changes a session should know about:
+
+- **The ladder is a rung every 4 points, 25 alleles, reach 6 rungs.** The reach is unchanged *in
+  points* (24) — the same window sampled twice as finely. Two rungs make one word, which lines up
+  exactly with `show_ideal_falloff` 2.0. **Poor becomes unreachable inside a breed** (the worst a
+  horse can reach is ~26 points; Poor needs >35), surviving only for cross-breed and hand-created
+  horses. The label edges move to the midpoints, 88/72/56/40, which takes word-matches-genotype from
+  97% to 100%.
+- **§2.3's guarantee is weaker and the slice now says so.** On the 8-point ladder a trait reading
+  Outstanding was homozygous-at-standard 100% of the time. It is now "both alleles within one rung",
+  true homozygous **55%** of the time. That is a real loss, bought deliberately: the word saturates
+  before the genes do, so a child gets a horse that looks perfect and still has breeding left. **The
+  consequence for anyone reading old text: `dynasty`'s `on target` and `FIXED` columns are SUPPOSED
+  to diverge now.** The earlier draft used their agreement as the diagnostic for rule 2 having been
+  violated; that diagnostic is dead and must not be "fixed".
+- **Quality bands are dealt, not drawn.** Each band is five pair-specs giving a fixed profile of
+  words (low 1 Outstanding + 1 Weak, mid 2 + 1, high 3 + none), identical across all eight breeds by
+  construction and monotonic per trait without checking. Two consequences: the concentration-weighted
+  pool is gone, and **round-robin specialist assignment across a founding batch is now mandatory
+  rather than a nicety** — drawn per horse it leaves 89% of six-horse barns unable to ever breed some
+  trait right, against 0% round-robin.
+- **Mare prenatal care moves two rungs (8 points), and it is the mechanism rather than an
+  accelerator.** Measured in a barn under real constraints, a line that never buys it fails to
+  produce an all-Outstanding horse in 25 generations **97% of the time**; buying on half of coverings
+  gives a median of 15. `prenatal_care_cost` is therefore the most load-bearing number in the slice.
+  **NPC breeding stables must buy it too** (`npc_prenatal_care_chance`) and must read the genotype for
+  about half their stock (`npc_tested_share`), or their lines go stale below a ceiling that has not
+  moved — new §2.7. Neither key raises the NPC ceiling and the migration comment must say so.
+
+Two findings from the same measurements that are game design rather than genetics, recorded because
+they are cheap to act on: **`npc_show_barn_rank_plan` mints Novice at `mid`**, so a founding horse
+meets a mid-band field in its first Novice class (3% wins where low band would give 21%) — slice 0028
+§9.1. And **buying on looks costs a child ~3 generations while stud service gains ~2**, so the
+conformation panel pays for itself twice and wants to be cheap.
+
+The bench grew the machinery these needed and **its defaults still reproduce the 8-point ladder**, so
+the amended design must be asked for on the command line — slice 0028 §10 has the flag string. New:
+`--herd` (stalls), `--restock`/`--market`/`--stud-service`/`--market-bands` (a real market),
+`--select mixed --informed-every` (testing part of the time), `--coax-chance`, `--goal <band>`, a
+score-spread table and a word census on `sweep`, and a `stranded` column that counts barns holding
+nothing *within one rung* — the right dead-end measure once care can walk an allele in.
+
+**2026-08-07 — Match the check to the change.** Recorded in CLAUDE.md §9 at the operator's
+instruction, after a session ran `npm ci` and the full 908-test suite to verify a change that was
+almost entirely a document edit. The change did also add `migrations/0176` and its two-line
+registration in `src/db/migrations.ts`, so it was not *purely* documentation and some check was
+owed — but the proportionate one was `npx tsc --noEmit` plus the single D1 test file covering the
+area, not a dependency install and every test in the repository. The operator does not have a
+terminal and cannot see why a session went quiet for several minutes; spending that on a document is
+a real cost with nothing bought. **The tell is `npm ci`: if a check will not run without installing
+dependencies first, the check is too big for the change.**

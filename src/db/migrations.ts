@@ -173,6 +173,7 @@ import m0172 from '../../migrations/0172_show_barn_split.sql';
 import m0173 from '../../migrations/0173_config_show_barn_plan.sql';
 import m0174 from '../../migrations/0174_accounts_paused.sql';
 import m0175 from '../../migrations/0175_show_classes_allow_parallel.sql';
+import m0176 from '../../migrations/0176_show_barn_novice_low_band.sql';
 
 export interface MigrationFile {
   name: string;
@@ -362,6 +363,7 @@ export const MIGRATIONS: MigrationFile[] = [
   { name: '0173_config_show_barn_plan.sql', sql: m0173 },
   { name: '0174_accounts_paused.sql', sql: m0174 },
   { name: '0175_show_classes_allow_parallel.sql', sql: m0175 },
+  { name: '0176_show_barn_novice_low_band.sql', sql: m0176 },
 ];
 
 const MIGRATIONS_TABLE = 'd1_migrations';

@@ -253,8 +253,25 @@ const PROP = {
   // play it is a paid decision per covering, so a run with `--coax 1` is the upper bound, not the
   // expectation. DECIDED 2026-08-07: one step, worst-TRAIT mode, mechanic picks the trait.
   coaxSteps: 0,
+  // What share of coverings actually buy care. 1 = every one (the upper bound the slice measured);
+  // a real child pays 500 and a turn, so the honest question is what rate a line needs, not what
+  // it does at 100%. Drawn from the foal's own seed, never Math.random.
+  coaxChance: 1,
   coaxPolicy: 'worst',       // DECIDED — the allele furthest from standard ('finish' = the tested player's choice)
   coaxMode: 'shown',         // DECIDED — move the worst TRAIT one rung ('allele' loses ~half of purchases silently)
+
+  // THE REALIZATION ANCHOR (operator, 2026-08-07). expressedValue pulls a horse's genetic value
+  // toward an anchor by the age curve, so below maturity a horse does not read as its own genotype.
+  //   'fifty'  today's behaviour: anchor 50, the population centre. A young horse of a breed whose
+  //            standard is far from 50 reads badly however good it is - an Arabian head at the
+  //            standard (8) reads about 16 at the adult classes' own minimum age. The best possible
+  //            yearling can never read Outstanding, and young-horse classes measure the wrong thing.
+  //   'target' anchor the horse's OWN breed standard. At maturity the two are identical (the curve
+  //            is 1.0); below it a young horse reads closer to breed-typical and converges on its
+  //            real genotype as it grows. Only safe once inbreeding depression is off conformation
+  //            expression - see slice 0028 §4 rule 3, which is about COI multiplying realization,
+  //            not about the age curve.
+  anchorMode: 'fifty',
 
   // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
   //   'average'  the fix document as written: the mean of the two, co-dominant.
@@ -813,10 +830,15 @@ function confParts(state, horse, trait) {
   }
   const geneticVal = clamp99((typeValue ?? 0) + modifier + noise);
   const target = targetFor(state, horse.breed, trait);
-  const now = clamp99(expressedValue(geneticVal, realization(horse.ageYears, horse.coi), ANCHOR_BI));
-  const mature = clamp99(expressedValue(geneticVal, realization(MATURITY_YEARS, horse.coi), ANCHOR_BI));
+  const anchor = PROP.anchorMode === 'target' && state.engine === 'proposed' ? target : ANCHOR_BI;
+  const now = clamp99(expressedValue(geneticVal, realization(horse.ageYears, horse.coi), anchor));
+  const mature = clamp99(expressedValue(geneticVal, realization(MATURITY_YEARS, horse.coi), anchor));
   const score = Math.max(0, 100 - Math.abs(mature - target) * FALLOFF);
-  return { trait, typeAlleles, typeValue, modifier, noise, geneticVal, now, mature, target, dist: Math.abs(mature - target), score };
+  // What a JUDGE sees, and what the horse page prints: the value at the horse's age today, never
+  // the matured one. Everything else in this tool scores off `mature`, which is why the age curve
+  // stayed invisible here for so long - see slice 0028 §9.
+  const scoreNow = Math.max(0, 100 - Math.abs(now - target) * FALLOFF);
+  return { trait, typeAlleles, typeValue, modifier, noise, geneticVal, now, mature, target, dist: Math.abs(mature - target), score, scoreNow };
 }
 function abilityParts(state, horse, trait) {
   const noise = noiseFor(state, horse.seed)[trait];
@@ -1031,11 +1053,13 @@ const TUNABLE = {
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
   'coax': ['coaxSteps', Number],
+  'coax-chance': ['coaxChance', Number],
   'coax-policy': ['coaxPolicy', String],
   'coax-mode': ['coaxMode', String],
   'expression': ['expression', String],
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
+  'anchor': ['anchorMode', String],
   'rungs-per-band': ['rungsPerBand', Number],
   'founder-max-outstanding': ['founderMaxOutstanding', Number],
 };
@@ -1286,6 +1310,13 @@ function statsFor(state, horses) {
   // gene a child cannot see and would cull. Under 'average' a het horse shows half its good allele;
   // under 'random' it shows either all of it or none of it.
   let hidden = 0, hiddenOf = 0;
+  // The word census (2026-08-07). What FIVE WORDS does a founding horse actually show? This is the
+  // band stated in the child's own vocabulary, and it is the only way to check a band rule written
+  // as "always gets a Weak trait" actually delivers one. `worstSeen` is the floor the whole system
+  // can reach: if Poor never appears, the word is unreachable and should be said to be.
+  const words = { Outstanding: 0, Good: 0, Acceptable: 0, Weak: 0, Poor: 0 };
+  let withWeakOrWorse = 0, maxDist = 0;
+  const scoreList = [];
   for (const h of horses) {
     const parts = CONF_TRAITS.map((t) => confParts(state, h, t));
     // The false signal, measured: traits that READ Outstanding while carrying no correct allele.
@@ -1298,6 +1329,9 @@ function statsFor(state, horses) {
         if (holds) { hiddenOf++; if (!onTarget(p.score)) hidden++; }
       }
     }
+    for (const p of parts) { words[label(p.score)]++; if (p.dist > maxDist) maxDist = p.dist; }
+    if (parts.some((p) => label(p.score) === 'Weak' || label(p.score) === 'Poor')) withWeakOrWorse++;
+    scoreList.push(conformationScore(state, h));
     score += conformationScore(state, h);
     on += parts.filter((p) => onTarget(p.score)).length;
     dev += parts.reduce((a, p) => a + p.dist, 0) / CONF_TRAITS.length;
@@ -1309,7 +1343,9 @@ function statsFor(state, horses) {
   }
   const n = horses.length;
   return { n, score: score / n, on: on / n, fixed: fixed / n, carries: carries / n, dev: dev / n, wrongBreed: wrongBreed / n,
-    blind: blindOf ? blind / blindOf : 0, hidden: hiddenOf ? hidden / hiddenOf : 0 };
+    blind: blindOf ? blind / blindOf : 0, hidden: hiddenOf ? hidden / hiddenOf : 0,
+    words: Object.fromEntries(Object.entries(words).map(([k, v]) => [k, v / n])), withWeak: withWeakOrWorse / n, maxDist,
+    scores: scoreList.sort((a, b) => a - b) };
 }
 
 /**
@@ -1318,19 +1354,27 @@ function statsFor(state, horses) {
  * Mendelian inheritance shuffles alleles, it never invents one. Drift is the other way out.
  */
 function barnMissRate(state, barnSize, trials, seedBase) {
-  let anyMissing = 0, totalTraitsMissing = 0;
+  let anyMissing = 0, totalTraitsMissing = 0, anyStranded = 0;
   for (let k = 0; k < trials; k++) {
     const barn = mintPopulation(state, barnSize, deriveSeed(seedBase, `barn_${k}`));
-    let missing = 0;
+    let missing = 0, stranded = 0;
     for (const t of CONF_TRAITS) {
       const target = nearestRung(BREEDS[state.breed].ideal[t][0]);
       const copies = barn.reduce((a, h) => a + h.genotype.type[t].filter((x) => x === target).length, 0);
       if (copies === 0) missing++;
+      // STRANDED, added 2026-08-07 for the step-4 ladder. "No exact allele" is the wrong dead end
+      // once mare prenatal care exists (§2.7): care moves an allele ONE RUNG toward the standard,
+      // so a barn holding a one-rung-off allele can manufacture the exact one in a single covering.
+      // A barn is only genuinely stuck on a trait when it holds nothing within one rung — which is
+      // the number that should be read at step 4, where a rung is 4 points rather than 8.
+      const near = barn.reduce((a, h) => a + h.genotype.type[t].filter((x) => Math.abs(x - target) <= 1).length, 0);
+      if (near === 0) stranded++;
     }
     if (missing > 0) anyMissing++;
+    if (stranded > 0) anyStranded++;
     totalTraitsMissing += missing;
   }
-  return { any: anyMissing / trials, perBarn: totalTraitsMissing / trials };
+  return { any: anyMissing / trials, perBarn: totalTraitsMissing / trials, stranded: anyStranded / trials };
 }
 
 function cmdSweep(flags) {
@@ -1350,6 +1394,7 @@ function cmdSweep(flags) {
   console.log('                         |                                  |                       carries-      but-looks-');
   console.log('                         |                                  |                       nothing       wrong');
   console.log('  ----------------- ---- | -----  ---------  -----  ------- | --------  -----------  -----------   ----------');
+  const wordRows = [];
   for (const breed of breeds) {
     for (const band of bands) {
       const state = { engine, breed, band, seed, horses: [] };
@@ -1357,7 +1402,8 @@ function cmdSweep(flags) {
       const miss = engine === 'proposed'
         ? barnMissRate(state, barn, 400, deriveSeed(seed, `miss_${breed}_${band}`))
         : { any: NaN, perBarn: NaN };
-      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 11)}   ${padL((s.hidden * 100).toFixed(1) + '%', 10)}  [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}%` : 'n/a'}]`);
+      console.log(`  ${pad(BREEDS[breed].name, 17)} ${pad(band, 4)} | ${padL(s.score.toFixed(1), 5)}  ${padL(s.on.toFixed(2), 4)} of 5  ${padL(s.fixed.toFixed(2), 5)}  ${padL(s.carries.toFixed(2), 7)} | ${padL(s.dev.toFixed(1), 8)}  ${padL((s.wrongBreed * 100).toFixed(1) + '%', 11)}  ${padL((s.blind * 100).toFixed(1) + '%', 11)}   ${padL((s.hidden * 100).toFixed(1) + '%', 10)}  [barn missing: ${engine === 'proposed' ? `${(miss.any * 100).toFixed(0)}% exact, ${(miss.stranded * 100).toFixed(0)}% stranded` : 'n/a'}]`);
+      wordRows.push([`${pad(BREEDS[breed].name, 17)} ${pad(band, 4)}`, s]);
     }
   }
   console.log('');
@@ -1369,6 +1415,31 @@ function cmdSweep(flags) {
   console.log('  wrong-breed share of horses with at least one trait more than 25 points off (§1.1)');
   console.log('  looks-right share of Outstanding-reading traits whose horse carries NO correct allele —');
   console.log('              the false signal a child selecting on looks cannot see through');
+  console.log('');
+  console.log('  THE SPREAD — how far apart the horses of one band actually are. The tails are the mean of');
+  console.log('  the worst fifth and the best fifth, which is what a child comparing two barns sees.');
+  console.log('');
+  console.log('  breed             band | worst 20%    mean   best 20% | spread   worst   best');
+  console.log('  ----------------- ---- | ---------  ------  --------- | ------  ------  -----');
+  for (const [key, s] of wordRows) {
+    const q = s.scores, k = Math.max(1, Math.round(q.length * 0.2));
+    const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    const lo = mean(q.slice(0, k)), hi = mean(q.slice(-k));
+    console.log(`  ${pad(key, 22)} | ${padL(lo.toFixed(1), 9)}  ${padL(mean(q).toFixed(1), 6)}  ${padL(hi.toFixed(1), 9)} | ${padL((hi - lo).toFixed(1), 6)}  ${padL(q[0].toFixed(1), 6)}  ${padL(q[q.length - 1].toFixed(1), 5)}`);
+  }
+  console.log('');
+  console.log('  THE WORD CENSUS — the five words a founding horse actually shows, averaged per horse.');
+  console.log('  This is the band restated in the vocabulary a child reads, and the check on a band rule');
+  console.log('  written as "always gets a Weak trait".');
+  console.log('');
+  console.log('  breed             band | Outstndg  Good  Accept   Weak   Poor | has a Weak+  worst seen');
+  console.log('  ----------------- ---- | --------  ----  ------  -----  ----- | -----------  ----------');
+  for (const [key, s] of wordRows) {
+    console.log(`  ${pad(key, 22)} | ${padL(s.words.Outstanding.toFixed(2), 8)}  ${padL(s.words.Good.toFixed(2), 4)}  ${padL(s.words.Acceptable.toFixed(2), 6)}  ${padL(s.words.Weak.toFixed(2), 5)}  ${padL(s.words.Poor.toFixed(2), 5)} | ${padL((s.withWeak * 100).toFixed(0) + '%', 11)}  ${padL(s.maxDist.toFixed(0) + ' pts off', 10)}`);
+  }
+  console.log('');
+  console.log('  stranded    share of starting barns holding nothing within ONE RUNG of the standard for');
+  console.log('              some trait - the real dead end once prenatal care can walk an allele in.');
   console.log('  missing     share of starting barns with NO copy of the right allele for some trait,');
   console.log('              i.e. a trait that child can never breed correct without buying in.');
 }
@@ -1391,11 +1462,53 @@ function targetAlleleCount(h) {
     return a + h.genotype.type[t].filter((x) => x === target).length;
   }, 0);
 }
+/**
+ * Total distance, in rungs, of all ten conformation alleles from their own breed's standard. This
+ * is what a player who has BOUGHT THE TEST actually knows, and on a fine ladder it is a far better
+ * signal than counting exact hits: at step 4 most horses carry zero exact alleles, so
+ * targetAlleleCount cannot tell a horse one rung out from one six rungs out. Lower is better.
+ */
+function alleleDistance(h) {
+  return CONF_TRAITS.reduce((a, t) => {
+    const target = nearestRung(BREEDS[h.breed].ideal[t][0]);
+    return a + h.genotype.type[t].reduce((b, x) => b + Math.abs(x - target), 0);
+  }, 0);
+}
 function rankerFor(state, mode) {
   if (mode === 'tested' && state.engine === 'proposed') {
-    return (a, b) => (targetAlleleCount(b) - targetAlleleCount(a)) || (conformationScore(state, b) - conformationScore(state, a));
+    return (a, b) => (alleleDistance(a) - alleleDistance(b)) || (conformationScore(state, b) - conformationScore(state, a));
   }
   return (a, b) => conformationScore(state, b) - conformationScore(state, a);
+}
+
+// The word index a label carries: 0 Outstanding .. 4 Poor, so "lower is better" sorts correctly
+// and a bucket index from quotaPairs is the same number as the word it produces.
+const WORD_ORDER = ['Outstanding', 'Good', 'Acceptable', 'Weak', 'Poor'];
+const wordIndex = (w) => WORD_ORDER.indexOf(w);
+
+/** A horse's five words as indices, best first - the thing a child compares between two horses. */
+function wordProfile(state, h) {
+  return CONF_TRAITS.map((t) => wordIndex(label(confParts(state, h, t).score))).sort((a, b) => a - b);
+}
+
+/**
+ * The word profile a band DEALS, best first. Under the faults-dominant rule a pair shows its worse
+ * allele, so a pair-spec's word is simply the higher of its two bucket indices - which is why the
+ * band table can be read straight off quotaPairs with no simulation at all.
+ */
+function bandProfile(band) {
+  return (PROP.quotaPairs[band] ?? PROP.quotaPairs.low).map((p) => Math.max(p[0], p[1])).sort((a, b) => a - b);
+}
+
+/**
+ * "Is this foal a mid-band horse?" - true when its words are at least as good as that band's dealt
+ * profile TRAIT FOR TRAIT, not on average. A horse with three Outstanding and two Weak does not
+ * clear mid, and should not: the band is a shape, and the whole point of dealing it rather than
+ * drawing it was that every horse of a band is the same shape.
+ */
+function meetsBand(state, h, band) {
+  const mine = wordProfile(state, h), want = bandProfile(band);
+  return mine.every((w, i) => w <= want[i]);
 }
 
 /**
@@ -1570,7 +1683,32 @@ function cmdDynasty(flags) {
   const runs = Number(flags.runs ?? 400);
   const outcross = Number(flags.outcross ?? 0);
   const select = flags.select ?? 'score';
-  if (!['score', 'tested'].includes(select)) { console.error('--select must be "score" or "tested"'); process.exit(1); }
+  if (!['score', 'tested', 'mixed'].includes(select)) { console.error('--select must be "score", "tested" or "mixed"'); process.exit(1); }
+  // 'mixed' (operator, 2026-08-07): the honest middle. A child does not test every horse every
+  // year - they buy the conformation panel now and then and breed on looks the rest of the time.
+  // One round in `informedEvery` ranks on the genotype; the others rank on what the horse shows.
+  const informedEvery = Number(flags['informed-every'] ?? 4);
+  // Buy a replacement only WHEN SHORT, rather than a fixed number every round: with a breeding cap
+  // a herd runs out of eligible mares on its own, and what a player actually does at that moment is
+  // go to the market. --outcross (a fixed intake every round) is the older, blunter dial; the two
+  // are independent and can both be on.
+  const restock = flags.restock !== undefined && flags.restock !== 'false' && flags.restock !== '0';
+  const buyBand = flags['buy-band'] ?? 'low';
+  const goal = flags.goal ?? 'mid';
+  const herd = Number(flags.herd ?? 0);          // 0 = keep every horse ever bred (the old behaviour)
+  // THE MARKET (operator, 2026-08-07). --restock only buys when the breeding set cannot be FILLED,
+  // which is not what a player does. A player sells a horse whose usefulness is spent and buys one
+  // that opens a pairing they want - so the market is offered every round and taken when it beats
+  // what the barn already owns, judged with the SAME ranker the round is using (on a blind round
+  // you buy on looks, like everyone else). Money is not modelled; --buy-per-round is the stand-in
+  // for a budget, and it is the number to move if purchases look too easy.
+  const market = Number(flags.market ?? 0);              // candidates offered per round; 0 = off
+  const buyPerRound = Number(flags['buy-per-round'] ?? 1);
+  const studService = flags['stud-service'] !== undefined && flags['stud-service'] !== '0' && flags['stud-service'] !== 'false';
+  // "Start at mid, move up to high once you need it." Escalate when the current band has failed to
+  // offer an improvement for `escalateAfter` rounds running - the band is exhausted, not the money.
+  const marketBands = String(flags['market-bands'] ?? 'mid,high').split(',');
+  const escalateAfter = Number(flags['escalate-after'] ?? 2);
   const tuning = tuningFromFlags(flags);
   applyTuning(tuning);
 
@@ -1579,7 +1717,11 @@ function cmdDynasty(flags) {
 
   const looksAt = new Array(rounds + 1).fill(0);   // runs whose FIRST looks-finished horse is round r
   const fixedAt = new Array(rounds + 1).fill(0);
-  let looksNever = 0, fixedNever = 0, totalFoals = 0;
+  const goalAt = new Array(rounds + 1).fill(0);    // ... whose first foal meeting `goal` is round r
+  let looksNever = 0, fixedNever = 0, goalNever = 0, totalFoals = 0, totalBought = 0, totalCare = 0;
+  let totalStudService = 0, totalMarketBuys = 0;
+  const escalatedAt = new Array(rounds + 1).fill(0);
+  let escalatedNever = 0;
   // Per-generation ledger: what the parents were worth, what the foals came out at, and the gap.
   // The mid-parent figure is the average of the ACTUAL sire and dam of each foal, not the herd
   // average, so "gain" is the honest answer to "did this mating move the line forward".
@@ -1588,7 +1730,8 @@ function cmdDynasty(flags) {
   for (let run = 0; run < runs; run++) {
     const state = { engine, breed, band, seed: Number(flags.seed ?? 31337), horses: [] };
     const memo = new Map();
-    let firstLooks = null, firstFixed = null;
+    let firstLooks = null, firstFixed = null, firstGoal = null, firstEscalate = null;
+    let bandIdx = 0, dryRounds = 0;
 
     const enrol = (h, sex) => { h.sex = sex; h.births = 0; return h; };
     for (let i = 0; i < nMares + nStuds; i++) {
@@ -1611,10 +1754,92 @@ function cmdDynasty(flags) {
       if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = 0;
     }
 
-    const rank = rankerFor(state, select);
     for (let r = 1; r <= rounds; r++) {
-      const mares = state.horses.filter((h) => h.sex === 'F' && h.births < cap).sort(rank).slice(0, nMares);
-      const studs = state.horses.filter((h) => h.sex === 'M').sort(rank).slice(0, nStuds);
+      // The ranker is chosen PER ROUND, not once for the run: under 'mixed' this round's culling
+      // and mating either sees the genotype or does not, and which one it is decides the whole
+      // round's decisions together, the way buying a panel in one season would.
+      const rank = rankerFor(state, select === 'mixed' ? (r % informedEvery === 0 ? 'tested' : 'score') : select);
+      // Restocking happens BEFORE selection, so a horse bought this round can be bred this round -
+      // a purchase is a grown horse off the market, not a foal.
+      if (restock) {
+        const eligibleF = state.horses.filter((h) => !h.sold && h.sex === 'F' && h.births < cap).length;
+        const eligibleM = state.horses.filter((h) => !h.sold && h.sex === 'M').length;
+        const need = Math.max(0, nMares - eligibleF) + Math.max(0, nStuds - eligibleM);
+        for (let i = 0; i < need; i++) {
+          const bs = deriveSeed(deriveSeed(state.seed, `dyn_restock_${run}_${r}`), `${i}`);
+          const savedBand = state.band;
+          state.band = buyBand;
+          const f = mintFounder(state, bs);
+          state.band = savedBand;
+          enrol(addHorse(state, { genotype: f.genotype, ageYears: MATURITY_YEARS, specialists: f.specialists, seed: bs }),
+            i < Math.max(0, nMares - eligibleF) ? 'F' : 'M');
+          totalBought++;
+        }
+      }
+      // ---- the market -------------------------------------------------------------------------
+      let outsideStud = null;
+      if (market > 0) {
+        const owned = () => state.horses.filter((h) => !h.sold);
+        // The horse a purchase would REPLACE, of the same sex - you do not sell a stallion to make
+        // room for a mare. A mare who has used up her coverings counts as replaceable regardless of
+        // how she ranks: she is no longer stock, whatever she looks like.
+        const replaceable = (sex) => {
+          const pool = owned().filter((h) => h.sex === sex);
+          const spent = sex === 'F' ? pool.filter((h) => h.births >= cap) : [];
+          if (spent.length) return { horse: spent.sort(rank)[spent.length - 1], spent: true };
+          const set = pool.filter((h) => sex === 'M' || h.births < cap).sort(rank).slice(0, sex === 'F' ? nMares : nStuds);
+          return set.length ? { horse: set[set.length - 1], spent: false } : null;
+        };
+        let improved = false;
+        for (let attempt = 0; attempt < marketBands.length; attempt++) {
+          const band = marketBands[Math.min(bandIdx, marketBands.length - 1)];
+          const cands = [];
+          for (let i = 0; i < market; i++) {
+            const ms = deriveSeed(deriveSeed(state.seed, `dyn_mkt_${run}_${r}_${band}`), `${i}`);
+            const saved = state.band; state.band = band;
+            const f = mintFounder(state, ms);
+            state.band = saved;
+            cands.push({ breed: state.breed, genotype: f.genotype, seed: ms, ageYears: MATURITY_YEARS, coi: 0,
+              spec: f.specialists, sex: i % 2 === 0 ? 'F' : 'M' });
+          }
+          cands.sort(rank);
+          // A stud covering is not a purchase: you use the best stallion on offer if he beats your
+          // own, and you never own him or house him. This is the one route that brings outside
+          // genetics in every single round without costing a stall.
+          if (studService) {
+            const best = cands.find((c) => c.sex === 'M');
+            const mine = owned().filter((h) => h.sex === 'M').sort(rank)[0];
+            if (best && (!mine || rank(best, mine) < 0)) {
+              outsideStud = addHorse(state, { genotype: best.genotype, ageYears: MATURITY_YEARS, specialists: best.spec, seed: best.seed });
+              outsideStud.sex = 'M'; outsideStud.births = 0; outsideStud.sold = true;   // never occupies a stall
+              totalStudService++;
+              improved = true;
+            }
+          }
+          let bought = 0;
+          for (const c of cands) {
+            if (bought >= buyPerRound) break;
+            const slot = replaceable(c.sex);
+            // Buy when the horse it would replace is either SPENT (a mare out of coverings - she is
+            // not stock any more whatever she looks like) or genuinely worse than what is on offer.
+            if (slot && !slot.spent && rank(c, slot.horse) >= 0) continue;
+            const h = addHorse(state, { genotype: c.genotype, ageYears: MATURITY_YEARS, specialists: c.spec, seed: c.seed });
+            h.sex = c.sex; h.births = 0;
+            if (slot) slot.horse.sold = true;                    // the old horse goes to make room
+            bought++; totalMarketBuys++; improved = true;
+          }
+          if (improved || bandIdx >= marketBands.length - 1) break;
+          // Nothing on offer at this band beat the barn. Try the next band up in the same round.
+          dryRounds++;
+          if (dryRounds >= escalateAfter) { bandIdx++; dryRounds = 0; if (firstEscalate === null) firstEscalate = r; }
+          else break;
+        }
+        if (improved) dryRounds = 0;
+      }
+
+      const mares = state.horses.filter((h) => !h.sold && h.sex === 'F' && h.births < cap).sort(rank).slice(0, nMares);
+      let studs = state.horses.filter((h) => !h.sold && h.sex === 'M').sort(rank).slice(0, nStuds);
+      if (outsideStud) studs = [outsideStud, ...studs].sort(rank).slice(0, Math.max(1, nStuds));
       if (!mares.length || !studs.length) break;
 
       const made = [];
@@ -1640,8 +1865,10 @@ function cmdDynasty(flags) {
         const fs = deriveSeed(deriveSeed(state.seed, `dyn_${run}_${r}_${mare.id}`), 'foal');
         // Coaxing is applied at birth and only to home-bred foals: a founding horse arrives already
         // grown (4-8y), past the window a young-horse programme could ever have reached.
+        const boughtCare = PROP.coaxChance >= 1 || streamFor(fs, 'coax_bought')() < PROP.coaxChance;
         const foalG = coaxGenotype(state, makeFoal(state, stud.genotype, mare.genotype, fs),
-          state.breed, PROP.coaxSteps, PROP.coaxPolicy);
+          state.breed, boughtCare ? PROP.coaxSteps : 0, PROP.coaxPolicy);
+        if (boughtCare && PROP.coaxSteps > 0) totalCare++;
         const foal = addHorse(state, { genotype: foalG,
           ageYears: MATURITY_YEARS, sire: stud.id, dam: mare.id, seed: fs });
         enrol(foal, streamFor(fs, 'sex')() < 0.5 ? 'F' : 'M');
@@ -1666,14 +1893,27 @@ function cmdDynasty(flags) {
       for (const h of made) {
         if (firstLooks === null && isAllOutstanding(state, h)) firstLooks = r;
         if (firstFixed === null && engine === 'proposed' && isFixed(h)) firstFixed = r;
+        if (firstGoal === null && engine === 'proposed' && meetsBand(state, h, goal)) firstGoal = r;
       }
       if (made.length) { gen[r].runs++; gen[r].best += Math.max(...made.map((h) => conformationScore(state, h))); }
+      // STALLS (operator, 2026-08-07). Without this the herd keeps every foal it ever bred, so by
+      // generation 8 a "5-horse barn" is selecting the best 3 mares out of twenty - which is not
+      // the barn that was described, and it is the difference between never needing the market and
+      // depending on it. Culling is done with the SAME ranker the round used, so on a blind round a
+      // child sells the horse that looks worst, hidden good allele and all.
+      if (herd > 0 && state.horses.length > herd) {
+        const keep = new Set(state.horses.slice().sort(rank).slice(0, herd).map((h) => h.id));
+        // Kinship reads the pedigree by id, so a culled horse is marked rather than spliced out.
+        for (const h of state.horses) h.sold = !keep.has(h.id);
+      }
       // NOTE: no early break. The per-generation ledger needs every round run to the end, and
       // stopping at the first finished horse would silently truncate the later rows.
     }
 
     if (firstLooks === null) looksNever++; else looksAt[firstLooks]++;
     if (firstFixed === null) fixedNever++; else fixedAt[firstFixed]++;
+    if (firstGoal === null) goalNever++; else goalAt[firstGoal]++;
+    if (firstEscalate === null) escalatedNever++; else escalatedAt[firstEscalate]++;
   }
 
   const quantile = (at, never, q) => {
@@ -1685,8 +1925,13 @@ function cmdDynasty(flags) {
   console.log(`DYNASTY — ${BREEDS[breed].name}, band ${band}, engine ${engine} | ${tuningNote(tuning)}`);
   if (engine === 'proposed') console.log(`Ladder: ${rungCount()} alleles, step ${PROP.rungStep}, expression ${PROP.expression}, specialist ${PROP.specialist}`);
   console.log(`${nMares} founding mares + ${nStuds} founding stallions. Each mare may be bred ${cap} times in her life.`);
-  console.log(`One foal per broodmare per round, best ${nMares} mares and best ${nStuds} stallions kept, ${outcross ? `${outcross} bought in per round` : 'closed herd, nothing bought in'}.`);
-  console.log(select === 'tested' ? 'Selection is on TESTED genotype.' : 'Selection is on visible score — a child who has not tested cannot see genes.');
+  console.log(`One foal per broodmare per round, best ${nMares} mares and best ${nStuds} stallions kept, ` +
+    `${herd ? `${herd} stalls` : 'unlimited stalls'}, ` +
+    `${outcross ? `${outcross} bought in per round` : restock ? `a ${buyBand}-band horse bought whenever the breeding set is short` : 'closed herd, nothing bought in'}.`);
+  if (PROP.coaxSteps > 0) console.log(`Mare prenatal care: ${PROP.coaxSteps} rung(s) on ${(PROP.coaxChance * 100).toFixed(0)}% of coverings.`);
+  console.log(select === 'tested' ? 'Selection is on TESTED genotype.'
+    : select === 'mixed' ? `Selection reads the genotype 1 round in ${informedEvery}; on the others it reads only what a horse shows.`
+    : 'Selection is on visible score — a child who has not tested cannot see genes.');
   console.log(`${runs} runs, ${rounds} rounds each, ${(totalFoals / runs).toFixed(0)} foals bred per run on average.\n`);
 
   console.log('  gen |  parents   foals    gain | on target  FIXED   best foal   COI');
@@ -1716,6 +1961,28 @@ function cmdDynasty(flags) {
     console.log(`  FIXED on all 5       — earliest 10% of runs: gen ${quantile(fixedAt, fixedNever, 0.10)}, median gen ${quantile(fixedAt, fixedNever, 0.50)}, 90% of runs by gen ${quantile(fixedAt, fixedNever, 0.90)}`);
   }
   console.log(`  Runs that never got there in ${rounds} generations: ${(looksNever / runs * 100).toFixed(1)}% (looks), ${(fixedNever / runs * 100).toFixed(1)}% (fixed)`);
+  if (engine === 'proposed') {
+    const words = bandProfile(goal).map((w) => WORD_ORDER[w]).join(', ');
+    let cg = 0;
+    console.log(`\n  A "${goal}-band" FOAL — words at least as good as ${words}, trait for trait.\n`);
+    console.log('  gen | this gen   cumulative');
+    console.log('  --- | --------   ----------');
+    for (let r = 1; r <= rounds; r++) {
+      cg += goalAt[r];
+      console.log(`  ${padL(r, 3)} | ${padL((goalAt[r] / runs * 100).toFixed(1) + '%', 8)}   ${padL((cg / runs * 100).toFixed(1) + '%', 8)}`);
+    }
+    console.log(`\n  First ${goal}-band foal — earliest 10% of runs: gen ${quantile(goalAt, goalNever, 0.10)}, median gen ${quantile(goalAt, goalNever, 0.50)}, 90% of runs by gen ${quantile(goalAt, goalNever, 0.90)}`);
+    console.log(`  Runs with no ${goal}-band foal in ${rounds} generations: ${(goalNever / runs * 100).toFixed(1)}%`);
+    console.log(`  Horses bought in: ${((totalBought + totalMarketBuys) / runs).toFixed(1)} per run ` +
+      `(${(totalMarketBuys / runs).toFixed(1)} chosen off the market, ${(totalBought / runs).toFixed(1)} forced by an empty slot), ` +
+      `${(totalFoals / runs).toFixed(1)} foals bred, prenatal care ${(totalCare / runs).toFixed(1)} times.`);
+    if (market > 0) {
+      console.log(`  Outside stud coverings used: ${(totalStudService / runs).toFixed(1)} rounds per run` +
+        `${studService ? '' : ' (stud service off)'}.`);
+      console.log(`  Moved up from ${marketBands[0]} band to ${marketBands[1] ?? marketBands[0]}: ` +
+        `median gen ${quantile(escalatedAt, escalatedNever, 0.50)}, never in ${(escalatedNever / runs * 100).toFixed(0)}% of runs.`);
+    }
+  }
   console.log('\n  "F" is the founding batch itself — a run scoring there was handed a finished horse on day one.');
 }
 
@@ -1742,6 +2009,8 @@ function cmdBands(flags) {
   console.log(`LABEL BANDS — ${BREEDS[breed].name}, band ${band} | ${tuningNote(tuning)}`);
   console.log(`Ladder: step ${PROP.rungStep}, expression ${PROP.expression}, modifier +/-${(LOCI_PER_TRAIT * PROP.modifierStep).toFixed(2)}, noise SD ${PROP.noiseSd}\n`);
 
+  const judgeAge = flags.age === undefined ? null : Number(flags.age);
+  if (judgeAge != null) console.log(`  Judged AT AGE ${judgeAge}, off the value shown that day, anchor '${PROP.anchorMode}'.\n`);
   const k = Math.max(1, PROP.rungsPerBand ?? 1);
   const unit = PROP.expression === 'average' ? 'half-rung' : 'rung';
   console.log(`  Each word covers ${k} ${unit}${k > 1 ? 's' : ''} of distance from the standard.\n`);
@@ -1766,11 +2035,12 @@ function cmdBands(flags) {
     PROP.modifierStep = modStep; PROP.noiseSd = noiseSd;
     let right = 0, total = 0, outstandingHom = 0, outstandingAll = 0;
     for (const h of mintPopulation(state, n, deriveSeed(seed, `p_${modStep}_${noiseSd}`))) {
+      if (judgeAge != null) h.ageYears = judgeAge;
       for (const t of CONF_TRAITS) {
         const p = confParts(state, h, t);
         const pureDist = Math.abs(p.typeValue - p.target);
         const pureLabel = label(Math.max(0, 100 - pureDist * FALLOFF));
-        const shown = label(p.score);
+        const shown = label(judgeAge == null ? p.score : p.scoreNow);
         total++; if (shown === pureLabel) right++;
         if (shown === 'Outstanding') {
           outstandingAll++;
