@@ -1677,6 +1677,19 @@ function cmdDynasty(flags) {
   const buyBand = flags['buy-band'] ?? 'low';
   const goal = flags.goal ?? 'mid';
   const herd = Number(flags.herd ?? 0);          // 0 = keep every horse ever bred (the old behaviour)
+  // THE MARKET (operator, 2026-08-07). --restock only buys when the breeding set cannot be FILLED,
+  // which is not what a player does. A player sells a horse whose usefulness is spent and buys one
+  // that opens a pairing they want - so the market is offered every round and taken when it beats
+  // what the barn already owns, judged with the SAME ranker the round is using (on a blind round
+  // you buy on looks, like everyone else). Money is not modelled; --buy-per-round is the stand-in
+  // for a budget, and it is the number to move if purchases look too easy.
+  const market = Number(flags.market ?? 0);              // candidates offered per round; 0 = off
+  const buyPerRound = Number(flags['buy-per-round'] ?? 1);
+  const studService = flags['stud-service'] !== undefined && flags['stud-service'] !== '0' && flags['stud-service'] !== 'false';
+  // "Start at mid, move up to high once you need it." Escalate when the current band has failed to
+  // offer an improvement for `escalateAfter` rounds running - the band is exhausted, not the money.
+  const marketBands = String(flags['market-bands'] ?? 'mid,high').split(',');
+  const escalateAfter = Number(flags['escalate-after'] ?? 2);
   const tuning = tuningFromFlags(flags);
   applyTuning(tuning);
 
@@ -1687,6 +1700,9 @@ function cmdDynasty(flags) {
   const fixedAt = new Array(rounds + 1).fill(0);
   const goalAt = new Array(rounds + 1).fill(0);    // ... whose first foal meeting `goal` is round r
   let looksNever = 0, fixedNever = 0, goalNever = 0, totalFoals = 0, totalBought = 0, totalCare = 0;
+  let totalStudService = 0, totalMarketBuys = 0;
+  const escalatedAt = new Array(rounds + 1).fill(0);
+  let escalatedNever = 0;
   // Per-generation ledger: what the parents were worth, what the foals came out at, and the gap.
   // The mid-parent figure is the average of the ACTUAL sire and dam of each foal, not the herd
   // average, so "gain" is the honest answer to "did this mating move the line forward".
@@ -1695,7 +1711,8 @@ function cmdDynasty(flags) {
   for (let run = 0; run < runs; run++) {
     const state = { engine, breed, band, seed: Number(flags.seed ?? 31337), horses: [] };
     const memo = new Map();
-    let firstLooks = null, firstFixed = null, firstGoal = null;
+    let firstLooks = null, firstFixed = null, firstGoal = null, firstEscalate = null;
+    let bandIdx = 0, dryRounds = 0;
 
     const enrol = (h, sex) => { h.sex = sex; h.births = 0; return h; };
     for (let i = 0; i < nMares + nStuds; i++) {
@@ -1740,8 +1757,70 @@ function cmdDynasty(flags) {
           totalBought++;
         }
       }
+      // ---- the market -------------------------------------------------------------------------
+      let outsideStud = null;
+      if (market > 0) {
+        const owned = () => state.horses.filter((h) => !h.sold);
+        // The horse a purchase would REPLACE, of the same sex - you do not sell a stallion to make
+        // room for a mare. A mare who has used up her coverings counts as replaceable regardless of
+        // how she ranks: she is no longer stock, whatever she looks like.
+        const replaceable = (sex) => {
+          const pool = owned().filter((h) => h.sex === sex);
+          const spent = sex === 'F' ? pool.filter((h) => h.births >= cap) : [];
+          if (spent.length) return { horse: spent.sort(rank)[spent.length - 1], spent: true };
+          const set = pool.filter((h) => sex === 'M' || h.births < cap).sort(rank).slice(0, sex === 'F' ? nMares : nStuds);
+          return set.length ? { horse: set[set.length - 1], spent: false } : null;
+        };
+        let improved = false;
+        for (let attempt = 0; attempt < marketBands.length; attempt++) {
+          const band = marketBands[Math.min(bandIdx, marketBands.length - 1)];
+          const cands = [];
+          for (let i = 0; i < market; i++) {
+            const ms = deriveSeed(deriveSeed(state.seed, `dyn_mkt_${run}_${r}_${band}`), `${i}`);
+            const saved = state.band; state.band = band;
+            const f = mintFounder(state, ms);
+            state.band = saved;
+            cands.push({ breed: state.breed, genotype: f.genotype, seed: ms, ageYears: MATURITY_YEARS, coi: 0,
+              spec: f.specialists, sex: i % 2 === 0 ? 'F' : 'M' });
+          }
+          cands.sort(rank);
+          // A stud covering is not a purchase: you use the best stallion on offer if he beats your
+          // own, and you never own him or house him. This is the one route that brings outside
+          // genetics in every single round without costing a stall.
+          if (studService) {
+            const best = cands.find((c) => c.sex === 'M');
+            const mine = owned().filter((h) => h.sex === 'M').sort(rank)[0];
+            if (best && (!mine || rank(best, mine) < 0)) {
+              outsideStud = addHorse(state, { genotype: best.genotype, ageYears: MATURITY_YEARS, specialists: best.spec, seed: best.seed });
+              outsideStud.sex = 'M'; outsideStud.births = 0; outsideStud.sold = true;   // never occupies a stall
+              totalStudService++;
+              improved = true;
+            }
+          }
+          let bought = 0;
+          for (const c of cands) {
+            if (bought >= buyPerRound) break;
+            const slot = replaceable(c.sex);
+            // Buy when the horse it would replace is either SPENT (a mare out of coverings - she is
+            // not stock any more whatever she looks like) or genuinely worse than what is on offer.
+            if (slot && !slot.spent && rank(c, slot.horse) >= 0) continue;
+            const h = addHorse(state, { genotype: c.genotype, ageYears: MATURITY_YEARS, specialists: c.spec, seed: c.seed });
+            h.sex = c.sex; h.births = 0;
+            if (slot) slot.horse.sold = true;                    // the old horse goes to make room
+            bought++; totalMarketBuys++; improved = true;
+          }
+          if (improved || bandIdx >= marketBands.length - 1) break;
+          // Nothing on offer at this band beat the barn. Try the next band up in the same round.
+          dryRounds++;
+          if (dryRounds >= escalateAfter) { bandIdx++; dryRounds = 0; if (firstEscalate === null) firstEscalate = r; }
+          else break;
+        }
+        if (improved) dryRounds = 0;
+      }
+
       const mares = state.horses.filter((h) => !h.sold && h.sex === 'F' && h.births < cap).sort(rank).slice(0, nMares);
-      const studs = state.horses.filter((h) => !h.sold && h.sex === 'M').sort(rank).slice(0, nStuds);
+      let studs = state.horses.filter((h) => !h.sold && h.sex === 'M').sort(rank).slice(0, nStuds);
+      if (outsideStud) studs = [outsideStud, ...studs].sort(rank).slice(0, Math.max(1, nStuds));
       if (!mares.length || !studs.length) break;
 
       const made = [];
@@ -1815,6 +1894,7 @@ function cmdDynasty(flags) {
     if (firstLooks === null) looksNever++; else looksAt[firstLooks]++;
     if (firstFixed === null) fixedNever++; else fixedAt[firstFixed]++;
     if (firstGoal === null) goalNever++; else goalAt[firstGoal]++;
+    if (firstEscalate === null) escalatedNever++; else escalatedAt[firstEscalate]++;
   }
 
   const quantile = (at, never, q) => {
@@ -1874,8 +1954,15 @@ function cmdDynasty(flags) {
     }
     console.log(`\n  First ${goal}-band foal — earliest 10% of runs: gen ${quantile(goalAt, goalNever, 0.10)}, median gen ${quantile(goalAt, goalNever, 0.50)}, 90% of runs by gen ${quantile(goalAt, goalNever, 0.90)}`);
     console.log(`  Runs with no ${goal}-band foal in ${rounds} generations: ${(goalNever / runs * 100).toFixed(1)}%`);
-    console.log(`  Horses bought in: ${(totalBought / runs).toFixed(1)} per run, ${(totalFoals / runs).toFixed(1)} foals bred per run, ` +
-      `prenatal care bought ${(totalCare / runs).toFixed(1)} times per run.`);
+    console.log(`  Horses bought in: ${((totalBought + totalMarketBuys) / runs).toFixed(1)} per run ` +
+      `(${(totalMarketBuys / runs).toFixed(1)} chosen off the market, ${(totalBought / runs).toFixed(1)} forced by an empty slot), ` +
+      `${(totalFoals / runs).toFixed(1)} foals bred, prenatal care ${(totalCare / runs).toFixed(1)} times.`);
+    if (market > 0) {
+      console.log(`  Outside stud coverings used: ${(totalStudService / runs).toFixed(1)} rounds per run` +
+        `${studService ? '' : ' (stud service off)'}.`);
+      console.log(`  Moved up from ${marketBands[0]} band to ${marketBands[1] ?? marketBands[0]}: ` +
+        `median gen ${quantile(escalatedAt, escalatedNever, 0.50)}, never in ${(escalatedNever / runs * 100).toFixed(0)}% of runs.`);
+    }
   }
   console.log('\n  "F" is the founding batch itself — a run scoring there was handed a finished horse on day one.');
 }
