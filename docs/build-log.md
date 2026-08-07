@@ -1055,3 +1055,21 @@ Reported together from the deployed game, fixed together, sharing no code. Both 
 - **The recommended lever is the founding specialist, not the band.** Demoting §7.3's gift from homozygous-at-target to **one allele at target, one from the pool** takes traits-already-finished from 1.34 to 0.62 while leaving *carries* untouched at 2.96 — it decouples "the correct allele is present" from "the correct allele is common", which is the thing a rarer pool cannot do. Lowering the concentration instead barely dents what the horse arrives owning and quadruples the dead-barn risk.
 - **Two findings nobody was looking for.** (1) **A player who never buys the conformation test plateaus at generation 1** — eight generations of selection on visible score move traits-finished 1.33 → 1.41, because a 10/10 horse and a 2/18 horse express the same value and are indistinguishable. Selecting on the tested genotype instead reaches 4.45. The test is therefore load-bearing, not optional depth, which raises the stakes on that document's §12.1/§12.2 pricing decisions. (2) **Inbreeding's cost scales with how distinctive a breed is** — COI multiplies realization, which pulls toward 50, so at equal genetic achievement (~4.3 traits fixed, ~45% COI) a Quarter Horse scores 87.4 and an Arabian 79.3. Recorded for slice 0018; do **not** answer it by re-anchoring `realization()` on the breed target, which would make an inbred horse score *better*.
 - **Bench additions.** `sweep` (mint thousands of founders and characterise them: score, traits on target, traits FIXED, traits carrying, mean deviation, wrong-breed share, and the dead-barn rate) and `programme` (run a breeding programme to generation N, `--select score|tested`, `--outcross n` to model buying in). Tuning dials — `--reach`, `--rung-step`, `--concentration`, `--founding-mode ring`, `--target-chance`, `--hole`, `--specialist`, `--drift`, `--noise-sd`, `--modifier-step` — are stored on the lab by `new` and replayed by later commands, so a saved population always reads back under the rules it was minted with. Defaults reproduce the fix document byte-for-byte; the `peak` pool keeps §4.4's renormalise-at-the-end arithmetic verbatim so the baseline this bench reports is the one that document measured.
+
+## 2026-08-07 — the parent-to-foal deficit, measured, and a coax dial in the bench
+
+`docs/analysis/breeding-lab.mjs` gained `--coax <n>` / `--coax-policy <finish|worst>`: a home-bred
+foal may have `n` of its conformation alleles moved **one rung toward its own breed standard**, at
+birth, once for life. Toward-standard-only is the property that matters — it is why this is safe
+where `--drift` was not (`docs/fixes/conformation-founding-quality.md` §5): breed type strictly
+improves and an NPC stable that never buys the programme never moves. Founders are never coaxed
+(they arrive 4-8 years old, past any young-horse window), so `sweep` is unaffected and every
+pre-existing measurement in the fix documents still reproduces byte-for-byte.
+
+Findings written up in `docs/fixes/foals-worse-than-parents.md`. The headline for anyone working
+near conformation: **about 85% of "foals come out worse than their parents" is not genetics.** It is
+(a) selecting on a tent-shaped score, where a heterozygote straddling the standard is
+indistinguishable from a homozygote on it, and (b) inbreeding depression on conformation expression,
+which makes a genetically *perfect* herd read worse than a mediocre one. (b) is a third independent
+argument for slice 0018's central proposal and the two recommendations in that document do not work
+without it.

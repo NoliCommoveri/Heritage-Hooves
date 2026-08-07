@@ -58,6 +58,13 @@
 //                         hatch that keeps the correct allele in existence at all.
 //   --hole <rungs>        'ring' mode: rungs either side of target also excluded. 0 = target only.
 //   --specialist <mode>   fixed | carrier | none — how generous slice 0019's founding gift is.
+//   --coax <n>            the operator's "coax the genes" mechanic (2026-08-07): a home-bred foal
+//                         may have n alleles moved ONE RUNG TOWARD its breed standard, at birth,
+//                         once for life. Never away, so breed type cannot erode. See
+//                         docs/fixes/foals-worse-than-parents.md. 0 = off.
+//   --coax-policy <mode>  finish | worst — spend it on the allele closest to standard (a tested
+//                         player, converting "carries" into "breeds true") or the one furthest
+//                         from it (a player going on looks). 'finish' by default.
 //   --drift <p>           chance an inherited allele steps one rung. Buys new alleles from nothing,
 //                         at the cost of the exact foal prediction. 0 = off.
 //   --inbreeding <x>      COI depression factor, 1.0 live. 0 switches it off, so a line can be
@@ -228,6 +235,10 @@ const PROP = {
   //   'carrier' one target allele, the other drawn from the pool — good but not finished
   //   'none'    no conformation specialist at all
   specialist: 'fixed',
+
+  // The coax mechanic (see coaxGenotype). 0 = off, which is every measurement taken before today.
+  coaxSteps: 0,
+  coaxPolicy: 'finish',      // 'finish' | 'worst'
 
   // EXPRESSION RULE (asked 2026-08-07). How the two graded alleles become one shape.
   //   'average'  the fix document as written: the mean of the two, co-dominant.
@@ -611,6 +622,46 @@ function maybeDrift(allele, breedCode, trait, rng) {
   return moved;
 }
 
+/**
+ * COAXING (operator, 2026-08-07): "an outside mechanism … that allows you to coax the genes to do
+ * right — incrementally of course". Modelled here as the most conservative version that could be
+ * built, so the number below is a FLOOR on what such a mechanic buys rather than a best case:
+ *
+ *   - it only ever moves an allele ONE RUNG TOWARD the horse's own breed standard, never away and
+ *     never past it. Breed type therefore strictly improves and can never erode, which is the
+ *     objection that sank random drift (docs/fixes/conformation-founding-quality.md §5);
+ *   - it is applied at BIRTH and capped per horse for life (`coaxSteps`), representing a young-horse
+ *     programme that closes when the skeleton does — not a per-tick treadmill;
+ *   - it is DIRECTED and visible, so the breeding preview's Punnett square stays exact. A player
+ *     knows which allele moved and when, which random drift never allows.
+ *
+ * `coaxPolicy` is what a player would actually spend it on:
+ *   'finish'  the allele already CLOSEST to the standard without being on it — converts a trait the
+ *             horse merely carries into one it breeds true for. What a tested player does.
+ *   'worst'   the allele furthest from the standard — what a player selecting on looks does, since
+ *             the ugliest trait is the one they can see.
+ * Both are measured; the gap between them is more of the value of testing.
+ */
+function coaxGenotype(state, genotype, breedCode, steps, policy) {
+  if (state.engine !== 'proposed' || steps <= 0) return genotype;
+  for (let s = 0; s < steps; s++) {
+    let best = null;
+    for (const t of CONF_TRAITS) {
+      const target = nearestRung(BREEDS[breedCode].ideal[t][0]);
+      genotype.type[t].forEach((r, i) => {
+        const d = Math.abs(r - target);
+        if (d === 0) return;                       // already correct; nothing to buy
+        if (best === null || (policy === 'worst' ? d > best.d : d < best.d)) best = { t, i, d, target };
+      });
+    }
+    if (best === null) break;                      // every allele already on standard
+    const pair = genotype.type[best.t];
+    pair[best.i] += pair[best.i] < best.target ? 1 : -1;
+    pair.sort((a, b) => a - b);
+  }
+  return genotype;
+}
+
 function makeFoal(state, sireG, damG, seed) {
   const g = { type: {}, poly: {} };
   const tRng = streamFor(seed, 'type_meiosis');
@@ -887,6 +938,8 @@ const TUNABLE = {
   'inbreeding': ['inbreedingFactor', Number],
   'drift-clamped': ['driftClamped', (v) => v !== 'false' && v !== '0'],
   'specialist': ['specialist', String],
+  'coax': ['coaxSteps', Number],
+  'coax-policy': ['coaxPolicy', String],
   'expression': ['expression', String],
   'outstanding-within': ['outstandingWithin', Number],
   'labels': ['labels', String],
@@ -952,6 +1005,7 @@ function applyTuning(tuning) {
   if (!['peak', 'ring', 'quota', 'pairs'].includes(PROP.foundingMode)) { console.error('--founding-mode must be "peak", "ring", "quota" or "pairs"'); process.exit(1); }
   if (!['fixed', 'carrier', 'none'].includes(PROP.specialist)) { console.error('--specialist must be "fixed", "carrier" or "none"'); process.exit(1); }
   if (!['average', 'random'].includes(PROP.expression)) { console.error('--expression must be "average" or "random"'); process.exit(1); }
+  if (!['finish', 'worst'].includes(PROP.coaxPolicy)) { console.error('--coax-policy must be "finish" or "worst"'); process.exit(1); }
 }
 /** One line naming every dial that is NOT at its documented default, so output is self-describing. */
 function tuningNote(tuning) {
@@ -1295,7 +1349,8 @@ function cmdProgramme(flags) {
       const made = [];
       for (let i = 0; i < foals; i++) {
         const fs = deriveSeed(deriveSeed(seed, `r${run}_g${g}_f${i}`), 'foal');
-        made.push(addHorse(state, { genotype: makeFoal(state, sire.genotype, dam.genotype, fs), ageYears: MATURITY_YEARS, sire: sire.id, dam: dam.id, seed: fs }));
+        const fg = coaxGenotype(state, makeFoal(state, sire.genotype, dam.genotype, fs), breed, PROP.coaxSteps, PROP.coaxPolicy);
+        made.push(addHorse(state, { genotype: fg, ageYears: MATURITY_YEARS, sire: sire.id, dam: dam.id, seed: fs }));
       }
       const bought = [];
       for (let i = 0; i < outcross; i++) {
@@ -1487,7 +1542,11 @@ function cmdDynasty(flags) {
         const stud = studs[pick];
 
         const fs = deriveSeed(deriveSeed(state.seed, `dyn_${run}_${r}_${mare.id}`), 'foal');
-        const foal = addHorse(state, { genotype: makeFoal(state, stud.genotype, mare.genotype, fs),
+        // Coaxing is applied at birth and only to home-bred foals: a founding horse arrives already
+        // grown (4-8y), past the window a young-horse programme could ever have reached.
+        const foalG = coaxGenotype(state, makeFoal(state, stud.genotype, mare.genotype, fs),
+          state.breed, PROP.coaxSteps, PROP.coaxPolicy);
+        const foal = addHorse(state, { genotype: foalG,
           ageYears: MATURITY_YEARS, sire: stud.id, dam: mare.id, seed: fs });
         enrol(foal, streamFor(fs, 'sex')() < 0.5 ? 'F' : 'M');
         mare.births++;
